@@ -1,0 +1,52 @@
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync-upstream:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Merge upstream/main into main
+        id: merge
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/abundantbeing/hermes-browser-extension.git
+          git fetch upstream main
+          if git merge --no-edit upstream/main; then
+            echo "clean=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "clean=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push clean merge
+        if: steps.merge.outputs.clean == 'true'
+        run: git push origin HEAD:main
+
+      - name: Open PR on conflict
+        if: steps.merge.outputs.clean == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git merge --abort
+          git reset --hard origin/main
+          BR="upstream-sync/conflict-$(date +%Y%m%d)"
+          git checkout -b "$BR"
+          (git merge --no-edit upstream/main) || true
+          git add -A
+          git commit -m "WIP: upstream sync with conflicts" --no-verify || true
+          git push origin "$BR"
+          gh pr create --base main --head "$BR" \
+            --title "Upstream sync needs manual resolution" \
+            --body "Scheduled weekly upstream merge hit conflicts. Resolve manually, then merge this PR."
