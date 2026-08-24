@@ -1,0 +1,54 @@
+name: Build & Publish Extension
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build unpacked extension
+        run: npm run build
+
+      - name: Read version
+        id: ver
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Zip dist
+        run: |
+          cd dist
+          zip -r "../hermes-browser-extension-${{ steps.ver.outputs.version }}.zip" .
+          cd ..
+
+      - name: Verify pinned extension ID key survives build
+        run: |
+          node -e "const m=require('./dist/manifest.json'); if(!m.key){console.error('manifest.key missing from dist');process.exit(1)} console.log('manifest.key present, length', m.key.length)"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-browser-extension-dist
+          path: hermes-browser-extension-*.zip
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: hermes-browser-extension-*.zip
+          generate_release_notes: true
