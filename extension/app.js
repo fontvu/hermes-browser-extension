@@ -121,7 +121,12 @@ import {
   mergeDelegationWatchStores,
 } from './lib/async-delegation.mjs';
 import { normalizeInlineDraftRoutePreference } from './lib/inline-draft-policy.mjs';
-import { sessionContextFailureRecovery } from './lib/turn-recovery.mjs';
+import {
+  hermesGatewayTurnError,
+  hermesRequestError,
+  sessionContextFailureRecovery,
+  turnRequestFailureState,
+} from './lib/turn-recovery.mjs';
 import { buildDashboardWsUrl, buildSessionModelSwitchRequest, createGatewayClient, establishGatewaySession, normalizeGatewayHistoryMessages, runtimeModelFromSessionStatus, WS_EVENTS, WS_METHODS } from './lib/gateway-ws.mjs';
 import { isTrustedDashboardOrigin, mintWsTicket, originOf, ticketFailureHelp } from './lib/dashboard-bridge.mjs';
 import {
@@ -723,6 +728,11 @@ async function streamDashboardPrompt(prompt, { signal, onDelta, onTool, onRun } 
     }));
     offs.push(connection.client.on(WS_EVENTS.messageComplete, (event) => {
       if (!forThisSession(event)) return;
+      const completionError = hermesGatewayTurnError({ payload: event.payload });
+      if (completionError) {
+        finish(reject, completionError);
+        return;
+      }
       finalText = event.payload?.text || finalText;
       onDelta?.(finalText);
       finish(resolve, finalText);
@@ -739,7 +749,7 @@ async function streamDashboardPrompt(prompt, { signal, onDelta, onTool, onRun } 
     }));
     offs.push(connection.client.on(WS_EVENTS.error, (event) => {
       if (!forThisSession(event)) return;
-      finish(reject, new Error(event.payload?.message || 'Dashboard stream error'));
+      finish(reject, hermesGatewayTurnError({ payload: event.payload }) || new Error('Dashboard stream error'));
     }));
     offs.push(connection.client.on('close', () => finish(reject, new Error('Dashboard connection closed mid-turn.'))));
     connection.client.request(WS_METHODS.promptSubmit, { session_id: sessionId, text: prompt }).catch((error) => finish(reject, error));
@@ -3632,7 +3642,11 @@ async function sendPrompt(text) {
         selected_skills: skillSelection.selectedSkills,
       }),
     });
-    if (!response.ok || !response.body) throw new Error(`Hermes stream failed (${response.status}): ${(await response.text()).slice(0, 500)}`);
+    if (!response.ok || !response.body) throw hermesRequestError({
+      status: response.status,
+      body: await response.text(),
+      operation: 'Hermes stream',
+    });
     const streamedAnswer = await readHermesSse(response, {
       signal: activeAbortController.signal,
       onAssistant: (content) => {
@@ -3699,6 +3713,21 @@ async function sendPrompt(text) {
       activeRunControl = markRunTerminal(activeRunControl, streamTerminalStatus || 'completed');
     }
   } catch (error) {
+    const requestFailure = turnRequestFailureState(error);
+    if (requestFailure?.gatewayStatus === 'connected') {
+      activeMessages = activeMessages.filter((message) => message !== assistant);
+      if (!els.prompt.value.trim()) els.prompt.value = text;
+      attachments = [...turnAttachments];
+      renderAttachments();
+      activeMessages = [...activeMessages, {
+        role: 'system',
+        content: `${requestFailure.title}: ${requestFailure.detail} Gateway remains connected; adjust the model option and resend the preserved draft.`,
+      }];
+      els.composerStatus.textContent = `${requestFailure.title}: ${requestFailure.detail}`;
+      renderConnectionTruth({ status: 'online' });
+      renderMessages(activeMessages);
+      return false;
+    }
     const contextRecovery = sessionContextFailureRecovery(error, gatewayCapabilities);
     if (!contextRecovery) throw error;
     contextRecoveryHandled = true;

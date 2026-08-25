@@ -34,6 +34,7 @@ const INLINE_DELETE_ALL_SCREENSHOT = path.join(QA_DIR, `x-rich-delete-all${ASSIS
 const ASSIST_SETTINGS_SCREENSHOT = path.join(QA_DIR, `assist-settings${ASSIST_SCREENSHOT_SUFFIX}.png`);
 const ASSIST_RELEASED_GATEWAY_SCREENSHOT = path.join(QA_DIR, `assist-settings-released-gateway${ASSIST_SCREENSHOT_SUFFIX}.png`);
 const MAIN_MODEL_PICKER_SCREENSHOT = path.join(QA_DIR, `main-model-picker${ASSIST_SCREENSHOT_SUFFIX}.png`);
+const PROVIDER_REJECTION_PANEL_SCREENSHOT = path.join(QA_DIR, `provider-rejection-panel${ASSIST_SCREENSHOT_SUFFIX}.png`);
 const GPT56_CONTEXT_PICKER_SCREENSHOT = path.join(QA_DIR, `gpt56-context-picker${ASSIST_SCREENSHOT_SUFFIX}.png`);
 const READABILITY_PANEL_SCREENSHOT = path.join(QA_DIR, `readability-panel-320${ASSIST_SCREENSHOT_SUFFIX}.png`);
 const READABILITY_WEB_SCREENSHOT = path.join(QA_DIR, `readability-web-1024${ASSIST_SCREENSHOT_SUFFIX}.png`);
@@ -239,6 +240,8 @@ async function startMockHermes() {
   let fullTabDelegationSessionId = '';
   let fullTabDelegationCompletionAvailableAt = 0;
   let fullTabDelegationHistoryPolls = 0;
+  let nextChatStreamRejection = null;
+  let nextChatFallbackRejection = null;
   const server = createServer(async (req, res) => {
     const url = new URL(req.url || '/', 'http://127.0.0.1');
     const body = await requestBody(req);
@@ -495,6 +498,12 @@ async function startMockHermes() {
     }
     if (/^\/api\/sessions\/[^/]+\/chat\/stream$/.test(url.pathname) && req.method === 'POST') {
       chatRequest = body;
+      if (nextChatStreamRejection) {
+        const rejection = nextChatStreamRejection;
+        nextChatStreamRejection = null;
+        json(res, rejection.status, { error: { message: rejection.message } });
+        return;
+      }
       const sessionId = decodeURIComponent(url.pathname.split('/')[3] || '');
       const message = String(body?.message || '');
       const delegated = message.includes(DELEGATION_PROMPT);
@@ -545,6 +554,12 @@ async function startMockHermes() {
     }
     if (/^\/api\/sessions\/[^/]+\/chat$/.test(url.pathname) && req.method === 'POST') {
       chatRequest = body;
+      if (nextChatFallbackRejection) {
+        const rejection = nextChatFallbackRejection;
+        nextChatFallbackRejection = null;
+        json(res, rejection.status, { error: { message: rejection.message } });
+        return;
+      }
       const payload = {
         content: INLINE_REPLY,
         message: { role: 'assistant', content: INLINE_REPLY },
@@ -586,6 +601,12 @@ async function startMockHermes() {
     setAssistChatAcknowledgement: (mode = 'direct') => { assistChatAcknowledgement = mode; },
     setAssistCleanupStatus: (status = 204) => { assistCleanupStatus = Number(status); },
     setAssistSessionModelRouting: (enabled = true) => { assistSessionModelRouting = Boolean(enabled); },
+    rejectNextChatStream: ({ status = 400, message = 'Invalid request.' } = {}) => {
+      nextChatStreamRejection = { status: Number(status), message: String(message) };
+    },
+    rejectNextChatFallback: ({ status = 400, message = 'Invalid request.' } = {}) => {
+      nextChatFallbackRejection = { status: Number(status), message: String(message) };
+    },
     close: () => new Promise((resolve) => server.close(resolve)),
   };
 }
@@ -1125,6 +1146,66 @@ async function main() {
     assert.ok(envelope.source_receipt);
     assert.ok(mock.requests.some((request) => request.path === `/api/sessions/${storedAfterSend.hermesBrowserSettings.sessionId}/chat/stream` && request.method === 'POST'));
     assert.ok(mock.requests.filter((request) => request.path !== '/health' && request.path !== '/v1/health').every((request) => request.authorization === `Bearer ${TEST_TOKEN}`));
+
+    const rejectionPrompt = 'Verify unsupported reasoning option handling.';
+    const rejectionDetail = 'Invalid parameter: reasoning_effort must be one of low, medium, high.';
+    const rejectionStreamsBefore = mock.requests.filter((request) => /\/chat\/stream$/.test(request.path) && request.method === 'POST').length;
+    const fallbackChatsBefore = mock.requests.filter((request) => /\/chat$/.test(request.path) && request.method === 'POST').length;
+    mock.rejectNextChatStream({ status: 400, message: rejectionDetail });
+    await panel.evaluate(`(() => {
+      const input = document.querySelector('#promptInput');
+      input.value = ${JSON.stringify(rejectionPrompt)};
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      document.querySelector('#composer').requestSubmit();
+      return true;
+    })()`);
+    const rejectionState = await waitFor(() => panel.evaluate(`(() => {
+      const messages = Array.from(document.querySelectorAll('.message-content')).map((node) => node.textContent).join('\\n');
+      const input = document.querySelector('#promptInput');
+      const title = document.querySelector('#activeTitle')?.textContent || '';
+      const detail = document.querySelector('#activeUrl')?.textContent || '';
+      const connection = document.querySelector('#connectionPill')?.getAttribute('aria-label') || '';
+      if (input?.value !== ${JSON.stringify(rejectionPrompt)} || title !== 'Model option rejected' || !messages.includes(${JSON.stringify(rejectionDetail)})) return null;
+      return { messages, detail, connection };
+    })()`));
+    assert.match(rejectionState.detail, /Gateway remains connected\./);
+    assert.equal(rejectionState.connection, 'Hermes connected');
+    assert.doesNotMatch(rejectionState.messages, /Hermes API unavailable/);
+    const rejectionStreamsAfter = mock.requests.filter((request) => /\/chat\/stream$/.test(request.path) && request.method === 'POST').length;
+    const fallbackChatsAfter = mock.requests.filter((request) => /\/chat$/.test(request.path) && request.method === 'POST').length;
+    assert.equal(rejectionStreamsAfter, rejectionStreamsBefore + 1, 'Provider rejection must not replay the stream.');
+    assert.equal(fallbackChatsAfter, fallbackChatsBefore, 'Provider rejection must not fall back to non-streaming replay.');
+    await saveScreenshot(panel, PROVIDER_REJECTION_PANEL_SCREENSHOT);
+
+    const fallbackRejectionPrompt = 'Verify fallback provider rejection handling.';
+    const fallbackRejectionDetail = 'Unsupported parameter: reasoning_effort must be one of low, medium, high.';
+    const fallbackRejectionStreamsBefore = mock.requests.filter((request) => /\/chat\/stream$/.test(request.path) && request.method === 'POST').length;
+    const fallbackRejectionChatsBefore = mock.requests.filter((request) => /\/chat$/.test(request.path) && request.method === 'POST').length;
+    mock.rejectNextChatStream({ status: 404, message: 'Streaming route unavailable.' });
+    mock.rejectNextChatFallback({ status: 400, message: fallbackRejectionDetail });
+    await panel.evaluate(`(() => {
+      const input = document.querySelector('#promptInput');
+      input.value = ${JSON.stringify(fallbackRejectionPrompt)};
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      document.querySelector('#composer').requestSubmit();
+      return true;
+    })()`);
+    const fallbackRejectionState = await waitFor(() => panel.evaluate(`(() => {
+      const messages = Array.from(document.querySelectorAll('.message-content')).map((node) => node.textContent).join('\\n');
+      const input = document.querySelector('#promptInput');
+      const title = document.querySelector('#activeTitle')?.textContent || '';
+      const detail = document.querySelector('#activeUrl')?.textContent || '';
+      const connection = document.querySelector('#connectionPill')?.getAttribute('aria-label') || '';
+      if (input?.value !== ${JSON.stringify(fallbackRejectionPrompt)} || title !== 'Model option rejected' || !messages.includes(${JSON.stringify(fallbackRejectionDetail)})) return null;
+      return { messages, detail, connection };
+    })()`));
+    assert.match(fallbackRejectionState.detail, /Gateway remains connected\./);
+    assert.equal(fallbackRejectionState.connection, 'Hermes connected');
+    assert.doesNotMatch(fallbackRejectionState.messages, /Hermes API unavailable/);
+    const fallbackRejectionStreamsAfter = mock.requests.filter((request) => /\/chat\/stream$/.test(request.path) && request.method === 'POST').length;
+    const fallbackRejectionChatsAfter = mock.requests.filter((request) => /\/chat$/.test(request.path) && request.method === 'POST').length;
+    assert.equal(fallbackRejectionStreamsAfter, fallbackRejectionStreamsBefore + 1, 'Fallback rejection must not replay the stream.');
+    assert.equal(fallbackRejectionChatsAfter, fallbackRejectionChatsBefore + 1, 'Fallback rejection must make exactly one bounded non-streaming request.');
 
     const delegationStreamsBefore = mock.requests.filter((request) => /\/chat\/stream$/.test(request.path) && request.method === 'POST').length;
     await panel.evaluate(`(() => {
@@ -2793,7 +2874,12 @@ async function main() {
       assert.equal(request.body.model, 'e2e/test-model');
       assert.equal(request.body.provider, 'e2e');
     }
-    const assistChats = mock.requests.filter((request) => request.method === 'POST' && /^\/api\/sessions\/[^/]+\/chat$/.test(request.path) && request.body?.model === 'e2e/test-model');
+    const assistChats = mock.requests.filter((request) => (
+      request.method === 'POST'
+      && /^\/api\/sessions\/[^/]+\/chat$/.test(request.path)
+      && request.body?.model === 'e2e/test-model'
+      && Object.hasOwn(request.body || {}, 'reasoning_effort')
+    ));
     assert.ok(assistChats.length >= 2);
     assert.ok(assistChats.every((request) => request.body.fast === false && request.body.model_options?.fast === false && request.body.reasoning_effort === 'low'));
     assert.equal(mock.requests.filter((request) => request.method === 'DELETE' && /^\/api\/sessions\//.test(request.path)).length, 1);
