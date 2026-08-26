@@ -2,6 +2,7 @@ name: Build & Publish Extension
 
 on:
   push:
+    branches: [main]
     tags: ['v*']
   workflow_dispatch:
 
@@ -29,15 +30,19 @@ jobs:
         id: ver
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
-      - name: Zip dist
-        run: |
-          cd dist
-          zip -r "../hermes-browser-extension-${{ steps.ver.outputs.version }}.zip" .
-          cd ..
-
       - name: Verify pinned extension ID key survives build
         run: |
           node -e "const m=require('./dist/manifest.json'); if(!m.key){console.error('manifest.key missing from dist');process.exit(1)} console.log('manifest.key present, length', m.key.length)"
+
+      - name: Zip dist
+        run: |
+          cd dist
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            zip -r "../hermes-browser-extension-${{ steps.ver.outputs.version }}.zip" .
+          else
+            zip -r "../hermes-browser-extension-latest.zip" .
+          fi
+          cd ..
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -46,9 +51,29 @@ jobs:
           path: hermes-browser-extension-*.zip
           if-no-files-found: error
 
-      - name: Publish GitHub Release
+      - name: Publish versioned release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: hermes-browser-extension-*.zip
           generate_release_notes: true
+
+      - name: Update rolling 'latest' release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git tag -f latest "$GITHUB_SHA"
+          git push -f origin latest
+          notes="Rolling build of \`main\` - rebuilt automatically on every push, including upstream syncs.
+
+          Built from commit $GITHUB_SHA on $(date -u '+%Y-%m-%d %H:%M UTC').
+          Extension ID is stable: \`laplaijpbccfcgccodfofgoponggbpbh\`.
+
+          Download, extract, then chrome://extensions > Load unpacked."
+          if gh release view latest -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit latest -R "$GITHUB_REPOSITORY" --prerelease --title "Latest build (main)" --notes "$notes"
+            gh release upload latest -R "$GITHUB_REPOSITORY" hermes-browser-extension-latest.zip --clobber
+          else
+            gh release create latest -R "$GITHUB_REPOSITORY" --prerelease --title "Latest build (main)" --notes "$notes" hermes-browser-extension-latest.zip
+          fi
