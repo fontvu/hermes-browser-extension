@@ -57,6 +57,11 @@ jobs:
 
           git commit -m "WIP: upstream sync with conflicts" --no-verify
           git push --set-upstream origin "$BR"
-          gh pr create --base main --head "$BR" \
-            --title "Upstream sync needs manual resolution" \
-            --body "Scheduled weekly upstream merge hit conflicts. Resolve manually, then merge this PR."
+          gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            "repos/${GITHUB_REPOSITORY}/pulls" \
+            -f base=main \
+            -f head="$BR" \
+            -f title="Upstream sync needs manual resolution" \
+            -f body="Scheduled weekly upstream merge hit conflicts. Resolve manually, then merge this PR."
