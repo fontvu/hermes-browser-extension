@@ -41,12 +41,22 @@ jobs:
         run: |
           git merge --abort
           git reset --hard origin/main
-          BR="upstream-sync/conflict-$(date +%Y%m%d)"
+          BR="upstream-sync/conflict-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           git checkout -b "$BR"
-          (git merge --no-edit upstream/main) || true
+
+          if git merge --no-edit upstream/main; then
+            git push origin HEAD:main
+            exit 0
+          fi
+
           git add -A
-          git commit -m "WIP: upstream sync with conflicts" --no-verify || true
-          git push origin "$BR"
+          if git diff --cached --quiet; then
+            echo "Merge reported conflicts, but no staged changes were found to preserve." >&2
+            exit 1
+          fi
+
+          git commit -m "WIP: upstream sync with conflicts" --no-verify
+          git push --set-upstream origin "$BR"
           gh pr create --base main --head "$BR" \
             --title "Upstream sync needs manual resolution" \
             --body "Scheduled weekly upstream merge hit conflicts. Resolve manually, then merge this PR."
