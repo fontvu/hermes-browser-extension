@@ -59,8 +59,8 @@ jobs:
           fi
 
           # Security: $BR derives only from GITHUB_RUN_ID / GITHUB_RUN_ATTEMPT
-          # (runner-set numeric env vars); no untrusted ${{ event.* }} inputs
-          # are interpolated into any command below.
+          # (runner-set numeric env vars); no untrusted event-context
+          # expressions are interpolated into any command below.
           git commit -m "WIP: upstream sync with conflicts" --no-verify
           git push --force-with-lease --set-upstream origin "$BR"
           if gh pr create --base main --head "$BR" \
