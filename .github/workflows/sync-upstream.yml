@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  issues: write  # fallback: file an issue when GITHUB_TOKEN is denied PR creation
 
 jobs:
   sync-upstream:
@@ -49,14 +50,31 @@ jobs:
             exit 0
           fi
 
+          # git add -A is safe here: the merge is in a conflicted state, so
+          # staged files are only conflict markers to preserve for the PR.
           git add -A
           if git diff --cached --quiet; then
             echo "Merge reported conflicts, but no staged changes were found to preserve." >&2
             exit 1
           fi
 
+          # Security: $BR derives only from GITHUB_RUN_ID / GITHUB_RUN_ATTEMPT
+          # (runner-set numeric env vars); no untrusted ${{ event.* }} inputs
+          # are interpolated into any command below.
           git commit -m "WIP: upstream sync with conflicts" --no-verify
-          git push --set-upstream origin "$BR"
-          gh pr create --base main --head "$BR" \
+          git push --force-with-lease --set-upstream origin "$BR"
+          if gh pr create --base main --head "$BR" \
             --title "Upstream sync needs manual resolution" \
-            --body "Scheduled weekly upstream merge hit conflicts. Resolve manually, then merge this PR."
+            --body "Scheduled weekly upstream merge hit conflicts. Resolve manually, then merge this PR."; then
+            exit 0
+          fi
+
+          # GITHUB_TOKEN can be denied PR creation ("Resource not accessible
+          # by integration") even with pull-requests: write and the repo
+          # "allow Actions to create PRs" setting ON. Fall back to filing an
+          # issue: issues:write is not subject to that gate.
+          # Avoid duplicate issues: link to the conflict branch instead.
+          gh issue create \
+            --title "Upstream sync needs manual resolution (conflict branch pushed)" \
+            --body "Scheduled weekly upstream merge hit conflicts. Conflict branch \`$BR\` was pushed with the conflicted merge state. Open a PR from that branch manually: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/main...$BR" \
+            || echo "::warning::Could not file the follow-up issue either — check repo permissions."
