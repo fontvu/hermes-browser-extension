@@ -5,6 +5,7 @@ import {
   normalizeGatewayUrl,
   prepareOnDeviceSpeechRecognition,
   shouldFallbackToWebSpeechForTranscription,
+  shouldOpenVoiceDictationPageForSpeechError,
   shouldUseLocalDashboardAudioTranscription,
 } from './lib/common.mjs';
 import { initI18n, t, translateUiText } from './lib/i18n.mjs';
@@ -13,11 +14,12 @@ import {
   normalizeGatewayCapabilities,
 } from './lib/capabilities.mjs';
 import {
-  dashboardModelDiscoveryBaseUrl,
+  resolveDashboardTranscriptionBaseUrl,
   transcribeAudioViaDashboard,
 } from './lib/model-discovery.mjs';
+import { discoverLocalDashboardBaseUrl, readCachedRosterUrl } from './lib/desktop-roster.mjs';
 import { getBrowserApi } from './lib/browser-api.mjs';
-import { browserMicrophoneSettingsUrl, detectBrowserProduct } from './lib/browser-runtime.mjs';
+import { browserMicrophoneSettingsUrl, browserSpeechCloudFallbackAllowed, detectBrowserProduct } from './lib/browser-runtime.mjs';
 
 const browserApi = getBrowserApi();
 const extensionUrl = browserApi?.runtime?.getURL?.('/') || '';
@@ -52,6 +54,30 @@ let speechRecognition = null;
 let speechFinalText = '';
 let speechInterimText = '';
 let speechActive = false;
+let speechRecognitionError = '';
+let dashboardTranscriptionBaseUrl = '';
+
+// The Desktop dashboard is served on a discovered random loopback port. Resolve
+// it once per page so STT targets the live dashboard instead of the legacy
+// fixed port; the resolver keeps the fixed port as a last-resort fallback.
+async function resolveVoicePageDashboardBaseUrl() {
+  if (dashboardTranscriptionBaseUrl) return dashboardTranscriptionBaseUrl;
+  dashboardTranscriptionBaseUrl = await resolveDashboardTranscriptionBaseUrl({
+    gatewayMode: settings.gatewayMode,
+    gatewayUrl: settings.gatewayUrl,
+    discover: async () => {
+      const cached = await readCachedRosterUrl().catch(() => ({ url: '' }));
+      return discoverLocalDashboardBaseUrl({
+        cachedUrl: cached?.url || '',
+        cachedAt: Number(cached?.cachedAt || 0),
+        gatewayUrl: normalizeGatewayUrl(settings.gatewayUrl),
+        apiKey: settings.apiKey,
+        timeoutMs: 3_000,
+      });
+    },
+  });
+  return dashboardTranscriptionBaseUrl;
+}
 
 function setStatus(message) {
   if (statusEl) statusEl.textContent = translateUiText(message);
@@ -93,6 +119,10 @@ function speechRecognitionConstructor() {
 
 function browserSpeechAvailable() {
   return Boolean(speechRecognitionConstructor());
+}
+
+function canUseBrowserSpeechFallback() {
+  return browserSpeechAvailable() && browserSpeechCloudFallbackAllowed({ product: browserProduct });
 }
 
 function canRecordVoiceAudio() {
@@ -152,6 +182,17 @@ async function apiFetch(path, options = {}) {
   });
 }
 
+async function apiFetchWithTimeout(path, options = {}, timeoutMs = 120000) {
+  if (typeof AbortController === 'undefined') return apiFetch(path, options);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), Math.max(1, Number(timeoutMs) || 120000));
+  try {
+    return await apiFetch(path, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 async function readJsonResponse(response) {
   const text = await response.text();
   try {
@@ -191,11 +232,9 @@ async function transcribeVoiceRecording(blob) {
   }
   const dataUrl = await blobToDataUrl(blob);
   if (canUseDashboardTranscription && !canUseApiTranscription) {
+    const baseUrl = await resolveVoicePageDashboardBaseUrl();
     const result = await transcribeAudioViaDashboard({
-      baseUrl: dashboardModelDiscoveryBaseUrl({
-        gatewayMode: settings.gatewayMode,
-        gatewayUrl: settings.gatewayUrl,
-      }),
+      baseUrl,
       profile: settings.activeProfile,
       dataUrl,
       mimeType: blob.type || 'audio/webm',
@@ -230,9 +269,14 @@ async function publishTranscript(transcript, source = 'voice-dictation-page') {
     source,
     ts: Date.now(),
   };
-  await browserApi.storage.local.set({ [VOICE_DRAFT_STORAGE_KEY]: payload });
   try {
-    await browserApi.runtime.sendMessage(payload);
+    await browserApi?.storage?.local?.set?.({ [VOICE_DRAFT_STORAGE_KEY]: payload });
+  } catch {
+    // The runtime message is still useful when storage is unavailable or
+    // throws in a Chromium fork; do not lose a finished transcript.
+  }
+  try {
+    await browserApi?.runtime?.sendMessage?.(payload);
   } catch {
     // Storage is the durable cross-surface return path; runtime messaging is an immediate optimization.
   }
@@ -262,9 +306,26 @@ function ensureBrowserSpeech() {
     setStatus(t('voice.browser.preview', { preview: preview || translateUiText('Listening… speak now, then click Stop.') }));
   };
   recognition.onerror = (event) => {
+    if (shouldOpenVoiceDictationPageForSpeechError(event)) {
+      speechRecognitionError = event?.error || 'speech service unavailable';
+      speechActive = false;
+      setRecording(false);
+      startButton.disabled = false;
+      setStatus('Browser speech service unavailable. Start again to use Hermes audio transcription instead.');
+      return;
+    }
     setStatus(t('voice.browser.stopped', { error: event.error || translateUiText('Speech recognition error') }));
   };
   recognition.onend = async () => {
+    if (speechRecognitionError) {
+      const error = speechRecognitionError;
+      speechRecognitionError = '';
+      speechActive = false;
+      setRecording(false);
+      startButton.disabled = false;
+      setStatus(`Browser speech service unavailable (${error}). Use Hermes audio transcription from this tab instead.`);
+      return;
+    }
     const transcript = [speechFinalText, speechInterimText].filter(Boolean).join(' ').trim();
     speechActive = false;
     setRecording(false);
@@ -289,6 +350,7 @@ async function startBrowserSpeechFallback() {
   }
   speechFinalText = '';
   speechInterimText = '';
+  speechRecognitionError = '';
   try {
     startButton.disabled = false;
     const preparation = await prepareOnDeviceSpeechRecognition({
@@ -297,6 +359,11 @@ async function startBrowserSpeechFallback() {
       language: recognition.lang,
       onStatus: () => setStatus('Voice mode: On-device speech\n\nDownloading the browser language pack once…'),
     });
+    if (preparation.mode !== 'local' && !canUseBrowserSpeechFallback()) {
+      const error = new Error('This Chromium browser exposes Web Speech but not Chrome’s Google speech service.');
+      error.voiceDictationPageFallback = true;
+      throw error;
+    }
     recognition.start();
     speechActive = true;
     setRecording(true, 'speech');
@@ -432,8 +499,8 @@ try {
     setStatus('Preview mode: load this page from the installed Hermes Browser Extension to use connected Hermes settings and voice dictation.');
   } else if (canUseHermesStt() || canUseLocalDashboardStt()) {
     setStatus('Voice mode: Hermes STT\n\nAudio is sent once to your local Hermes transcription endpoint when you stop recording.');
-  } else if (browserSpeechAvailable()) {
-    setStatus('Voice mode: Browser speech fallback\n\nHermes STT is unavailable on this gateway. Speech recognition runs in the browser; only the transcript is sent back to the side panel.');
+  } else if (canUseBrowserSpeechFallback()) {
+    setStatus('Voice mode: Browser speech fallback\n\nHermes STT is unavailable on this gateway. Speech recognition runs in Google Chrome; only the transcript is sent back to the side panel.');
   } else if (!canRecordVoiceAudio()) {
     startButton.disabled = true;
     setStatus('This browser does not expose MediaRecorder/getUserMedia to extension pages, and Web Speech fallback is unavailable.');

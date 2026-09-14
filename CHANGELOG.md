@@ -2,6 +2,75 @@
 
 ## [Unreleased]
 
+### Added
+
+- The local sidecar card on the start screen rotates its background illustration: every time the side panel opens it picks a different image from the extension's bundled art set (seven images, and never the same one twice in a row), and the same artwork follows through to the matching card in appearance settings. The card's responsive scaling is untouched and the small corner badge keeps its own fixed image.
+- `/btw` side questions now ride the gateway's native side-question flow over the dashboard socket (REST completions stays as the fallback for API-key connections) and land in a full-width result card at the end of the transcript: the card appears while Hermes is thinking, then fills in with the answer, a Copy action, a snapshot timing line, and a dismiss control instead of vanishing with the 5.2-second operation toast. The card stays out of the saved conversation and clears when you switch sessions.
+- The "Capture visible Gmail thread" button can be dismissed with a small ✕ that is remembered across reloads, and it can be turned back on any time under Settings → Right-click actions.
+- Live subagent roster in the composer dock: queued/running children appear in a SUBAGENTS stack next to TASKS, with model, current tool, elapsed time, and a selected-row steer/stop control. Snapshot hydrate uses `subagent.list`; missing RPCs fail closed.
+- Fenced code blocks in chat get a hover copy-to-clipboard control, without overflowing the message card.
+- Telegram and Desktop session images hydrate from Hermes cache paths (`image_url:` / `@image:` / `MEDIA:`) through the dashboard `/api/media` route. Local videos render as a player when `/api/files/stream` can serve them, otherwise as an honest file card. Pixels that were never stored in Hermes (only in Telegram itself) cannot be invented.
+- Composer text and attachments restore after you close and reopen the side panel in the same browser session. Images are saved to disk when attached so the draft stores a path instead of a huge image blob.
+
+### Fixed
+
+- The Hermes Assist launcher no longer sits on top of what you are typing in a full-width composer. Every inline site now prefers a placement outside the focused field and keeps the inside-the-field position as a last resort, and a placement that would still cover the field is rejected, so facebook.com and messenger.com no longer hide the end of the draft (#96).
+- Buttons no longer disappear on hover in light themes. Hovers that repainted a control with a hardcoded white or a pale accent now invert to the theme's action surface and redraw the outline in the label colour, so every control keeps a visible boundary on every palette. Hovered label contrast measures 7.9:1 at worst across the nine themes (14.2:1 in Nous Light). The enabled Save, Test, and close controls in the settings header no longer read as disabled (9.57:1 text, 6.86:1 border in Nous Light), and full-tab settings rules that referenced primary-colour tokens which no CSS file ever defined now carry real fallbacks.
+- Generated images now actually appear in the side panel: the image-generation animation dissolves into the real picture, every picture a tool call produced gets its own card (primary plus alternates, not just the first), and each one opens in the zoomable lightbox with a Download action. Local Hermes cache paths are resolved through the dashboard media route instead of being silently dropped, which is what let the old animation run forever and then vanish. Paths outside the Hermes media roots still fall back to the honest filename chip.
+- Pasted screenshots now reach the agent on the local Desktop dashboard transport: Browser uploads each image to the live session over the gateway's `image.attach_bytes` RPC (the same contract Hermes Desktop uses) before the prompt submits, so vision opens the real file instead of hunting for a path that never arrived. The turn envelope now carries the gateway's saved image path for every attached image.
+- Explicit Gmail thread capture now reads the entire open thread instead of only the expanded messages: every message node is captured in document order with its sender and date, collapsed-but-rendered bodies are included, repeated messages are no longer de-duplicated away, the subject leads the capture, and output truncates at a message boundary when a thread exceeds the context budget. Compose drafts, textareas, inputs, and contenteditable reply fields are still never captured.
+- Steering now surfaces in the transcript itself: a dashed STEER QUEUED row ("arrives after the next tool call") with the steered text pins under the live turn the moment a steer is queued, and clears when the steered message lands in history or the turn settles. A steer the runtime rejects keeps the draft in the composer instead of clearing silently.
+- After a background subagent batch finishes, the transcript keeps the live thinking indicator until the gateway's parent completion reply lands, so the child-to-parent handoff never shows a dead moment.
+- The Chat only context chip hides in chat-only mode; the scope button already names the mode, so the chip row no longer wastes composer space.
+- The side-panel model picker can no longer open partly above the viewport: bottom-anchored popovers reserve the live composer dock height instead of a fixed guess, and the model list and runtime options shrink and scroll so the search box and provider selector stay reachable (ported from #101, thanks @qinxianhahaha).
+- Subagent completions now surface the parent completion reply even after the dashboard runtime reaps the stale live session id: Browser resumes the durable session before fetching history and keeps polling until the reply is actually in the transcript. Completed children leave the live roster and their timers stop.
+- Background completion replies now stream into the transcript with the same progressive reveal live turns use instead of popping in fully formed.
+- Local Desktop dashboard transport now advertises and routes Steer (`session.steer`) so Comet is not stuck with a hidden/dead steer control while Hermes is working.
+- Side-panel voice dictation records until you stop, with a Dictating timer and live audio meter. Hermes speech-to-text runs after stop (same as Desktop). A microphone that delivers no audio still escalates to the Voice Dictation tab.
+- Side-panel mic that starts but never captures speech now errors and opens the Hermes Voice Dictation tab instead of staying fake-ON.
+- If the Browser socket goes quiet or drops while Hermes Desktop is still running the turn, Browser reconnects and keeps listening instead of showing "Could not reach the Hermes dashboard."
+- Mapped Codex ChatGPT 6 Astra context windows: 272k for the base model and 900k for the explicit 900k variant, matching the GPT-5.6 Codex OAuth tiers.
+- Restored Bot Mode Desktop roster parity: authenticated `profiles.list` supplies display names, avatars, last-activity stamps, group-chat projections, and canonical Bot Chat identity. Public status/health names are discovery only and no longer replace a rich roster.
+- Opening a bot resumes the confirmed existing Bot Chat and fails closed on lookup errors instead of creating a duplicate chat.
+- Dashboard discovery uses explicit URLs, cached URLs, open loopback tabs, sidecar candidate ports, and documented default ports. It no longer scans arbitrary ephemeral port ranges or treats gateway health names as a complete roster.
+- Disabled the broad loopback CORS header rewrite. Loopback GET discovery can still proxy through the service worker without rewriting every localhost response.
+- Fixed Local gateway Bot Mode profile discovery when Dashboard authentication replaces the token-bearing root page with sign-in HTML; public status now identifies the dashboard, while the existing explicitly trusted signed-in tab and one-use WebSocket ticket flow authenticates the usable profile roster (#99).
+
+## [0.3.2] - 2026-09-05
+
+### Added
+
+- Added Hermes Bot Mode: dedicated multi-agent roster with seamless profile switching across default and named user profiles, lazy model loading, and instant agent opening.
+- Added live Group Chat & Threads support: multi-agent room projections, collaborative thread tracking, and synchronized conversation histories without blank chat states.
+- Added AI Tab Triage command (`/sort-tabs`, `/organize-tabs`, `/clean-tabs`, `/categorize-tabs`, `/triage-tabs`): automatically analyzes all open tabs in the window, clusters them into logical categories (Projects, Research, Social, Productivity, Stale/Duplicates), identifies redundant URLs, and generates an actionable removal checklist.
+- Added a full-width **Page only** action button and side-by-side **Include all tabs** and **AI Triage Tabs** controls with hover tooltip descriptions.
+- Added multi-keyword tab search supporting whitespace-separated query tokens matching across tab titles and URLs with an active match count badge and keyboard navigation (`Enter` to toggle, `Escape` to clear).
+
+### Fixed
+
+- Fixed 40-second connection delay by implementing dynamic loopback Desktop dashboard discovery across ephemeral ports (1297, 22784, etc.) with bounded racing and strict endpoint abort timeouts.
+- Fixed `dashboard-sessions-422` session loading failure: updated session pagination to respect the dashboard's max query limit (`limit <= 100`) across sequential pages, restoring full access to Hermes Browser Extension, Desktop, and API sessions without gateway errors.
+- Fixed startup loading freeze: restored sequential readiness step reporting with strict timeouts preventing loopback gateway endpoint hangs.
+- Fixed false "Invalid gateway API key API_SERVER_KEY" error banners on named profiles by enabling loopback browser pairing token authorization and direct dashboard WebSocket transport fallback.
+- Fixed tab context scope regression: "Page only" mode now truthfully displays `1/N` tabs in prompt, marks the active page `IN`, marks all other tabs `OUT`, and strictly isolates prompt payload tabs so the AI model never receives unselected browser tabs.
+
+## [0.3.1] - 2026-08-27
+
+### Fixed
+
+- Fixed repeated `Uncaught SyntaxError: Identifier 'browserApi' has already been declared` in Vivaldi/Chromium by scoping the entire content-script bridge inside an idempotent IIFE; cross-run coordination stays on the existing globalThis sentinels with listener cleanup before rebinding (#86).
+- Hardened the scripting install fallback to probe the content-script re-entry sentinel and inject only missing scripts instead of blindly re-executing all manifest scripts into an initialized frame (#86).
+- Fixed automatic pairing never reaching its approval window on gateways that keep `/v1/capabilities` behind authentication: a fresh install now makes one bootstrap pair/start attempt when the capability advertisement is unreadable (HTTP 401) on a loopback local gateway, falling back to manual setup only when that genuinely fails. Verified live end-to-end on Firefox 154 / Windows 11 against an auth-hardened gateway: pair start, Approve Connection page, token grant, and full readiness chain (#85 investigation).
+
+### Added
+
+- Added startup latency instrumentation (observer-only performance marks exposed via `window.__HBE_BOOT_MARKS`) covering body start, i18n, settings restore, per-stage readiness settles, message paint, and composer interactive.
+- Added `scripts/bench-startup.mjs` (`npm run bench:startup`): cold/warm/restart startup benchmark with an embedded fixture gateway, hard sample-count assertions, p50/p90 reporting, and a gateway-down scenario.
+
+### Changed
+
+- Internal-only: added the Python tooling namespace under `scripts/pytools/` (gateway log forensics, capability/route diffing, release consistency auditing, Bot Mode contract diffing, controller trace timelines) with stdlib unittest suites wired as `npm run test:pytools`.
+
 ## [0.3.0] - 2026-08-22
 
 ### Added

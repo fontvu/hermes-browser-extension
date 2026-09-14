@@ -62,6 +62,8 @@ import {
   runtimeValueMatches,
   reasoningEffortShortLabel,
   skillCommandForName,
+  isNamedHermesProfileName,
+  restSkillsFallbackAllowed,
   skillSuggestionsForInput,
   shouldStopSessionPaging,
   shouldFallbackToWebSpeechForTranscription,
@@ -198,9 +200,10 @@ test('sidepanel replays stored history without emptying canonical messages betwe
   const renderer = source.match(/function renderMessagesFromStorage\(\) \{[\s\S]*?\n\}/)?.[0] || '';
 
   assert.match(renderer, /els\.messages\.innerHTML = '';/);
-  assert.match(renderer, /for \(const message of browserDisplayMessages\(messages\)\) \{/);
+  assert.match(renderer, /for \(const message of browserDisplayMessages\((?:visibleMessages|messages)\)\) \{/);
   assert.match(renderer, /if \(isDelegationCompletionMarkerMessage\(message\)\) continue;/);
-  assert.match(renderer, /addMessage\(message\.role, message\.content, \{ persist: false \}\);/);
+  // Replay keeps roleLabel pass-through (group projection author labels).
+  assert.match(renderer, /addMessage\(message\.role, message\.content, \{[\s\S]*?persist: false[\s\S]*?attachments: message\.attachments \|\| null[\s\S]*?\}\);/);
   assert.doesNotMatch(renderer, /messages\s*=\s*\[\]/);
 });
 
@@ -243,15 +246,24 @@ test('messageDisplayText reveals only the human request from canonical Browser p
   assert.equal(common.messageDisplayText('user', wrapped), 'Summarize this page\nand keep it short.');
   assert.equal(common.messageDisplayText('user', 'Plain request'), 'Plain request');
   assert.equal(common.messageDisplayText('assistant', wrapped), wrapped);
+  assert.equal(
+    common.messageDisplayText(
+      'user',
+      '<<<HERMES_PAGE_COMMENTS session=x>>>\nComment 1\nNote: hi\n<<<END_HERMES_PAGE_COMMENTS>>>',
+    ),
+    '1 page comment',
+  );
 });
 
-test('messageDisplayText fails closed for malformed or ambiguous request boundaries', () => {
+test('messageDisplayText recovers the human prompt from malformed or ambiguous request boundaries', () => {
   const malformed = 'USER_REQUEST_START\nKeep this unchanged';
   const duplicated = 'USER_REQUEST_START\nOne\nUSER_REQUEST_END\nUSER_REQUEST_START\nTwo\nUSER_REQUEST_END';
 
   assert.equal(typeof common.messageDisplayText, 'function');
-  assert.equal(common.messageDisplayText('user', malformed), malformed);
-  assert.equal(common.messageDisplayText('user', duplicated), duplicated);
+  // A stray or duplicated marker must never hide the message: the human text is
+  // recovered and the protocol marker itself is dropped.
+  assert.equal(common.messageDisplayText('user', malformed), 'Keep this unchanged');
+  assert.equal(common.messageDisplayText('user', duplicated), 'One\n\nTwo');
 });
 
 test('messageDisplayText renders only typed BCP v2 human_input and rejects lookalikes', () => {
@@ -269,9 +281,17 @@ test('messageDisplayText renders only typed BCP v2 human_input and rejects looka
     attachment_context: {},
     source_receipt: {},
   });
+  const lookalike = JSON.stringify({
+    protocol: 'something.else',
+    human_input: { source: 'composer', text: 'nope' },
+  });
 
   assert.equal(common.messageDisplayText('user', v2), 'Only this composer text is history-visible.');
-  assert.equal(common.messageDisplayText('user', ambiguous), ambiguous);
+  // An envelope that carries extra keys still shows the human prompt instead of
+  // dumping raw JSON into the transcript.
+  assert.equal(common.messageDisplayText('user', ambiguous), 'one');
+  // Text without a Browser-turn marker is never treated as an envelope.
+  assert.equal(common.messageDisplayText('user', lookalike), lookalike);
 });
 
 test('sidepanel and Hermes Web share the display-only Browser request formatter', () => {
@@ -313,6 +333,19 @@ test('normalizeHermesSessions preserves the server-reported profile for profile-
   assert.equal(sessions.find((s) => s.id === 's1').profile, 'sebastian');
   assert.equal(sessions.find((s) => s.id === 's2').profile, 'work');
   assert.equal(sessions.find((s) => s.id === 's3').profile, '');
+});
+
+test('normalizeHermesSessions preserves transport and hidden metadata for profile-aware session reopening', () => {
+  const [session] = normalizeHermesSessions({ data: [{
+    id: 'profile-session',
+    title: 'Naminé work',
+    profile: 'namine',
+    transport: 'dashboard-ws',
+    hidden: true,
+  }] });
+  assert.equal(session.transport, 'dashboard-ws');
+  assert.equal(session.hidden, true);
+  assert.equal(session.profile, 'namine');
 });
 
 test('stored runtime acknowledgements fill missing Cloud session model metadata without overriding canonical rows', () => {
@@ -361,8 +394,8 @@ test('startup exposes one-click connection testing and Cloud reconnect uses the 
 
   assert.match(html, /id="settingsButton"[\s\S]*id="startupTestConnectionButton"/);
   assert.match(html, /id="startupTestConnectionButton"[^>]*>\s*TEST CONNECTION\s*</);
-  assert.match(css, /body\.startup-active \.topbar #startupTestConnectionButton/);
-  assert.match(css, /top:\s*min\(var\(--startup-settings-top[^;]*calc\(100vh - 84px\)\)/);
+  assert.match(css, /body\.startup-active \.startup-actions #startupTestConnectionButton/);
+  assert.doesNotMatch(css, /--startup-settings-top/);
   assert.match(source, /startupTestConnectionButton:\s*\$\('#startupTestConnectionButton'\)/);
   assert.match(source, /els\.startupTestConnectionButton\?\.addEventListener\('click', testConnection\)/);
   assert.match(source, /function connectionTestButtons\(\)/);
@@ -411,7 +444,7 @@ test('Hermes Web Cloud handoff uses the same signed-in dashboard ticket transpor
   assert.ok(select.indexOf('buildSessionModelSwitchRequest') < select.indexOf('WS_METHODS.sessionStatus'));
   assert.match(select, /cloudSwitchAccepted = true/);
   assert.match(select, /if \(cloudSwitchAccepted\)[\s\S]*Cloud model rollback/);
-  assert.match(source, /const forThisSession = \(event\) => event\.sessionId === sessionId;/);
+  assert.match(source, /const forThisSession = \(event\) => matchesDashboardSessionEvent\(event, sessionIds\);/);
   assert.match(source, /WS_EVENTS\.error, \(event\) => \{\s*if \(!forThisSession\(event\)\) return;/);
   assert.match(source, /let dashboardTurnSessionId = '';/);
   assert.match(source, /sessionHistory, \{ session_id: dashboardTurnSessionId \}/);
@@ -469,8 +502,8 @@ test('sidepanel wires Browser-scoped models and compact session copy/rename acti
   assert.match(source, /copyTextToClipboard/);
   assert.match(source, /navigator\.clipboard\.writeText/);
   assert.match(source, /Copy session ID/);
-  assert.match(source, /promptRenameSession/);
-  assert.match(source, /renameHermesSessionTitle\(session\.id/);
+  assert.match(source, /openSessionRenameEditor/);
+  assert.match(source, /renameHermesSessionTitle\(sessionId, nextTitle\)/);
   assert.match(source, /Rename session/);
   assert.doesNotMatch(source, /hermes config set/);
   assert.doesNotMatch(source, /model\.default/);
@@ -485,8 +518,8 @@ test('bottom dock keeps baseline composer geometry while floating popovers remai
   const composerRule = css.match(/\.composer\s*\{[\s\S]*?\}/)?.[0] || '';
   const textareaRule = css.match(/textarea\s*\{\s*resize:\s*vertical;[\s\S]*?\}/)?.[0] || '';
   const commandMenuRule = css.match(/\.quick-more-menu\s*\{[\s\S]*?\}/)?.[0] || '';
-  const scrollbarRule = css.match(/\.app-scroll::-webkit-scrollbar,[\s\S]*?\{\s*width:\s*8px;\s*\}/)?.[0] || '';
-  const scrollbarThumbRule = css.match(/\.app-scroll::-webkit-scrollbar-thumb,[\s\S]*?\{[\s\S]*?border:\s*1px solid var\(--hermes-line-strong\);\s*\}/)?.[0] || '';
+  const scrollbarRule = css.match(/\.app-scroll::-webkit-scrollbar,[^}]*?\{[^}]*?width:\s*8px;[^}]*?\}/)?.[0] || '';
+  const scrollbarThumbRule = css.match(/\.app-scroll::-webkit-scrollbar-thumb,[^}]*?\{[^}]*?border:\s*1px solid var\(--hermes-line-strong\);[^}]*?\}/)?.[0] || '';
   const floatingRule = css.match(/\.model-menu,\s*\n\.context-popover\s*\{[\s\S]*?\}/)?.[0] || '';
 
   assert.match(dockRule, /grid-template-rows:\s*auto auto/);
@@ -1485,7 +1518,12 @@ test('voice dictation prefers on-device speech and installs a language pack when
 test('voice dictation detects blocked microphone permissions with actionable guidance', () => {
   assert.equal(isMicrophonePermissionError({ name: 'NotAllowedError', message: 'Permission denied' }), true);
   assert.equal(isMicrophonePermissionError({ error: 'not-allowed' }), true);
+  assert.equal(isMicrophonePermissionError({ name: 'NotReadableError', message: 'Permissions Policy blocked microphone' }), true);
+  assert.equal(isMicrophonePermissionError({ name: 'SecurityError', message: 'microphone is not available' }), true);
   assert.equal(isMicrophonePermissionError(new Error('network failed')), false);
+  assert.equal(common.shouldOpenVoiceDictationPageForSpeechError({ error: 'network' }), true);
+  assert.equal(common.shouldOpenVoiceDictationPageForSpeechError({ error: 'service-not-allowed' }), true);
+  assert.equal(common.shouldOpenVoiceDictationPageForSpeechError(new Error('server error')), false);
   assert.match(microphonePermissionHelp(), /Hermes Voice Dictation tab/);
   assert.match(microphonePermissionHelp(), /visible extension page/i);
   assert.match(microphonePermissionHelp(), /Microphone to Allow/i);
@@ -1536,18 +1574,50 @@ test('manifests omit unsupported audioCapture permission and use the web microph
 
 test('sidepanel falls back to visible voice dictation tab when sidepanel microphone capture is blocked', () => {
   const source = readFileSync(new URL('../extension/sidepanel.js', import.meta.url), 'utf8');
+  const voiceSource = readFileSync(new URL('../extension/voice-dictation.js', import.meta.url), 'utf8');
   assert.match(source, /const VOICE_DICTATION_PAGE = 'voice-dictation\.html'/);
   assert.match(source, /async function openVoiceDictationPage/);
   assert.match(source, /HERMES_VOICE_TRANSCRIPT/);
   assert.match(source, /consumePendingVoiceDraft/);
   assert.match(source, /error\.voiceDictationPageFallback = true/);
+  assert.match(source, /if \(!canRecordVoiceAudio\(\)\)/);
+  assert.match(source, /openVoiceDictationPage\('This side panel cannot capture microphone audio/);
+  assert.match(source, /browserSpeechCloudFallbackAllowed/);
+  assert.match(source, /shouldOpenVoiceDictationPageForSpeechError/);
+  assert.match(source, /toggleVoiceDictation\(\)\.catch/);
+  assert.match(voiceSource, /browserSpeechCloudFallbackAllowed/);
+  assert.match(voiceSource, /preparation\.mode !== 'local'/);
+  assert.match(voiceSource, /await browserApi\?\.storage\?\.local\?\.set\?\./);
   assert.match(source, /The current browser blocked microphone capture inside the side panel/);
+});
+
+test('speech silent-start watchdog treats started-but-mute recognition as a failure', () => {
+  assert.equal(common.SPEECH_SILENT_START_TIMEOUT_MS, 6000);
+  assert.equal(common.speechRecognitionSilentlyFailed({ elapsedMs: 5999 }), false);
+  assert.equal(common.speechRecognitionSilentlyFailed({ elapsedMs: 6000 }), true);
+  assert.equal(common.speechRecognitionSilentlyFailed({ elapsedMs: 6000, sawStart: true }), true);
+  assert.equal(common.speechRecognitionSilentlyFailed({ elapsedMs: 12000, sawResult: true }), false);
+  assert.equal(common.speechRecognitionSilentlyFailed({ elapsedMs: 12000, sawError: true }), false);
+  assert.equal(common.speechRecognitionSilentlyFailed({ elapsedMs: 12000, sawEnd: true }), false);
+
+  const source = readFileSync(new URL('../extension/sidepanel.js', import.meta.url), 'utf8');
+  assert.match(source, /dictating = true;\r?\n\s+updateVoiceButtonState\(\);\r?\n\s+armSpeechWatchdog\(\)/, 'sidepanel must arm the silent-start watchdog after starting web speech');
+  assert.match(source, /function armSpeechWatchdog\(\)/, 'sidepanel must define armSpeechWatchdog');
+  assert.match(source, /function clearSpeechWatchdog\(\)/, 'sidepanel must define clearSpeechWatchdog');
+  assert.doesNotMatch(source, /recognition\.onstart = \(\) => \{ clearSpeechWatchdog\(\); \};/, 'onstart must not cancel the watchdog — Comet fires start with no audio');
+  assert.match(source, /recognition\.onresult = \(event\) => \{/, 'sidepanel onresult must exist');
+  assert.match(source, /speechRecognitionSilentlyFailed/, 'sidepanel must use the silent-failure contract from common.mjs');
+  assert.match(source, /never delivered audio/, 'the watchdog must surface a real error instead of a fake ON state');
+  assert.match(source, /void openVoiceDictationPage\('Browser speech started but never delivered audio/, 'the watchdog must route to the granted-tab voice page that posts hermesVoiceDraft');
+  assert.match(source, /clearSpeechWatchdog\(\);\r?\n\s+dictating = false;/, 'the watchdog must clear the fake ON state before falling back');
 });
 
 test('connect and startup sync Hermes models, sessions, skills, and profiles from the gateway', () => {
   const source = readFileSync(new URL('../extension/sidepanel.js', import.meta.url), 'utf8');
   assert.match(source, /await loadModels\(\{ quiet: true \}\);\s*await loadSkills\(\{ quiet: true \}\);\s*await loadProfiles\(\{ quiet: true \}\);\s*await loadSessions\(\{ quiet: true \}\);\s*await initializeSessionForPanelOpen\(\{ focus: false \}\);/s);
-  assert.match(source, /apiFetch\('\/v1\/models'/);
+  // Models no longer load from /v1/models REST: the recovered source uses
+  // WS model discovery (discoverModelsFromRegistry / discoverModelsFromDashboard).
+  assert.match(source, /WS_METHODS\.modelsList|discoverModelsFromRegistry\(|discoverModelsFromDashboard\(/);
   assert.ok(
     source.indexOf('discoverModelsFromRegistry({ apiFetch, readJsonResponse, refresh })') > -1
       && source.indexOf('discoverModelsFromRegistry({ apiFetch, readJsonResponse, refresh })') < source.indexOf('discoverModelsFromDashboard({'),
@@ -1556,12 +1626,19 @@ test('connect and startup sync Hermes models, sessions, skills, and profiles fro
   assert.match(source, /discoverModelsFromDashboard\(\{/);
   assert.match(source, /profile: safeActiveProfile\(\)/);
   assert.match(source, /safeActiveProfile\(\)/);
-  assert.match(source, /discoverProfilesViaTab\(\{/);
+  // Profile discovery lives in the Bot Mode roster path: authenticated
+  // dashboard WebSocket profiles.list is the rich source. REST /api/profiles
+  // remains a dashboard-discovery helper, never a substitute roster.
+  const roster = readFileSync(new URL('../extension/lib/desktop-roster.mjs', import.meta.url), 'utf8');
+  assert.match(roster, /\/api\/profiles/, 'desktop roster helper still knows the dashboard /api/profiles endpoint');
+  assert.match(source, /discoverLocalDashboardBaseUrl\(\{/);
+  assert.match(source, /WS_METHODS\.profilesList/);
   assert.match(source, /dashboardModelDiscoveryBaseUrl\(\{/);
   assert.doesNotMatch(source, /loadModels\(\{ quiet: true, payload: modelsPayload \}\)/);
   assert.match(source, /shouldTrySessionModelFallback\(\{\s*registryModels,\s*registrySource,\s*defaultModelId: DEFAULT_SETTINGS\.model,\s*\}\)/s);
   assert.match(source, /apiFetch\('\/v1\/skills'/);
-  assert.match(source, /apiFetch\('\/v1\/profiles'/);
+  assert.match(source, /request\(WS_METHODS\.profilesList, \{ include_sessions: true \}\)/);
+  assert.doesNotMatch(source, /fetchRosterFromDashboard\(\{/);
   assert.match(source, /apiFetch\(`\/api\/sessions\?limit=\$\{limit\}&offset=\$\{offset\}&include_children=true&order=recent`/);
   assert.match(source, /els\.refreshModelsButton\.addEventListener\('click', refreshModelsFromMenu\)/);
 });
@@ -1627,7 +1704,8 @@ test('assistant thinking placeholder renders animated indicator markup and reduc
   assert.match(source, /<span class="thinking-word">\$\{escapeHtml\(word\)\}<\/span>/);
   assert.match(source, /<span class="thinking-dots" aria-hidden="true"><i><\/i><i><\/i><i><\/i><\/span>/);
   assert.match(source, /<span class="thinking-words" aria-hidden="true">\$\{phrases\}<\/span>/);
-  assert.match(source, /streamView\.updateText\(liveText \|\| THINKING_PLACEHOLDER\)/);
+  assert.match(source, /streamPacer\.push\(liveText\.slice\(pushedLive\)\);/);
+  assert.match(source, /streamView\.updateText\(text \|\| \(meta\.done \? '' : THINKING_PLACEHOLDER\)\);/);
   assert.match(css, /\.thinking-indicator[\s\S]*overflow: hidden/);
   assert.match(css, /\.thinking-words[\s\S]*overflow: hidden/);
   assert.match(css, /\.thinking-words[\s\S]*height: 1\.46em/);
@@ -1649,7 +1727,8 @@ test('tool activity strip is wired as runtime UI instead of raw tool markdown', 
   assert.match(source, /function setToolActivity/);
   assert.match(source, /updateTool\(tool/);
   assert.match(source, /normalizeBrowserRuntimeEvent/);
-  assert.match(source, /streamView\.updateTool\(normalizeToolActivity\(tool\)\)/);
+  assert.match(source, /streamView\.updateTool\(activity\)/);
+  assert.match(source, /rawGeneratedImageCandidatesFromResult\(activity\.result\)/);
   assert.doesNotMatch(source, /\\n\\n\[tool\]/);
   assert.match(css, /\.tool-activity\b/);
   for (const category of ['file', 'edit', 'terminal', 'browser', 'web', 'media', 'meta']) {
@@ -1706,6 +1785,15 @@ test('normalizeHermesModels converts OpenAI-style /v1/models payload and keeps s
   assert.equal(models[1].contextTokens, 131072);
 });
 
+test('normalizeHermesModels canonicalizes provider-qualified UI IDs while preserving raw runtime IDs', () => {
+  const models = normalizeHermesModels({
+    data: [{ id: 'e2e/test-model', provider: 'e2e', context_length: 32000 }],
+  }, 'e2e/test-model');
+  assert.equal(models[0].id, 'e2e::e2e/test-model');
+  assert.equal(models[0].rawModelId, 'e2e/test-model');
+  assert.equal(models[0].provider, 'e2e');
+});
+
 test('normalizeHermesModels does not keep default hermes-agent fallback when real models exist', () => {
   const models = normalizeHermesModels({ data: [{ id: 'openai-codex:gpt-5.5' }] }, 'hermes-agent');
   assert.deepEqual(models.map((model) => model.id), ['openai-codex:gpt-5.5']);
@@ -1714,6 +1802,17 @@ test('normalizeHermesModels does not keep default hermes-agent fallback when rea
 test('normalizeHermesModels applies curated context fallback when provider rows omit limits', () => {
   const models = normalizeHermesModels({ data: [{ id: 'minimax:MiniMax-M3', name: 'MiniMax-M3', context_length: 0 }] }, 'minimax:MiniMax-M3');
   assert.equal(models[0].contextTokens, 1000000);
+});
+
+test('normalizeHermesModels gives Grok 4.6 a 500k window instead of the grok-4 256k catch-all', () => {
+  const omitted = normalizeHermesModels({ data: [{ id: 'x-ai/grok-4.6', rawModelId: 'grok-4.6', provider: 'x-ai', context_length: 0 }] }, 'x-ai/grok-4.6');
+  assert.equal(omitted[0].contextTokens, 500_000);
+
+  const stale = normalizeHermesModels({ data: [{ id: 'grok-4.6', rawModelId: 'grok-4.6', provider: 'xai', context_length: 256_000 }] }, 'grok-4.6');
+  assert.equal(stale[0].contextTokens, 500_000);
+
+  const older = normalizeHermesModels({ data: [{ id: 'grok-4', rawModelId: 'grok-4', provider: 'xai', context_length: 0 }] }, 'grok-4');
+  assert.equal(older[0].contextTokens, 256_000);
 });
 
 test('normalizeHermesModels applies 1M context fallback for Qwen Token Plan models', () => {
@@ -1747,17 +1846,70 @@ test('normalizeHermesModels uses provider-aware GPT-5.5 context fallbacks', () =
   assert.equal(openRouterModels[0].contextTokens, 1050000);
 });
 
-test('normalizeHermesModels mirrors Hermes effective Codex OAuth context metadata', () => {
+test('normalizeHermesModels maps tiered Codex GPT-5.6 context variants by explicit 900k suffix', () => {
   for (const model of ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.6-sol-2026-08-16']) {
     const codexModels = normalizeHermesModels({ data: [{ id: `openai-codex::${model}`, rawModelId: model, provider: 'openai-codex', context_length: 0 }] }, `openai-codex::${model}`);
-    assert.equal(codexModels[0].contextTokens, 900_000, `${model} should use the effective Codex OAuth limit`);
+    assert.equal(codexModels[0].contextTokens, 272_000, `${model} should use the base Codex OAuth limit`);
+
+    const largeVariant = `${model}-900k`;
+    const largeCodexModels = normalizeHermesModels({ data: [{ id: `openai-codex::${largeVariant}`, rawModelId: largeVariant, provider: 'openai-codex', context_length: 0 }] }, `openai-codex::${largeVariant}`);
+    assert.equal(largeCodexModels[0].contextTokens, 900_000, `${largeVariant} should use the 900K Codex OAuth limit`);
 
     const directModels = normalizeHermesModels({ data: [{ id: `openai::${model}`, rawModelId: model, provider: 'openai', context_length: 0 }] }, `openai::${model}`);
     assert.equal(directModels[0].contextTokens, 1_050_000, `${model} should use the direct OpenAI limit`);
   }
 
+  const labeledVariant = normalizeHermesModels({ data: [{
+    id: 'openai-codex::gpt-5.6-luna',
+    rawModelId: 'gpt-5.6-luna',
+    label: 'GPT-5.6 Luna 900K',
+    provider: 'openai-codex',
+    context_length: 0,
+  }] }, 'openai-codex::gpt-5.6-luna');
+  assert.equal(labeledVariant[0].contextTokens, 900_000, 'a visible 900K model label should select the large Codex window');
+
   const codexGpt54 = normalizeHermesModels({ data: [{ id: 'openai-codex::gpt-5.4', rawModelId: 'gpt-5.4', provider: 'openai-codex', context_length: 0 }] }, 'openai-codex::gpt-5.4');
   assert.equal(codexGpt54[0].contextTokens, 900_000, 'exact gpt-5.4 should use the effective Codex OAuth limit');
+});
+
+test('normalizeHermesModels maps Codex ChatGPT 6 Astra context to 272k and 900k', () => {
+  for (const model of ['gpt-6-astra', 'chatgpt-6-astra']) {
+    const base = normalizeHermesModels({ data: [{ id: `openai-codex::${model}`, rawModelId: model, provider: 'openai-codex', context_length: 0 }] }, `openai-codex::${model}`);
+    assert.equal(base[0].contextTokens, 272_000, `${model} should use the base Codex OAuth limit`);
+
+    const largeVariant = `${model}-900k`;
+    const large = normalizeHermesModels({ data: [{ id: `openai-codex::${largeVariant}`, rawModelId: largeVariant, provider: 'openai-codex', context_length: 0 }] }, `openai-codex::${largeVariant}`);
+    assert.equal(large[0].contextTokens, 900_000, `${largeVariant} should use the 900K Codex OAuth limit`);
+  }
+
+  const labeled = normalizeHermesModels({ data: [{
+    id: 'openai-codex::gpt-6-astra',
+    rawModelId: 'gpt-6-astra',
+    name: 'ChatGPT 6 Astra',
+    provider: 'openai-codex',
+    context_length: 0,
+  }] }, 'openai-codex::gpt-6-astra');
+  assert.equal(labeled[0].contextTokens, 272_000, 'ChatGPT 6 Astra should register as 272k');
+
+  const labeled900k = normalizeHermesModels({ data: [{
+    id: 'openai-codex::gpt-6-astra',
+    rawModelId: 'gpt-6-astra',
+    label: 'ChatGPT 6 Astra 900K',
+    provider: 'openai-codex',
+    context_length: 272_000,
+  }] }, 'openai-codex::gpt-6-astra');
+  assert.equal(labeled900k[0].contextTokens, 900_000, 'a visible 900K Astra label should repair the stale 272K advertisement');
+
+  const alias = normalizeHermesModels({ data: [{
+    id: 'codex::gpt-6-astra',
+    rawModelId: 'gpt-6-astra',
+    provider: 'codex',
+    context_length: 0,
+  }] }, 'codex::gpt-6-astra');
+  assert.equal(alias[0].contextTokens, 272_000);
+
+  const unknownProvider = normalizeHermesModels({ data: [{ id: 'gpt-6-astra', context_length: 0 }] }, 'gpt-6-astra');
+  assert.equal(unknownProvider[0].contextTokens, 0, 'Astra must not invent a window without a provider');
 });
 
 test('normalizeHermesModels keeps Codex OAuth exclusions at 272k', () => {
@@ -1783,7 +1935,7 @@ test('normalizeHermesModels keeps provider identity scoped and consistent for Co
     providerLabel: 'OpenAI Codex',
     context_length: 0,
   }] }, 'gpt-5.6-terra');
-  assert.equal(labelOnly[0].contextTokens, 900_000, 'a provider label should be normalized only when no explicit provider exists');
+  assert.equal(labelOnly[0].contextTokens, 272_000, 'a provider label should preserve the base Codex OAuth limit');
 
   const alias = normalizeHermesModels({ data: [{
     id: 'codex::gpt-5.6-sol',
@@ -1791,7 +1943,7 @@ test('normalizeHermesModels keeps provider identity scoped and consistent for Co
     provider: 'codex',
     context_length: 0,
   }] }, 'codex::gpt-5.6-sol');
-  assert.equal(alias[0].contextTokens, 900_000, 'the bare codex provider alias should match accounting behavior');
+  assert.equal(alias[0].contextTokens, 272_000, 'the bare codex provider alias should match the base accounting behavior');
 });
 
 test('normalizeHermesModels never invents a GPT-5.6 limit without a provider and trusts non-stale runtime metadata', () => {
@@ -1802,18 +1954,36 @@ test('normalizeHermesModels never invents a GPT-5.6 limit without a provider and
   assert.equal(authoritativeRuntime[0].contextTokens, 300_000);
 });
 
-test('normalizeHermesModels repairs only the known-stale 272k Codex advertisement', () => {
-  for (const model of ['gpt-5.6-luna', 'gpt-5.4']) {
-    const staleCodex = normalizeHermesModels({
-      data: [{
-        id: `openai-codex::${model}`,
-        rawModelId: model,
-        provider: 'openai-codex',
-        context_length: 272_000,
-      }],
-    }, `openai-codex::${model}`);
-    assert.equal(staleCodex[0].contextTokens, 900_000);
-  }
+test('normalizeHermesModels repairs only the known-stale Codex context advertisement', () => {
+  const baseCodex = normalizeHermesModels({
+    data: [{
+      id: 'openai-codex::gpt-5.6-luna',
+      rawModelId: 'gpt-5.6-luna',
+      provider: 'openai-codex',
+      context_length: 272_000,
+    }],
+  }, 'openai-codex::gpt-5.6-luna');
+  assert.equal(baseCodex[0].contextTokens, 272_000, 'the base Luna row must stay at 272K');
+
+  const largeCodex = normalizeHermesModels({
+    data: [{
+      id: 'openai-codex::gpt-5.6-luna-900k',
+      rawModelId: 'gpt-5.6-luna-900k',
+      provider: 'openai-codex',
+      context_length: 272_000,
+    }],
+  }, 'openai-codex::gpt-5.6-luna-900k');
+  assert.equal(largeCodex[0].contextTokens, 900_000, 'the 900K Luna row must repair the stale 272K advertisement');
+
+  const codexGpt54 = normalizeHermesModels({
+    data: [{
+      id: 'openai-codex::gpt-5.4',
+      rawModelId: 'gpt-5.4',
+      provider: 'openai-codex',
+      context_length: 272_000,
+    }],
+  }, 'openai-codex::gpt-5.4');
+  assert.equal(codexGpt54[0].contextTokens, 900_000, 'exact gpt-5.4 keeps its existing effective Codex limit');
 
   const unrelated = normalizeHermesModels({
     data: [{ id: 'custom::gpt-5', rawModelId: 'gpt-5', provider: 'custom', context_length: 272_000 }],
@@ -2387,6 +2557,15 @@ test('skill helpers normalize slash commands and suggest matches from / or @ inp
   assert.deepEqual(skillSuggestionsForInput('normal message', skills), []);
 });
 
+test('named profiles never inherit the default REST skills catalog', () => {
+  assert.equal(isNamedHermesProfileName('default'), false);
+  assert.equal(isNamedHermesProfileName(''), false);
+  assert.equal(isNamedHermesProfileName('research'), true);
+  assert.equal(restSkillsFallbackAllowed({ profileName: 'default', dashboardReady: false }), true);
+  assert.equal(restSkillsFallbackAllowed({ profileName: 'research', dashboardReady: false }), false);
+  assert.equal(restSkillsFallbackAllowed({ profileName: 'default', dashboardReady: true }), false);
+});
+
 test('normalizeHermesProfiles marks active profile and keeps useful metadata', () => {
   const profiles = normalizeHermesProfiles({ active: 'research', data: [
     { name: 'default', model: 'gpt-5.5', skill_count: 40, gateway_running: true },
@@ -2796,7 +2975,7 @@ test('context accounting falls back to local prompt estimate when runtime prompt
 });
 
 test('context accounting reconciles the stale Codex advertisement even when catalog metadata is also stale', () => {
-  for (const model of ['gpt-5.6-luna', 'gpt-5.4']) {
+  for (const model of ['gpt-5.6-luna-900k', 'gpt-5.4']) {
     const result = contextAccountingSnapshot({
       localPromptTokens: 800,
       runtime: {
@@ -2813,7 +2992,7 @@ test('context accounting reconciles the stale Codex advertisement even when cata
   }
 
   const alias = contextAccountingSnapshot({
-    runtime: { provider: 'codex', model: 'gpt-5.6-sol', context_length: 272_000 },
+    runtime: { provider: 'codex', model: 'gpt-5.6-sol-900k', context_length: 272_000 },
     modelContextTokens: 272_000,
   });
   assert.equal(alias.contextLimitTokens, 900_000);
@@ -3101,7 +3280,7 @@ test('discoverModelsFromRegistry flattens /api/model/options provider inventory'
         slug: 'openai-codex',
         name: 'OpenAI Codex',
         authenticated: true,
-        models: ['gpt-5.5', 'gpt-5.4', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'],
+        models: ['gpt-5.5', 'gpt-5.4', 'gpt-5.6-sol', 'gpt-5.6-sol-900k', 'gpt-5.6-terra', 'gpt-5.6-luna'],
         capabilities: { 'gpt-5.5': { reasoning: true, fast: true } },
       },
       {
@@ -3123,6 +3302,7 @@ test('discoverModelsFromRegistry flattens /api/model/options provider inventory'
     'openai-codex::gpt-5.5',
     'openai-codex::gpt-5.4',
     'openai-codex::gpt-5.6-sol',
+    'openai-codex::gpt-5.6-sol-900k',
     'openai-codex::gpt-5.6-terra',
     'openai-codex::gpt-5.6-luna',
     'minimax::MiniMax-M3',
@@ -3131,6 +3311,7 @@ test('discoverModelsFromRegistry flattens /api/model/options provider inventory'
     'gpt-5.5',
     'gpt-5.4',
     'gpt-5.6-sol',
+    'gpt-5.6-sol-900k',
     'gpt-5.6-terra',
     'gpt-5.6-luna',
     'MiniMax-M3',
@@ -3142,9 +3323,10 @@ test('discoverModelsFromRegistry flattens /api/model/options provider inventory'
   assert.equal(result.models[0].runtimeSelectable, true);
   const normalized = normalizeHermesModels(result.models, 'openai-codex::gpt-5.6-sol');
   assert.equal(normalized.find((model) => model.rawModelId === 'gpt-5.5')?.contextTokens, 272_000);
-  for (const model of normalized.filter((item) => item.rawModelId?.startsWith('gpt-5.6-'))) {
-    assert.equal(model.contextTokens, 900_000);
-  }
+  assert.equal(normalized.find((model) => model.rawModelId === 'gpt-5.6-sol')?.contextTokens, 272_000);
+  assert.equal(normalized.find((model) => model.rawModelId === 'gpt-5.6-sol-900k')?.contextTokens, 900_000);
+  assert.equal(normalized.find((model) => model.rawModelId === 'gpt-5.6-terra')?.contextTokens, 272_000);
+  assert.equal(normalized.find((model) => model.rawModelId === 'gpt-5.6-luna')?.contextTokens, 272_000);
   assert.equal(result.models.at(-1).contextTokens, 1_000_000);
 });
 
@@ -3869,7 +4051,11 @@ test('composer plus, command pill, and topbar new-session icons are SVG-centered
   assert.match(newSession, /<svg[\s\S]*?class="new-session-icon"[\s\S]*?viewBox="0 0 24 24"/, 'topbar new-session must use a real SVG plus, not a baseline-riding text glyph');
   assert.doesNotMatch(newSession, />\+</, 'new-session must not render a bare + text glyph');
   assert.match(css, /\.icon-button \.new-session-icon\s*\{\s*width:\s*18px;[\s\S]*?height:\s*18px;/, 'new-session icon must be visibly larger than the 16px utility icons');
-  assert.match(css, /#newSessionButton:hover,[\s\S]*?#newSessionButton:focus-visible\s*\{\s*border-color:\s*var\(--hermes-accent\);\s*color:\s*var\(--hermes-accent\);\s*\}/, 'new-session hover must read as the primary action');
+  assert.match(
+    css,
+    /#newSessionButton:hover,\s*#newSessionButton:focus-visible\s*\{\s*background:\s*var\(--hermes-primary-bg,\s*var\(--hermes-ink\)\);\s*color:\s*var\(--hermes-primary-fg,\s*var\(--hermes-paper\)\);\s*border-color:\s*var\(--hermes-primary-fg,\s*var\(--hermes-paper\)\);\s*\}/,
+    'new-session hover must invert into the outlined primary action so it stays visible on light palettes',
+  );
   const attach = html.match(/<button[^>]*id="attachMenuButton"[\s\S]*?<\/button>/)?.[0] || '';
   assert.match(attach, /<svg[\s\S]*?viewBox="0 0 24 24"/, 'composer attach plus must be a real SVG, not a text glyph');
   assert.doesNotMatch(attach, />\+</, 'composer attach must not render a bare + text glyph');

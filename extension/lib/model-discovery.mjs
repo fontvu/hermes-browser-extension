@@ -20,6 +20,39 @@ export function modelCatalogCacheKey({ gatewayMode = 'local-api', gatewayUrl = '
   return `${mode}|${url}|${activeProfile}`;
 }
 
+// Profile-independent cache slot: the union of every profile's verified
+// catalog for this gateway. Switching agents must never shrink the model
+// selector back to a single profile's subset.
+export const MODEL_CATALOG_SHARED_CACHE_PROFILE = '__shared__';
+
+export function globalModelCatalogCacheKey({ gatewayMode = 'local-api', gatewayUrl = '' } = {}) {
+  return modelCatalogCacheKey({ gatewayMode, gatewayUrl, profile: MODEL_CATALOG_SHARED_CACHE_PROFILE });
+}
+
+/**
+ * Union every cached catalog entry (all profiles) into one deduped list.
+ * `cache` is the raw storage map: { [cacheKey]: { savedAt, models } }.
+ * Rows dedupe by rawModelId (preferred) then id; the freshest entry wins so
+ * metadata (context tokens, provider labels) stays current.
+ */
+export function unionCachedModelCatalogs(cache = {}) {
+  if (!cache || typeof cache !== 'object') return [];
+  const byKey = new Map();
+  const entries = Object.values(cache)
+    .filter((entry) => entry && typeof entry === 'object')
+    .sort((a, b) => (Number(a?.savedAt) || 0) - (Number(b?.savedAt) || 0));
+  for (const entry of entries) {
+    const rows = Array.isArray(entry?.models) ? entry.models : [];
+    for (const model of rows) {
+      if (!model || typeof model !== 'object') continue;
+      const id = String(model.rawModelId || model.id || '').trim();
+      if (!id) continue;
+      byKey.set(id, model);
+    }
+  }
+  return [...byKey.values()];
+}
+
 export function normalizeCachedModelCatalog(payload = []) {
   const rows = Array.isArray(payload) ? payload : [];
   return rows
@@ -253,6 +286,16 @@ export function mergeVirtualModelRows({ registryModels = [], virtualModels = [] 
   return merged;
 }
 
+// Desktop parity: /api/model/options carries the profile's own default model +
+// provider (what `hermes <profile>` uses). Extract it so agent switches can
+// pin the session model to the Bot's configured default.
+export function profileDefaultModelFromOptions(payload = {}) {
+  const model = String(payload?.model || '').trim();
+  const provider = String(payload?.provider || '').trim();
+  if (!model) return null;
+  return { model, provider };
+}
+
 export function modelRowsFromGatewayOptions(payload = {}) {
   const providerModels = modelsFromModelOptionsPayload(payload);
   if (providerModels.length || Array.isArray(payload?.providers)) return providerModels;
@@ -442,9 +485,105 @@ export function dashboardModelDiscoveryBaseUrl({ gatewayMode = 'local-api', gate
   return '';
 }
 
+// The Desktop dashboard lives on a random loopback port discovered through
+// /api/desktop/dashboard-candidates and cached per profile, so local
+// transcription must target the DISCOVERED port. The legacy constant is only
+// a last-resort fallback for setups that still bind the fixed port.
+export async function resolveDashboardTranscriptionBaseUrl({
+  desktopDashboardUrl = '',
+  gatewayMode = 'local-api',
+  gatewayUrl = '',
+  discover = null,
+} = {}) {
+  const known = String(desktopDashboardUrl || '').trim().replace(/\/+$/, '');
+  if (known) return known;
+  if (typeof discover === 'function') {
+    try {
+      const discovered = String((await discover()) || '').trim().replace(/\/+$/, '');
+      if (discovered) return discovered;
+    } catch {
+      /* discovery is best-effort; the constant fallback still applies */
+    }
+  }
+  return dashboardModelDiscoveryBaseUrl({ gatewayMode, gatewayUrl });
+}
+
 export function extractDashboardSessionToken(html = '') {
   const match = String(html || '').match(/window\.__HERMES_SESSION_TOKEN__\s*=\s*"([^"]+)"/);
   return match?.[1] || '';
+}
+
+export function dashboardMediaUrl(baseUrl = '', filePath = '') {
+  try {
+    const url = new URL(String(baseUrl || '').trim());
+    url.hash = '';
+    url.search = '';
+    url.pathname = '/api/media';
+    url.searchParams.set('path', String(filePath || ''));
+    return url.toString();
+  } catch {
+    return `${String(baseUrl || '').replace(/\/+$/, '')}/api/media?path=${encodeURIComponent(String(filePath || ''))}`;
+  }
+}
+
+export function dashboardFileStreamUrl(baseUrl = '', filePath = '', token = '') {
+  try {
+    const url = new URL(String(baseUrl || '').trim());
+    url.hash = '';
+    url.search = '';
+    url.pathname = '/api/files/stream';
+    url.searchParams.set('path', String(filePath || ''));
+    if (token) url.searchParams.set('token', String(token));
+    return url.toString();
+  } catch {
+    const params = new URLSearchParams({ path: String(filePath || '') });
+    if (token) params.set('token', String(token));
+    return `${String(baseUrl || '').replace(/\/+$/, '')}/api/files/stream?${params}`;
+  }
+}
+
+export async function fetchDashboardSessionToken({
+  baseUrl = '',
+  fetchFn = globalThis.fetch?.bind(globalThis),
+  timeoutMs = 2500,
+} = {}) {
+  const dashboardUrl = String(baseUrl || '').trim();
+  if (!dashboardUrl || typeof fetchFn !== 'function') return '';
+  const rootResponse = await fetchWithTimeout(fetchFn, dashboardUrl, {
+    method: 'GET',
+    headers: { Accept: 'text/html' },
+    credentials: 'include',
+    cache: 'no-store',
+  }, timeoutMs);
+  if (!rootResponse.ok) return '';
+  return extractDashboardSessionToken(await rootResponse.text());
+}
+
+export async function fetchDashboardMediaDataUrl({
+  baseUrl = '',
+  filePath = '',
+  fetchFn = globalThis.fetch?.bind(globalThis),
+  token = '',
+  timeoutMs = 20000,
+} = {}) {
+  const dashboardUrl = String(baseUrl || '').trim();
+  const pathRef = String(filePath || '').trim();
+  if (!dashboardUrl || !pathRef || typeof fetchFn !== 'function') return '';
+  const sessionToken = token || await fetchDashboardSessionToken({ baseUrl: dashboardUrl, fetchFn });
+  if (!sessionToken) return '';
+  const response = await fetchWithTimeout(fetchFn, dashboardMediaUrl(dashboardUrl, pathRef), {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      'X-Hermes-Session-Token': sessionToken,
+    },
+    credentials: 'include',
+    cache: 'no-store',
+  }, timeoutMs);
+  if (!response.ok) return '';
+  const payload = await response.json().catch(() => null);
+  const dataUrl = String(payload?.data_url || '').trim();
+  return dataUrl.startsWith('data:image/') ? dataUrl : '';
 }
 
 export function dashboardModelOptionsUrl(baseUrl = '', refresh = false, profile = '') {

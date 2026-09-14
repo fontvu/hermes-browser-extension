@@ -5,11 +5,15 @@ Browser-native side panel for [Hermes Agent](https://hermes-agent.nousresearch.c
 > Created by **Jon Komet** (`@abundantbeing`). Community extension for Hermes Agent by Nous Research.
 
 <p align="center">
+  <a href="https://ko-fi.com/T8Z726J5YZ"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support Jon Komet on Ko-fi" /></a>
+</p>
+
+<p align="center">
   <img src="./assets/readme/hermes-browser-demo.gif" alt="Hermes Browser Extension demo showing the side panel reading browser context and composing a Hermes prompt" width="100%" />
 </p>
 
 <p align="center">
-  <strong>Public alpha v0.3.0 · Load unpacked · Local / Hermes Cloud / Remote · Full Hermes runtime tools</strong><br />
+  <strong>Public v0.3.2 · Load unpacked · Local / Hermes Cloud / Remote · Full Hermes runtime tools</strong><br />
   Not on the Chrome Web Store yet.
 </p>
 
@@ -19,11 +23,31 @@ Hermes Browser Extension is not a browser chatbot. It is a Chrome/Edge/Chromium 
 
 This repo is specifically for the **Hermes Browser Extension**: the Chrome/Edge/Chromium side-panel integration for Hermes Agent.
 
-### New in v0.3.0: live browser control
+### New in v0.3.2: Hermes Bot Mode, Multi-Agent Threads and Intelligent Tab Scoping
 
-v0.3.0 adds an opt-in MV3 controller for leased browser tabs, explicit approval gates for consequential or privileged actions, local HTML/PDF/localhost document access after approval, scoped artifact transfer, and reviewed workflow-to-skill drafts. Control remains bound to the exact controller, tab lease, frame, and document generation, and a Browser-bound request never falls back to an isolated browser backend.
+v0.3.2 introduces **Hermes Bot Mode**, bringing your full Hermes multi-agent roster directly into the browser side panel:
+- **Instant Multi-Agent Switching**: Seamlessly toggle between default and named agent profiles with lazy model hydration and Desktop dashboard discovery from known candidates, cached URLs, and open dashboard tabs.
+- **Desktop Names, Avatars, and Last Activity**: Bot Mode uses authenticated Desktop `profiles.list` metadata for display names, avatars, last-activity stamps, and existing Bot Chat identity instead of internal profile ids or public health-name lists.
+- **Existing Bot Chat Resume**: Opening a bot resumes that profile's existing hidden Bot Chat. Lookup failures stay fail-closed so the extension does not mint a duplicate chat.
+- **Group Chats & Collaborative Threads**: Synced multi-agent room projections, room-level thread tracking, and synchronized conversation histories without blank chat states.
+- **Truthful Page-Only Scoping & Zero Token Bloat**: By default, only the active browser tab is included (`1/N` tabs in prompt) and sent in the prompt envelope. All other open tabs remain strictly excluded, preventing context bloat and token waste.
+- **Interactive Multi-Tab In/Out Controls**: Click any tab to toggle it `IN` or `OUT` on demand, with a full-width **Page only** reset action and side-by-side **Include all tabs** and **AI Triage Tabs** controls.
+- **Multi-Keyword Tab Search**: Fast whitespace-token search filtering across tab titles and URLs with an active match count badge and keyboard navigation (`Enter` to toggle, `Escape` to clear).
+- **AI Tab Triage (`/sort-tabs`)**: Automated tab clustering by topic or project, duplicate domain/URL detection, and an actionable checklist of tabs recommended for closure.
+
+### Live browser control
+
+v0.3.0 added an opt-in MV3 controller for leased browser tabs, explicit approval gates for consequential or privileged actions, local HTML/PDF/localhost document access after approval, scoped artifact transfer, and reviewed workflow-to-skill drafts. Control remains bound to the exact controller, tab lease, frame, and document generation, and a Browser-bound request never falls back to an isolated browser backend.
 
 The release also keeps Hermes Assist, Hermes Web Alpha, session-scoped model routing, and the Browser Context Protocol introduced in v0.2.0.
+
+### Page comments
+
+**Comment on page** in the attach menu uses the existing red element picker. Click a target, write a note, and queue pins without filling the composer. Queued comments sit beside Ask Hermes until you send; the chat shows a compact summary while Hermes still receives the annotated targets, notes, and crops. Closing the side panel or pressing Esc cancels pick and comment chrome. The on-page comment card follows the active extension theme and can be dragged.
+
+### Chat transcript
+
+Hermes-managed session images (cache/`@image:`/`MEDIA:` paths) hydrate when you reopen a chat. Unsent composer text and attachments come back after you close and reopen the side panel in the same browser session. If Hermes spawns subagents, a live SUBAGENTS stack appears above the composer so you can watch, steer, or stop them. If the Browser socket goes quiet while Hermes is still working, the panel reconnects to the live turn instead of showing a dashboard timeout.
 
 ### Hermes Assist
 
@@ -90,11 +114,15 @@ Hermes Web Alpha currently uses token-backed **Local or Remote API** connections
 - Adds a collapsible “What Hermes saw” receipt after each sent turn for transparent context/debugging.
 - Shows a live Tool Activity Strip while Hermes streams, so tool calls appear as structured runtime activity instead of raw `[tool]` markdown appended into answers.
 - Classifies upstream Hermes runtime/tool exceptions as connected-with-warning diagnostics when the gateway is reachable, including the known Python `NoneType`/`int()` traceback class.
+- Adds **Comment on page**: pick an element, write a note, and queue pins beside Ask Hermes without dumping annotation text into the composer. Chat shows a compact summary; Hermes still receives the full annotated targets.
+- Named agent profiles load their own skill catalog instead of inheriting the default profile's slash commands.
 - Captures active tab title/URL, open tabs, selected text, readable page text, metadata, headings, forms, links, and buttons where available.
-- Supports voice dictation through Hermes audio transcription when available, with Browser speech fallback when the connected runtime does not expose STT.
+- Supports voice dictation through Hermes audio transcription when available: the side panel shows Dictating with a timer and live meter, then transcribes on stop. Browser speech fallback is used when the connected runtime does not expose STT.
+- Reopens session images from Hermes-managed cache/image paths, including Telegram sessions that stored `image_url` cache files. Hermes-sent `MEDIA:` videos play when the dashboard can stream them.
 - Wraps webpage text as untrusted context before sending it to Hermes.
 - Streams Hermes responses and falls back to non-streaming chat when needed.
 - Includes Desktop-style appearance settings with Light/Dark/System mode and nine themes: Nous, Midnight, Ember, Mono, Cyberpunk, Slate, Senter Space, Aphrodite, and Solstice.
+- The start screen's local sidecar card shows a different illustration on every panel open, drawn from the bundled art set, and button hovers keep a visible outline in Light and Dark modes alike.
 - Adds generated-image reveal animation plus a lightbox with zoom, reset, open, and explicit download controls.
 - Omits credential-bearing tab URLs from prompt-facing context, including decoded/nested query or hash parameters and common signed-URL credentials/signatures.
 - Includes a localhost agent picker for switching between trusted local Hermes API gateway ports.
@@ -105,15 +133,15 @@ Hermes Web Alpha currently uses token-backed **Local or Remote API** connections
 - Hermes Agent installed and working.
 - For Local or Remote API mode: Hermes Gateway/API server enabled locally or on a reachable remote machine. Hermes Cloud instead requires a signed-in HTTPS agent tab.
 - Node.js 20+.
-- Chrome, Edge, Brave, Comet, or another Chromium browser with Side Panel API support (Chrome 116+ baseline). Firefox 142+ is supported through a Mozilla-signed package on the [Releases](https://github.com/abundantbeing/hermes-browser-extension/releases) page; `npm run build:firefox` produces the local build.
+- Chrome, Edge, Brave, Comet, or another Chromium browser with Side Panel API support (Chrome 116+ baseline). Firefox 142+ is supported via [AMO](https://addons.mozilla.org/en-US/firefox/addon/hermes-browser-extension/), the Mozilla Add-ons listing. `npm run build:firefox` is for local/dev Firefox builds only.
 
-## v0.3.0 compatibility matrix
+## Compatibility matrix
 
-| Surface | Supported in v0.3.0 | Fallback / note |
+| Surface | Supported in v0.3.2 | Fallback / note |
 | --- | --- | --- |
 | Chrome / Edge / Chromium 114+ side panel | Yes | Primary public support target. |
 | Brave / Comet / Chromium forks | Best-effort | Must expose the Chromium Side Panel API and extension clipboard permissions for Copy Diagnostics. |
-| Firefox | Signed package | Mozilla-signed `.xpi` on the Releases page for Firefox 142+. `npm run build:firefox` + `npm run sign:firefox` produce a signed build. Chrome/Edge/Chromium remain the primary public support target. |
+| Firefox | Install from [AMO](https://addons.mozilla.org/en-US/firefox/addon/hermes-browser-extension/) (Firefox 142+) | Mozilla signs it and Firefox auto-updates from AMO. `npm run build:firefox` / `npm run sign:firefox` are maintainer/local signing, not the public install path. Chrome/Edge/Chromium remain the primary public support target. |
 | Safari | Not shipped | Browser-family diagnostics exist, but no Safari package is included. |
 | Local Hermes API server | Yes | Default path: `http://127.0.0.1:8642`. |
 | Hermes Cloud | Yes, Trusted Dashboard Attach | Requires an active signed-in HTTPS Hermes Cloud agent tab. Uses a single-use WebSocket ticket and enforces Chat-only context. This is not a general cookie import or background account-discovery flow. |
@@ -122,10 +150,17 @@ Hermes Web Alpha currently uses token-backed **Local or Remote API** connections
 | Hermes Web full view | Local/Remote API alpha | Requires a token-backed Local or Remote API connection. Cloud Preview and ticketed remote-dashboard transports remain Chat-only in the side panel. |
 | Browser Context Protocol | Yes | Extension emits typed `hermes.browser.turn.v2` envelopes while retaining the v1 payload compatibility path. |
 | Hermes Assist | Yes, site-aware preview/review | 31 writing environments are recognized. Safe plain-text composers may apply after explicit review; structured/private surfaces can fall back to copy-only. Hermes Assist never submits. |
+| Page comments | Yes | Attach menu. Uses the red element picker. Queues beside Ask Hermes; chat shows a compact summary. |
 | Companion plugin | Optional functional context cache | `companion-plugin/` provides read-only tools/hooks for sanitized Browser context; not required for normal extension use. |
 | Browser control / Runs UI / debugger | Yes (Experimental) | Bounded, opt-in MV3 controller with per-tab leases, explicit user approval gates, and sensitive action classification. Requires compatible Hermes Agent controller support. |
 | Local HTML / PDF / localhost context and control | Yes, after approval | `file://` access also requires the browser's Allow access to file URLs switch. macOS and Windows file URLs share the same approval and lease model. |
 | `nativeMessaging` | No | Not requested or required. |
+
+### Firefox scope: chat and context only
+
+Hermes Browser Extension on Firefox is a chat-and-context client: pairing, the side panel, streaming replies, attachments, and page-context capture all work, but **real-tab attach ("Hermes Control") is Chromium-only**. Firefox WebExtensions have no equivalent to Chromium's `debugger` API, which live tab control requires — the Firefox package omits that permission entirely rather than shipping control that cannot run. On Firefox the panel's control card reports Control unavailable with an explanation instead of failing silently.
+
+If you need Hermes to click, type, scroll, or operate tabs on your behalf, load the extension in Chrome, Edge, Brave, or another Chromium browser.
 
 ## Quick start
 
@@ -156,11 +191,13 @@ After code updates, run `npm run build` again and click **Reload** on the Hermes
 
 ### 3. Install in Firefox
 
-1. Download the `*-firefox-signed.xpi` asset from the [Releases](https://github.com/abundantbeing/hermes-browser-extension/releases) page.
-2. Open the downloaded file in Firefox, or use the Add-ons Manager → gear menu → **Install Add-on From File**.
-3. Confirm the install prompt. The extension opens in the Firefox sidebar (Ctrl+Shift+H).
+1. Open [AMO](https://addons.mozilla.org/en-US/firefox/addon/hermes-browser-extension/) in Firefox.
+2. Click **Add to Firefox** and confirm the permission prompt.
+3. The extension opens in the Firefox sidebar (Ctrl+Shift+H).
 
 Because this package is Mozilla-hosted on AMO, Firefox receives future signed updates through AMO automatically. No separate update manifest or manual reinstall is required.
+
+Do not sideload the GitHub source zip/tar.gz. Those are source archives, not a Firefox add-on.
 
 ## Connect to Hermes
 
@@ -283,7 +320,11 @@ The DOM/context chip should show a non-zero page-context count on normal readabl
 
 ### Context window and compaction
 
-Context compression remains owned by Hermes Agent, using each runtime's effective `context_length` and configured compression threshold. The Browser and Web surfaces display the authoritative persisted/live fields when available: `last_prompt_tokens`, `threshold_tokens`, `context_length`, `usage_percent`, and `compression_count`.
+Context compression remains owned by Hermes Agent, using each runtime's effective context window and configured compression threshold.
+
+The side panel shows the numbers the runtime actually reports rather than a guess: it requests the session context breakdown over the dashboard socket (`session.context_breakdown`) and follows the live `session.usage` stream, rendering the runtime's used/limit figures plus its per-category breakdown (system prompt, tool definitions, subagent definitions, memory, conversation). `session.usage` reports its own provenance (`provider_usage`, `provider_usage_plus_estimate`, or `local_estimate`), and the panel labels which one it is showing. Gateway-reported compression counts are displayed as reported.
+
+When a gateway exposes only the classic session-row fields (`last_prompt_tokens`, `threshold_tokens`, `context_length`, `usage_percent`, `compression_count`), those are used instead, and gateways older still fall back to a clearly labelled local next-request estimate.
 
 - The extension does not hardcode an 85% threshold; it honors the connected user's/runtime's value.
 - Reaching the threshold is shown as **Compaction due on the next Hermes turn**. Hermes performs its normal pre-model-call compression and the client refreshes telemetry afterward.
@@ -322,14 +363,14 @@ Make sure you loaded `dist/`, not the repo root. The selected folder must contai
 
 ### Chrome still shows an older version after updating
 
-The browser is still using an old unpacked folder or an unpacked extension card that was not reloaded. For v0.3.0, the source manifest, built `dist/` manifest, and release archive should all contain `manifest.json` version `0.3.0`.
+The browser is still using an old unpacked folder or an unpacked extension card that was not reloaded. For v0.3.2, the source manifest, built `dist/` manifest, and release archive should all contain `manifest.json` version `0.3.2`.
 
 Fix:
 
-1. Extract/download the v0.3.0 release or run `npm run build` locally.
+1. Extract/download the v0.3.2 release or run `npm run build` locally.
 2. Open `chrome://extensions` or `edge://extensions`.
 3. On the Hermes Browser Extension card, click **Reload**.
-4. If it still shows an older version, click **Remove**, then **Load unpacked** again and select the fresh v0.3.0 `dist/` folder.
+4. If it still shows an older version, click **Remove**, then **Load unpacked** again and select the fresh v0.3.2 `dist/` folder.
 5. Click **service worker** / **Inspect views** only for debugging; it is not the version source.
 
 ### Filing a support issue

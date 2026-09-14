@@ -147,9 +147,18 @@ test('manual Side Panel compaction cannot rotate the session while a run owns th
 });
 
 test('Side Panel WebSocket streams accept only events scoped to the exact live session', () => {
-  for (const functionName of ['streamRemoteWsChat', 'runRemoteInlineBackground']) {
-    const body = panel.match(new RegExp(`(?:async )?function ${functionName}\\([\\s\\S]*?\\n\\}`))?.[0] || '';
-    assert.match(body, /event\.sessionId === (?:sessionId|session\.liveId)/);
+  for (const functionName of ['streamDashboardWsChat', 'runRemoteInlineBackground']) {
+    const body = [
+      panel.match(new RegExp(`(?:async )?function ${functionName}\\([\\s\\S]*?\\n\\}`))?.[0] || '',
+      functionName === 'streamDashboardWsChat'
+        ? panel.match(/async function streamDashboardWsChatAttempt\([\s\S]*?\n\}/)?.[0] || ''
+        : '',
+    ].join('\n');
+    if (functionName === 'streamDashboardWsChat') {
+      assert.match(body, /matchesDashboardSessionEvent\(event, sessionIds\)/);
+    } else {
+      assert.match(body, /event\.sessionId === (?:sessionId|session\.liveId)/);
+    }
     assert.doesNotMatch(body, /!event\.sessionId/);
     assert.match(body, /WS_EVENTS\.error, \(event\) => \{\s*if \(!for(?:This)?Session\(event\)\) return;/);
   }
@@ -178,7 +187,10 @@ test('Side Panel rejects alternate send reentry and exposes Stop only after pref
   const modelLockIndex = sender.indexOf('await ensureActiveSessionModelLockOrThrow()');
   const abortIndex = sender.indexOf('activeAbortController = new AbortController()');
   const sendingIndex = sender.indexOf('sending = true');
-  assert.match(sender, /if \(sending \|\| !canSwitchActiveSession\(\{ sending, runControl: activeRunControl \}\)\) return false;/);
+  assert.match(sender, /if \(sending\) return false;/);
+  assert.match(sender, /if \(!canSwitchActiveSession\(\{ sending, runControl: activeRunControl \}\)\)/);
+  assert.match(sender, /canRecoverStaleDashboardRunControl\(\{ sending, dashboardTransport, runControl: activeRunControl \}\)/);
+  assert.match(sender, /setStatus\('warn', 'Hermes is still working'/);
   assert.ok(sender.indexOf('activeRunControl = beginRunControl') < sessionIndex);
   assert.ok(sessionIndex < modelLockIndex && modelLockIndex < abortIndex && abortIndex < sendingIndex);
 });
@@ -205,10 +217,32 @@ test('completed reconciliation suppresses false Send failed output after a prema
 });
 
 test('Dashboard chat streams have bounded completion timers on both Browser surfaces', () => {
-  const sideStream = panel.match(/async function streamRemoteWsChat\([\s\S]*?\n\}/)?.[0] || '';
-  const webStream = web.match(/async function streamDashboardPrompt\([\s\S]*?\n\}/)?.[0] || '';
+  const sideStream = [
+    panel.match(/async function streamDashboardWsChat\([\s\S]*?\n\}/)?.[0] || '',
+    panel.match(/async function streamDashboardWsChatAttempt\([\s\S]*?\n\}/)?.[0] || '',
+  ].join('\n');
+  const webStream = [
+    web.match(/async function streamDashboardPrompt\([\s\S]*?\n\}/)?.[0] || '',
+    web.match(/async function streamDashboardPromptAttempt\([\s\S]*?\n\}/)?.[0] || '',
+  ].join('\n');
   for (const stream of [sideStream, webStream]) {
-    assert.match(stream, /setTimeout\(\(\) => finish\(reject, new Error\([^)]*timed out/i);
-    assert.match(stream, /clearTimeout\(timer\)/);
+    assert.match(stream, /createDashboardStreamWatchdog/);
+    assert.match(stream, /watchdog\.ping\(\)/);
+    assert.match(stream, /watchdog\.stop\(\)/);
+    assert.match(stream, /client\.on\('\*'/);
   }
+});
+
+test('local dashboard-ws advertises and routes active-run steering', () => {
+  const dashboardCapabilities = caps.match(/export function dashboardWsGatewayCapabilities[\s\S]*?\n\}/)?.[0] || '';
+  const canSteer = panel.match(/function canSteerActiveRun\(\)[\s\S]*?\n\}/)?.[0] || '';
+  const sender = panel.match(/async function sendSteerText\([\s\S]*?\n\}/)?.[0] || '';
+
+  assert.match(dashboardCapabilities, /runSteer:\s*true/);
+  assert.match(canSteer, /usesDashboardWsChatTransport\(\)/);
+  assert.match(canSteer, /gatewayCapabilities\.runSteer/);
+  assert.match(sender, /if \(usesDashboardWsChatTransport\(\)\)/);
+  assert.match(sender, /WS_METHODS\.sessionSteer/);
+  assert.match(sender, /session_id: sessionId/);
+  assert.match(sender, /text: steerText/);
 });

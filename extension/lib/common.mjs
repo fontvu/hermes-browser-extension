@@ -6,6 +6,8 @@ import {
 } from './browser-context-protocol.mjs';
 import { formatPickedElementBlock } from './element-picker.mjs';
 import { normalizeImageAspectRatio, resolveImageSource } from './image-render.mjs';
+import { classifyMediaKind, splitInboundVisionMessage } from './media-persistence.mjs';
+import { normalizeHistoryUserMessage } from './session-history-normalization.mjs';
 import { hasCredentialBearingUrl, redactSensitiveText } from './redaction.mjs';
 import { CONNECTION_SCHEMA_VERSION, CONNECTION_TRANSPORTS } from './connection-modes.mjs';
 import { canFlushQueuedTurn } from './run-control-lifecycle.mjs';
@@ -61,6 +63,13 @@ export const DEFAULT_SETTINGS = Object.freeze({
   sessionTitle: 'Hermes Browser Extension',
   sessionSource: 'hermes_browser',
   activeProfile: '',
+  botModeEnabled: false,
+  botModeDisplayDensity: 'comfortable',
+  botModeActivityNotifications: true,
+  botModeSelectedProfile: '',
+  botModeReturnProfile: '',
+  pendingProfileContextHandoff: '',
+  pendingProfileContextHandoffSessionId: '',
   model: 'hermes-agent',
   modelContextTokens: 0,
   extensionPreferredModel: null,
@@ -134,9 +143,39 @@ export function messageDisplayText(role = '', content = '') {
   const text = String(content ?? '');
   if (String(role || '').trim().toLowerCase() !== 'user') return text;
 
-  // BCP v2 history is structured. Only a fully unambiguous typed envelope can
-  // hide its data sections; malformed lookalikes remain visible fail-closed.
-  try {
+  const reveal = (value) => {
+    let source = String(value ?? '');
+    const vision = splitInboundVisionMessage(source);
+    if (vision.hadVisionBlock) source = vision.visibleText;
+    if (!source.includes('HERMES_PAGE_COMMENTS')) return source;
+    const stripped = source
+      .replace(/<<<HERMES_PAGE_COMMENTS[\s\S]*?<<<END_HERMES_PAGE_COMMENTS>>>/g, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    if (stripped) return stripped;
+    const count = (source.match(/^Comment \d+$/gm) || []).length;
+    if (count === 1) return '1 page comment';
+    if (count > 1) return `${count} page comments`;
+    return 'Page comments';
+  };
+
+  // Browser turns are stored as protocol payloads. The normalizer hands back
+    // the human prompt with every receipt, path and @image token removed — and
+    // recovers the prompt even from a truncated envelope. It only runs for text
+    // that actually carries a Browser-turn marker (or an inline media/vision
+    // reference); anything else — including a JSON snippet the user pasted — is
+    // returned byte-identical so this can never eat a real message.
+    const carriesBrowserTurn = /hermes\.browser\.turn|USER_REQUEST_START|UNTRUSTED_BROWSER_CONTEXT/i.test(text)
+      || /(^|\s)@(?:image|video):/i.test(text)
+      || /\[The user sent an image/i.test(text);
+    if (carriesBrowserTurn) {
+      const normalized = normalizeHistoryUserMessage({ role, content: text });
+      if (normalized.hadEnvelope || normalized.strippedProtocol) return reveal(normalized.text);
+    }
+
+    // BCP v2 history is structured. Only a fully unambiguous typed envelope can
+    // hide its data sections; malformed lookalikes remain visible fail-closed.
+    try {
     const envelope = JSON.parse(text);
     const input = envelope?.human_input;
     if (
@@ -153,7 +192,7 @@ export function messageDisplayText(role = '', content = '') {
       && envelope.browser_context
       && envelope.attachment_context
       && envelope.source_receipt
-    ) return input.text;
+    ) return reveal(input.text);
   } catch {
     // Fall through to legacy v1 parsing or verbatim display.
   }
@@ -166,8 +205,8 @@ export function messageDisplayText(role = '', content = '') {
     if (line === 'USER_REQUEST_START') starts.push(index);
     if (line === 'USER_REQUEST_END') ends.push(index);
   }
-  if (starts.length !== 1 || ends.length !== 1 || ends[0] <= starts[0]) return text;
-  return lines.slice(starts[0] + 1, ends[0]).join('\n').trim();
+  if (starts.length !== 1 || ends.length !== 1 || ends[0] <= starts[0]) return reveal(text);
+  return reveal(lines.slice(starts[0] + 1, ends[0]).join('\n').trim());
 }
 
 export function isHermesBrowserOwnedSession(session = {}) {
@@ -666,6 +705,7 @@ export function normalizeToolActivity(tool = {}) {
       : '',
     activityId,
     status,
+    result: data?.result ?? tool?.result ?? null,
     ts: Date.now(),
   };
 }
@@ -1170,9 +1210,15 @@ export function modelRuntimeAckState({ requested = {}, runtime = {} } = {}) {
   };
 }
 
+export function isLocalOrCustomProvider(provider = '') {
+  const p = String(provider || '').trim().toLowerCase();
+  return p === 'custom' || p.endsWith('-local') || p.startsWith('custom-') || p.includes('antigravity');
+}
+
 export function shouldRequireModelLock({ provider = '', model = '', defaultModel = DEFAULT_SETTINGS.model, gatewayDefault = false } = {}) {
   const normalizedProvider = String(provider || '').trim();
   if (gatewayDefault === true && !normalizedProvider) return false;
+  if (isLocalOrCustomProvider(normalizedProvider)) return false;
   return Boolean(normalizedProvider || (String(model || '').trim() && String(model).trim() !== String(defaultModel || DEFAULT_SETTINGS.model).trim()));
 }
 
@@ -1278,6 +1324,8 @@ const MODEL_CONTEXT_FALLBACKS = Object.freeze([
   ['glm', 202_752],
   ['grok-4-fast', 2_000_000],
   ['grok-4.20', 2_000_000],
+  ['grok-4.6', 500_000],
+  ['grok-4-6', 500_000],
   ['grok-4.3', 1_000_000],
   ['grok-4', 256_000],
   ['grok-3', 131_072],
@@ -1322,13 +1370,16 @@ function fallbackModelContextTokens(model = {}) {
   const isCodexOAuth = providerIdentity === 'openai-codex' || providerIdentity === 'codex';
   const isDirectOpenAi = providerIdentity === 'openai';
   const isGpt56 = /\bgpt-5\.6(?:-|\b)/.test(providerHint);
+  const isGpt6Astra = /\b(?:chat)?gpt[- .]?6[- .]?astra(?:-|\b)/.test(providerHint);
   const isExactGpt54 = /\bgpt-5\.4\b(?!-)/.test(providerHint);
   const isGpt54Mini = /\bgpt-5\.4-mini\b/.test(providerHint);
-  if (isGpt56) {
-    // Hermes Agent resolves the stale Codex OAuth advertisement to an
-    // effective 900K window for the GPT-5.6 family. Direct OpenAI keeps its
-    // 1.05M API window, and provider-less rows stay unknown.
-    if (isCodexOAuth) return 900_000;
+  const has900kVariant = variants.some((value) => /(?:^|[-_/:\\s])900k(?:$|[-_/:\\s])/.test(value));
+  if (isGpt56 || isGpt6Astra) {
+    // Codex OAuth exposes two GPT-5.6 / GPT-6 Astra subscription tiers. The
+    // explicit 900K suffix is the source of truth; the base family uses the
+    // 272K tier. Direct OpenAI keeps its 1.05M API window, and provider-less
+    // rows stay unknown.
+    if (isCodexOAuth) return has900kVariant ? 900_000 : 272_000;
     if (isDirectOpenAi) return 1_050_000;
     return 0;
   }
@@ -1825,11 +1876,24 @@ function safeHref(value = '') {
   }
 }
 
+function sessionMediaPlaceholderMarkup(kind = 'image', filePath = '') {
+  const safeKind = kind === 'video' ? 'video' : 'image';
+  const safePath = escapeHtml(filePath);
+  const name = escapeHtml(String(filePath || '').split(/[\\/]/).pop() || (safeKind === 'video' ? 'Video' : 'Image'));
+  const label = safeKind === 'video' ? 'Video' : 'Image';
+  return `<figure class="session-media" data-session-media="${safeKind}" data-media-path="${safePath}" role="status"><span class="session-media-label">${label}</span><span class="session-media-name">${name}</span></figure>`;
+}
+
 function generatedImageMarkup(source = '', alt = 'Generated image', { inline = false } = {}) {
   const safeSource = resolveImageSource(source);
-  if (!safeSource) return '';
-  const image = `<img src="${escapeHtml(safeSource)}" alt="${escapeHtml(alt || 'Generated image')}" loading="lazy" decoding="async" data-slot="aui_generated-image" />`;
-  return inline ? image : `<figure class="generated-image" data-slot="aui_generated-image">${image}</figure>`;
+  if (safeSource) {
+    const image = `<img src="${escapeHtml(safeSource)}" alt="${escapeHtml(alt || 'Generated image')}" loading="lazy" decoding="async" data-slot="aui_generated-image" />`;
+    return inline ? image : `<figure class="generated-image" data-slot="aui_generated-image">${image}</figure>`;
+  }
+  const filePath = String(source || '').trim();
+  const kind = classifyMediaKind(filePath);
+  if (kind === 'image' || kind === 'video') return sessionMediaPlaceholderMarkup(kind, filePath);
+  return '';
 }
 
 function generatedImageUnavailableMarkup() {
@@ -2016,7 +2080,7 @@ function modelContextTokens(model = {}) {
     model.metadata?.context_window;
   const number = Number(value || 0);
   const fallback = fallbackModelContextTokens(model);
-  // Codex still advertises 272K for the GPT-5.6 family and exact GPT-5.4,
+  // Codex still advertises 272K for GPT-5.6, GPT-6 Astra, and exact GPT-5.4,
   // although Hermes has live-verified and reports a 900K effective window.
   // Override only that known-stale advertisement. Any other positive runtime
   // value is authoritative.
@@ -2030,6 +2094,12 @@ function modelContextTokens(model = {}) {
     if (number === 131_072 && fallback === 1_000_000) {
       const haystack = `${model.id ?? ''} ${model.rawModelId ?? ''} ${model.raw_model_id ?? ''} ${model.model ?? ''} ${model.name ?? ''}`.toLowerCase();
       if (/qwen3\.[6-9]-/.test(haystack)) return fallback;
+    }
+    // Grok 4.6 is 500k. The older grok-4 catch-all (256k) used to win via
+    // substring match, and some catalogs still advertise that stale window.
+    if (fallback === 500_000 && number > 0 && number < fallback) {
+      const haystack = `${model.id ?? ''} ${model.rawModelId ?? ''} ${model.raw_model_id ?? ''} ${model.model ?? ''} ${model.name ?? ''}`.toLowerCase();
+      if (haystack.includes('grok-4.6') || haystack.includes('grok-4-6')) return fallback;
     }
     return number;
   }
@@ -2129,11 +2199,45 @@ export function isMicrophonePermissionError(error = {}) {
   const message = String(error?.message || error?.error || error || '').toLowerCase();
   return name === 'notallowederror'
     || name === 'permissiondeniederror'
+    || name === 'notreadableerror'
+    || name === 'securityerror'
+    || name === 'invalidstateerror'
     || message.includes('not-allowed')
     || message.includes('permission denied')
     || message.includes('permission dismissed')
     || message.includes('permission blocked')
-    || message.includes('microphone access denied');
+    || message.includes('permissions policy')
+    || message.includes('microphone access denied')
+    || message.includes('microphone is not available');
+}
+
+export function shouldOpenVoiceDictationPageForSpeechError(error = {}) {
+  const code = String(error?.error || error?.code || error?.name || '').trim().toLowerCase();
+  const message = String(error?.message || error?.error || error || '').toLowerCase();
+  return ['network', 'service-not-allowed', 'not-allowed', 'audio-capture'].includes(code)
+    || message.includes('speech service')
+    || message.includes('speech recognition service')
+    || message.includes('network error');
+}
+
+// Web Speech can `start()` successfully and then never fire onstart/onresult/
+// onerror/onend — the silent-failure mode seen in Chromium-fork side panels
+// (Comet) where the mic prompt is suppressed or the speech service is dead.
+// The side panel uses this window to turn a started-but-dead session into a
+// real error and route to the granted-tab voice page instead of leaving the
+// mic button in a fake ON state.
+export const SPEECH_SILENT_START_TIMEOUT_MS = 6000;
+
+export function speechRecognitionSilentlyFailed({
+  elapsedMs = 0,
+  sawStart = false,
+  sawResult = false,
+  sawError = false,
+  sawEnd = false,
+} = {}) {
+  if (sawResult || sawError || sawEnd) return false;
+  void sawStart;
+  return Number(elapsedMs) >= SPEECH_SILENT_START_TIMEOUT_MS;
 }
 
 export function microphonePermissionHelp() {
@@ -2152,7 +2256,13 @@ export function normalizeHermesModels(payload = {}, selectedModel = DEFAULT_SETT
   const models = [];
 
   for (const item of rawModels) {
-    const id = typeof item === 'string' ? item : item?.id;
+    const rawId = typeof item === 'string' ? item : item?.id;
+    const provider = typeof item === 'string' ? '' : String(item.provider || item.owned_by || '').trim();
+    const alreadyQualified = provider && (
+      String(rawId || '').includes('::')
+      || String(rawId || '').startsWith(`${provider}:`)
+    );
+    const id = provider && rawId && !alreadyQualified ? `${provider}::${rawId}` : rawId;
     if (!id || seen.has(id)) continue;
     seen.add(id);
     const source = typeof item === 'string' ? '' : item.source || '';
@@ -2162,10 +2272,10 @@ export function normalizeHermesModels(payload = {}, selectedModel = DEFAULT_SETT
     models.push({
       id,
       label: typeof item === 'string' ? item : item.label || item.name || item.id,
-      owner: typeof item === 'string' ? '' : item.owned_by || item.provider || '',
-      provider: typeof item === 'string' ? '' : item.provider || item.owned_by || '',
-      providerLabel: typeof item === 'string' ? '' : item.providerLabel || item.provider_label || item.provider_name || item.owned_by || item.provider || '',
-      rawModelId: typeof item === 'string' ? item : item.rawModelId || item.raw_model_id || item.model || item.id,
+      owner: typeof item === 'string' ? '' : item.owned_by || provider,
+      provider,
+      providerLabel: typeof item === 'string' ? '' : item.providerLabel || item.provider_label || item.provider_name || item.owned_by || provider,
+      rawModelId: typeof item === 'string' ? item : item.rawModelId || item.raw_model_id || item.model || rawId,
       description: typeof item === 'string' ? '' : item.description || '',
       contextTokens: typeof item === 'string' ? 0 : modelContextTokens(item),
       fast: typeof item === 'string' ? undefined : item.fast,
@@ -2293,6 +2403,8 @@ export function normalizeHermesSessions(payload = {}) {
         profile: String(session.profile || session.profile_name || session.effective_profile || session.session_profile || ''),
         rawModelId: String(session.rawModelId || session.raw_model_id || session.model || ''),
         modelOptions: normalizeAcknowledgedModelOptions(session.model_options || session.modelOptions),
+        transport: String(session.transport || session.transport_mode || '').trim(),
+        hidden: session.hidden === true || session.is_hidden === true || session.isHidden === true,
         inputTokens: Number(session.input_tokens || session.inputTokens || 0),
         outputTokens: Number(session.output_tokens || session.outputTokens || 0),
         cacheReadTokens: Number(session.cache_read_tokens || session.cacheReadTokens || 0),
@@ -2347,6 +2459,7 @@ export function groupSessionsForMenu(sessions = [], selectedSessionId = DEFAULT_
   const needle = String(query || '').trim().toLowerCase();
   const groups = new Map();
   for (const session of sessions || []) {
+    if (session?.hidden === true) continue;
     const haystack = `${session.id} ${session.title} ${session.source} ${session.sourceLabel} ${session.preview}`.toLowerCase();
     if (needle && !haystack.includes(needle)) continue;
     const label = session.sourceLabel || normalizeSessionSourceLabel(session.source);
@@ -2375,6 +2488,17 @@ export function skillCommandForName(name = '') {
     .replace(/[^a-z0-9-]/g, '')
     .replace(/-{2,}/g, '-')
     .replace(/^-|-$/g, '')}`;
+}
+
+export function isNamedHermesProfileName(profileName = '') {
+  const normalized = String(profileName || '').trim().toLowerCase();
+  return Boolean(normalized && normalized !== 'default');
+}
+
+export function restSkillsFallbackAllowed({ profileName = '', dashboardReady = false } = {}) {
+  if (dashboardReady) return false;
+  if (isNamedHermesProfileName(profileName)) return false;
+  return true;
 }
 
 export function normalizeHermesSkills(payload = {}) {

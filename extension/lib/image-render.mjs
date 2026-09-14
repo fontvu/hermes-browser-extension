@@ -1,3 +1,10 @@
+import {
+  classifyMediaKind,
+  extractImageRefs,
+  extractMediaTagPaths,
+  extractVisionCachePaths,
+} from './media-persistence.mjs';
+
 const RASTER_DATA_URL_RE = /^data:image\/(?:png|jpe?g|gif|webp|bmp);base64,[a-z0-9+/]+={0,2}$/i;
 
 export const IMAGE_ASPECT_RATIOS = Object.freeze({
@@ -35,6 +42,116 @@ export function resolveImageSource(value = '') {
   }
 }
 
+function imageResultRecord(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string' || !value.trim()) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function resolvedGeneratedImageSourcesFromResult(result) {
+  const record = imageResultRecord(result);
+  if (!record || record.success === false) return [];
+  const candidates = [record.host_image, record.image, record.agent_visible_image, record.url]
+    .filter((value) => typeof value === 'string' && value.trim());
+  const seen = new Set();
+  return candidates
+    .map((value) => resolveImageSource(value))
+    .filter((source) => {
+      if (!source || seen.has(source)) return false;
+      seen.add(source);
+      return true;
+    });
+}
+
+/**
+ * Media candidates from an image_generate tool result, in source order, with
+ * local paths kept. `resolvedGeneratedImageSourcesFromResult` can only accept
+ * browser-safe sources (https/data URLs), but the gateway reports finished
+ * generations as local file paths; the panel resolves those through the
+ * dashboard media route at DOM time, which is what lets a finished generation
+ * dissolve into the real picture instead of parked forever in its animation.
+ */
+export function rawGeneratedImageCandidatesFromResult(result) {
+  const record = imageResultRecord(result);
+  if (!record || record.success === false) return [];
+  const seen = new Set();
+  return [record.host_image, record.image, record.agent_visible_image, record.url]
+    .filter((value) => typeof value === 'string' && value.trim())
+    .map((value) => stripWrappingQuotes(value))
+    .filter((candidate) => {
+      if (!candidate || seen.has(candidate)) return false;
+      if (!resolveImageSource(candidate) && classifyMediaKind(candidate) !== 'image') return false;
+      seen.add(candidate);
+      return true;
+    });
+}
+
+export function resolvedGeneratedImageSourcesFromMessages(messages = []) {
+  if (!Array.isArray(messages)) return [];
+  const found = [];
+  const seen = new Set();
+  const visit = (message) => {
+    if (!message || typeof message !== 'object') return;
+    const toolNames = [
+      message.tool_name,
+      message.toolName,
+      message.name,
+      message.tool_call?.name,
+      ...(Array.isArray(message.tool_calls) ? message.tool_calls.flatMap((call) => [call?.name, call?.function?.name]) : []),
+    ].map((value) => String(value || '').trim());
+    if (toolNames.some((toolName) => /image_generate/i.test(toolName))) {
+      const results = [message.result, message.output, message.content];
+      if (Array.isArray(message.tool_calls)) {
+        results.push(...message.tool_calls.flatMap((call) => [call?.result, call?.function?.result, call?.function?.arguments]));
+      }
+      for (const result of results) {
+        for (const source of resolvedGeneratedImageSourcesFromResult(result)) {
+        if (!seen.has(source)) {
+          seen.add(source);
+          found.push(source);
+        }
+      }
+    }
+    }
+    if (Array.isArray(message.content)) message.content.forEach(visit);
+    if (Array.isArray(message.parts)) message.parts.forEach(visit);
+  };
+  messages.forEach(visit);
+  return found;
+}
+export function appendGeneratedImageSourcesToMessages(messages = [], sources = []) {
+  const safeSources = [...new Set((Array.isArray(sources) ? sources : [])
+    .map((source) => resolveImageSource(source))
+    .filter(Boolean))];
+  if (!safeSources.length) return Array.isArray(messages) ? messages : [];
+  const next = Array.isArray(messages) ? messages.map((message) => ({ ...message })) : [];
+  let assistantIndex = -1;
+  for (let index = next.length - 1; index >= 0; index -= 1) {
+    if (String(next[index]?.role || '').toLowerCase() === 'assistant') {
+      assistantIndex = index;
+      break;
+    }
+  }
+  const currentContent = assistantIndex >= 0 ? String(next[assistantIndex].content || '') : '';
+  const missing = safeSources.filter((source) => !currentContent.includes(source));
+  if (!missing.length) return next;
+  const markdown = missing.map((source) => `![Generated image](${source})`).join('\n');
+  if (assistantIndex >= 0) {
+    next[assistantIndex] = {
+      ...next[assistantIndex],
+      content: [currentContent, markdown].filter(Boolean).join('\n\n'),
+    };
+  } else {
+    next.push({ role: 'assistant', content: markdown, ts: Date.now() });
+  }
+  return next;
+}
+
 export function normalizeUserImageAttachments(attachments = []) {
   if (!Array.isArray(attachments)) return [];
   const previews = [];
@@ -56,17 +173,127 @@ export function normalizeUserImageAttachments(attachments = []) {
   return previews;
 }
 
-function attachmentMessageKey(message = {}) {
-  return String(message?.content || '')
+function mediaFileName(filePath = '', fallback = 'Attached image') {
+  const base = String(filePath || '').split(/[\\/]/).pop() || '';
+  return base.trim().slice(0, 180) || fallback;
+}
+
+function pushExtractedMedia(found, seen, value, name = 'Attached image') {
+  const source = resolveImageSource(value);
+  if (!source || seen.has(source)) return;
+  seen.add(source);
+  found.push({
+    kind: 'image',
+    name: String(name || 'Attached image').trim().slice(0, 180) || 'Attached image',
+    dataUrl: source,
+  });
+}
+
+function pushExtractedPathRefs(found, seen, text = '') {
+  const filePaths = [
+    ...extractVisionCachePaths(text),
+    ...extractImageRefs(text).map((item) => item.path),
+    ...extractMediaTagPaths(text).filter((item) => item.kind === 'image').map((item) => item.path),
+  ];
+  for (const filePath of filePaths) {
+    if (!filePath || seen.has(`path:${filePath}`)) continue;
+    seen.add(`path:${filePath}`);
+    found.push({
+      kind: 'image',
+      name: mediaFileName(filePath),
+      pathRef: filePath,
+    });
+  }
+}
+
+function visitHistoryMedia(value, found, seen) {
+  if (!value) return;
+  if (Array.isArray(value)) {
+    value.forEach((item) => visitHistoryMedia(item, found, seen));
+    return;
+  }
+  if (typeof value === 'string') {
+    pushExtractedMedia(found, seen, value);
+    return;
+  }
+  if (typeof value !== 'object') return;
+  const name = value.name || value.label || value.filename || 'Attached image';
+  const inlineSource = value.dataUrl || value.source || value.url || value.image || value.image_url?.url || value.imageUrl;
+  pushExtractedMedia(found, seen, inlineSource, name);
+  if (!inlineSource) {
+    // Browser turn envelopes carry finished attachments as local disk paths
+    // (`attachment_context.items[].local_path`), not inline sources. Keep them
+    // as path refs so media hydration can serve the Hermes-managed ones —
+    // without this, every Desktop-attached image vanished from the transcript.
+    const localPath = String(value.local_path || value.localPath || value.pathRef || value.path || '').trim();
+    const kind = classifyMediaKind(localPath);
+    if (localPath && (kind === 'image' || kind === 'video') && !seen.has(`path:${localPath}`)) {
+      seen.add(`path:${localPath}`);
+      found.push({
+        kind,
+        name: mediaFileName(localPath) || name,
+        pathRef: localPath,
+        ...(value.detail ? { detail: String(value.detail) } : {}),
+      });
+    }
+  }
+  visitHistoryMedia(value.content, found, seen);
+  visitHistoryMedia(value.parts, found, seen);
+  visitHistoryMedia(value.attachments, found, seen);
+  visitHistoryMedia(value.image_url, found, seen);
+}
+
+export function extractHistoryMediaAttachments(message = {}) {
+  const found = [];
+  const seen = new Set();
+  visitHistoryMedia(message?.content, found, seen);
+  visitHistoryMedia(message?.parts, found, seen);
+  visitHistoryMedia(message?.attachments, found, seen);
+  visitHistoryMedia(message?.attachment_context, found, seen);
+  if (typeof message?.content === 'string') pushExtractedPathRefs(found, seen, message.content);
+  if (typeof message?.content === 'string') {
+    try {
+      const envelope = JSON.parse(message.content);
+      if (envelope && typeof envelope === 'object') {
+        visitHistoryMedia(envelope.attachment_context, found, seen);
+        visitHistoryMedia(envelope.attachments, found, seen);
+        visitHistoryMedia(envelope.human_input?.attachments, found, seen);
+      }
+    } catch {
+      // Content is not a turn envelope.
+    }
+  }
+  return found.slice(0, 8);
+}
+
+function userMessageMatchText(content = '') {
+  const raw = String(content ?? '');
+  try {
+    const envelope = JSON.parse(raw);
+    const text = envelope?.human_input?.text;
+    if (envelope?.protocol && String(envelope.protocol).startsWith('hermes.browser.turn') && typeof text === 'string') {
+      return String(text).replace(/\r\n/g, '\n').replace(/[\t ]+/g, ' ').trim();
+    }
+  } catch {
+    // Plain composer text.
+  }
+  return raw
     .replace(/\r\n/g, '\n')
     .replace(/[\t ]+/g, ' ')
+    .replace(/\n\n\[ATTACHMENTS\][\s\S]*$/i, '')
     .trim();
 }
 
+function attachmentMessageKey(message = {}) {
+  return userMessageMatchText(message?.content);
+}
+
 function matchingUserMessageContent(remoteContent = '', localContent = '') {
-  if (!remoteContent || !localContent) return false;
-  if (remoteContent === localContent) return true;
-  return remoteContent.startsWith(`${localContent}\n\n[ATTACHMENTS]`);
+  const remote = userMessageMatchText(remoteContent);
+  const local = userMessageMatchText(localContent);
+  if (!remote || !local) return false;
+  if (remote === local) return true;
+  return remote.startsWith(local) || local.startsWith(remote);
 }
 
 export function preserveUserImageAttachments(refreshedMessages = [], localMessages = []) {

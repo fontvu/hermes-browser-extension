@@ -307,6 +307,10 @@ async function startMockHermes() {
       });
       return;
     }
+    if (url.pathname === '/api/desktop/dashboard-candidates' && req.method === 'GET') {
+      json(res, 200, { candidates: [] });
+      return;
+    }
     if (url.pathname === '/api/model/options') {
       json(res, 200, {
         providers: [{
@@ -335,11 +339,12 @@ async function startMockHermes() {
           slug: 'openai-codex',
           name: 'OpenAI Codex',
           authenticated: true,
-          models: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'],
+          models: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.6-luna-900k'],
           capabilities: {
             'gpt-5.6-sol': { reasoning: true, fast: true },
             'gpt-5.6-terra': { reasoning: true, fast: true },
             'gpt-5.6-luna': { reasoning: true, fast: true },
+            'gpt-5.6-luna-900k': { reasoning: true, fast: true },
           },
         }, {
           slug: 'portal',
@@ -1145,7 +1150,7 @@ async function main() {
     assert.ok(envelope.attachment_context);
     assert.ok(envelope.source_receipt);
     assert.ok(mock.requests.some((request) => request.path === `/api/sessions/${storedAfterSend.hermesBrowserSettings.sessionId}/chat/stream` && request.method === 'POST'));
-    assert.ok(mock.requests.filter((request) => request.path !== '/health' && request.path !== '/v1/health').every((request) => request.authorization === `Bearer ${TEST_TOKEN}`));
+    assert.ok(mock.requests.filter((request) => !['/health', '/v1/health', '/api/ws'].includes(request.path)).every((request) => request.authorization === `Bearer ${TEST_TOKEN}`));
 
     const rejectionPrompt = 'Verify unsupported reasoning option handling.';
     const rejectionDetail = 'Invalid parameter: reasoning_effort must be one of low, medium, high.';
@@ -2331,11 +2336,11 @@ async function main() {
       const field = document.querySelector('#draft').getBoundingClientRect();
       const launcher = document.querySelector('#hermes-inline-draft-host').shadowRoot.querySelector('.launcher').getBoundingClientRect();
       const element = document.querySelector('#hermes-inline-draft-host').shadowRoot.querySelector('.launcher');
-      return { rightGap: field.right - launcher.right, bottomGap: field.bottom - launcher.bottom, top: launcher.top, strategy: element.dataset.placement };
+      const overlapsDraft = launcher.left < field.right && launcher.right > field.left && launcher.top < field.bottom && launcher.bottom > field.top;
+      return { rightGap: field.right - launcher.right, bottomGap: field.bottom - launcher.bottom, top: launcher.top, strategy: element.dataset.placement, overlapsDraft };
     })()`);
-    assert.equal(launcherPlacementBeforeShift.strategy, 'inside-end');
-    assert.ok(Math.abs(launcherPlacementBeforeShift.rightGap - 6) <= 1, `Launcher right gap was ${launcherPlacementBeforeShift.rightGap}px.`);
-    assert.ok(Math.abs(launcherPlacementBeforeShift.bottomGap - 6) <= 1, `Launcher bottom gap was ${launcherPlacementBeforeShift.bottomGap}px.`);
+    assert.equal(launcherPlacementBeforeShift.strategy, 'outside-end');
+    assert.equal(launcherPlacementBeforeShift.overlapsDraft, false, 'The launcher must not cover the draft in a full-width composer.');
     await fixture.evaluate(`(() => {
       const field = document.querySelector('#draft');
       field.style.minHeight = '240px';
@@ -2349,9 +2354,11 @@ async function main() {
       const field = document.querySelector('#draft').getBoundingClientRect();
       const launcher = document.querySelector('#hermes-inline-draft-host').shadowRoot.querySelector('.launcher').getBoundingClientRect();
       const element = document.querySelector('#hermes-inline-draft-host').shadowRoot.querySelector('.launcher');
-      const state = { rightGap: field.right - launcher.right, bottomGap: field.bottom - launcher.bottom, top: launcher.top, strategy: element.dataset.placement };
-      return Math.abs(state.rightGap - 6) <= 1 && Math.abs(state.bottomGap - 6) <= 1 ? state : null;
+      const overlapsDraft = launcher.left < field.right && launcher.right > field.left && launcher.top < field.bottom && launcher.bottom > field.top;
+      const state = { rightGap: field.right - launcher.right, bottomGap: field.bottom - launcher.bottom, top: launcher.top, strategy: element.dataset.placement, overlapsDraft };
+      return state.top > ${launcherPlacementBeforeShift.top} + 80 ? state : null;
     })()`));
+    assert.equal(launcherPlacementAfterShift.overlapsDraft, false, 'The launcher must not cover the draft after the editor resizes.');
     assert.ok(launcherPlacementAfterShift.top > launcherPlacementBeforeShift.top + 80, 'Launcher did not follow the shifted/resized editor.');
     await saveScreenshot(fixture, INLINE_LAUNCHER_SCREENSHOT, { captureBeyondViewport: false });
     await fixture.evaluate(`(() => {
@@ -2361,7 +2368,8 @@ async function main() {
     await waitFor(() => fixture.evaluate(`(() => {
       const field = document.querySelector('#draft').getBoundingClientRect();
       const launcher = document.querySelector('#hermes-inline-draft-host').shadowRoot.querySelector('.launcher').getBoundingClientRect();
-      return Math.abs((field.bottom - launcher.bottom) - 6) <= 1;
+      const overlapsDraft = launcher.left < field.right && launcher.right > field.left && launcher.top < field.bottom && launcher.bottom > field.top;
+      return overlapsDraft ? null : { ok: true };
     })()`));
 
     const chatgptUrl = `${mock.baseUrl}/qa-chatgpt`;
@@ -3327,16 +3335,20 @@ async function main() {
     await panel.evaluate(`[...document.querySelectorAll('#modelProviderList .model-provider-option')].find((button) => button.textContent.includes('OpenAI Codex'))?.click()`);
     const gpt56ContextState = await waitFor(() => panel.evaluate(`(() => {
       const selected = document.querySelector('#modelProviderList .model-provider-option.selected')?.textContent?.trim() || '';
-      const models = [...document.querySelectorAll('#modelMenuList .model-option')].map((button) => button.textContent.trim());
-      return selected.includes('OpenAI Codex') && models.length === 3 ? { selected, models } : null;
+      const models = [...document.querySelectorAll('#modelMenuList .model-option')].map((button) => ({ id: button.dataset.modelId || '', label: button.textContent.trim() }));
+      return selected.includes('OpenAI Codex') && models.length === 4 ? { selected, models } : null;
     })()`));
-    assert.deepEqual(gpt56ContextState.models.map((label) => label.match(/gpt-5\.6-(?:sol|terra|luna)/)?.[0]), [
-      'gpt-5.6-sol',
-      'gpt-5.6-terra',
-      'gpt-5.6-luna',
+    assert.deepEqual(gpt56ContextState.models.map(({ id }) => id), [
+      'openai-codex::gpt-5.6-sol',
+      'openai-codex::gpt-5.6-terra',
+      'openai-codex::gpt-5.6-luna',
+      'openai-codex::gpt-5.6-luna-900k',
     ]);
-    assert.ok(gpt56ContextState.models.every((label) => label.includes('900k')), JSON.stringify(gpt56ContextState));
-    assert.ok(gpt56ContextState.models.every((label) => !label.includes('400k')), JSON.stringify(gpt56ContextState));
+    const baseGpt56Labels = gpt56ContextState.models.slice(0, 3).map(({ label }) => label);
+    const extendedGpt56Label = gpt56ContextState.models[3].label;
+    assert.ok(baseGpt56Labels.every((label) => label.includes('272k')), JSON.stringify(gpt56ContextState));
+    assert.ok(extendedGpt56Label.includes('900k'), JSON.stringify(gpt56ContextState));
+    assert.ok(gpt56ContextState.models.every(({ label }) => !label.includes('400k')), JSON.stringify(gpt56ContextState));
     await saveScreenshot(panel, GPT56_CONTEXT_PICKER_SCREENSHOT, { captureBeyondViewport: false });
     await panel.evaluate(`[...document.querySelectorAll('#modelProviderList .model-provider-option')].find((button) => button.textContent.includes('Alternate Provider'))?.click()`);
     const switchedProviderState = await waitFor(() => panel.evaluate(`(() => {

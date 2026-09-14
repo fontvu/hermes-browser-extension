@@ -18,12 +18,20 @@ import {
   skillSuggestionsForInput,
 } from './lib/common.mjs';
 import { renderMarkdownSafe } from './lib/sanitizer.mjs';
+import { enhanceMarkdownCodeBlocks } from './lib/markdown-code-copy.mjs';
+import {
+  completionRevealPlan,
+  newestAssistantReply,
+  revealSlice,
+  trailingNewMessages,
+} from './lib/completion-reveal.mjs';
 import {
   assistModelRoutingSupported,
   resolveAssistModelBindingFromCatalog,
 } from './lib/assist-model-contract.mjs';
 import {
   DEFAULT_GATEWAY_CAPABILITIES,
+  dashboardWsGatewayCapabilities,
   normalizeGatewayCapabilities,
 } from './lib/capabilities.mjs';
 import { createHermesClient } from './lib/hermes-client.mjs';
@@ -66,12 +74,15 @@ import { getLocale, initI18n, populateLanguageSelect, setLocale, subscribeLocale
 import { mountContextMenuEditor } from './lib/context-menu-editor-client.mjs';
 import {
   MODEL_CATALOG_CACHE_STORAGE_KEY,
+  dashboardFileStreamUrl,
   dashboardModelDiscoveryBaseUrl,
   discoverCanonicalProviderCatalog,
   discoverGatewayVirtualModels,
   discoverModelsFromDashboard,
   discoverModelsFromRegistry,
   discoverModelsFromSessions,
+  fetchDashboardMediaDataUrl,
+  fetchDashboardSessionToken,
   mergeModelsWithRegistry,
   mergeVirtualModelRows,
   modelCatalogCacheKey,
@@ -83,13 +94,32 @@ import {
   shouldTrySessionModelFallback,
 } from './lib/model-discovery.mjs';
 import {
+  appendGeneratedImageSourcesToMessages,
   appendUserImageAttachments,
+  extractHistoryMediaAttachments,
   extractMediaTags,
+  normalizeUserImageAttachments,
   preserveUserImageAttachments,
   resolveImageSource,
   resolvedGeneratedImageSources,
+  resolvedGeneratedImageSourcesFromMessages,
+  resolvedGeneratedImageSourcesFromResult,
   stripGeneratedImageEchoes,
 } from './lib/image-render.mjs';
+import { classifyMediaKind, resolveMediaFetchPlan } from './lib/media-persistence.mjs';
+import {
+  activeSubagentView,
+  applySubagentEvent,
+  formatSubagentElapsed,
+  isSubagentEventName,
+  pruneFinishedSubagents,
+  reconcileSubagentSnapshot,
+  SUBAGENT_STEER_ICON,
+  SUBAGENT_STOP_ICON,
+  subagentControlPayload,
+  subagentStackSummary,
+  subagentsFromListResult,
+} from './lib/subagent-stack.mjs';
 import { modelLockRequestOutcome, readHermesSse, runSteerFailureState } from './lib/fulltab-runtime.mjs';
 import { parseBrowserCommand, resolveCommandPrompt } from './lib/commands.mjs';
 import { createDiffusionCanvas } from './lib/diffusion-canvas.mjs';
@@ -107,7 +137,12 @@ import {
 } from './lib/web-commands.mjs';
 import { artifactActionState, describeArtifact, toFileUrl } from './lib/web-artifacts.mjs';
 import { browserDisplayMessages, isRenderableAssistantMessage, shouldPreserveImageGenerationRun } from './lib/web-run-state.mjs';
+import {
+  createBotGroupRuntime,
+  persistGroupProjectionAppend,
+} from './lib/bot-group-runtime.mjs';
 import { thinkingIndicatorMarkup } from './lib/web-thinking-indicator.mjs';
+import { clearComposerDraft, loadComposerDraft, persistComposerDraft } from './lib/composer-draft.mjs';
 import { createImageViewerState, imageViewerReducer } from './lib/image-viewer.mjs';
 import { writeAssistantClipboardEvent } from './lib/assistant-clipboard.mjs';
 import { taskStackFromToolEvent, taskStackProgress, updateTaskStackStore } from './lib/task-stack.mjs';
@@ -122,12 +157,24 @@ import {
 } from './lib/async-delegation.mjs';
 import { normalizeInlineDraftRoutePreference } from './lib/inline-draft-policy.mjs';
 import {
+  BOT_CHAT_TITLE,
+  botModeRouteKey,
+  canSwitchBotProfile,
+  groupProjectionMessagesForDisplay,
+  mergeGroupChatLists,
+  splitBotRosterRows,
+} from './lib/bot-mode.mjs';
+import { blobatar as blobatarSvg } from './lib/vendor/blobatar-2.0.0.js';
+import {
+  acceptedTurnRecoveryPolicy,
   hermesGatewayTurnError,
   hermesRequestError,
+  latestAssistantAfterUser,
   sessionContextFailureRecovery,
   turnRequestFailureState,
 } from './lib/turn-recovery.mjs';
-import { buildDashboardWsUrl, buildSessionModelSwitchRequest, createGatewayClient, establishGatewaySession, normalizeGatewayHistoryMessages, runtimeModelFromSessionStatus, WS_EVENTS, WS_METHODS } from './lib/gateway-ws.mjs';
+import { buildDashboardWsUrl, buildDashboardWsUrlWithCredential, buildSessionModelSwitchRequest, createGatewayClient, establishGatewaySession, normalizeGatewayHistoryMessages, runtimeModelFromSessionStatus, WS_EVENTS, WS_METHODS } from './lib/gateway-ws.mjs';
+import { createDashboardStreamWatchdog, dashboardWatchdogTimeoutAction, matchesDashboardSessionEvent, shouldReattachDashboardStream } from './lib/dashboard-stream-watchdog.mjs';
 import { isTrustedDashboardOrigin, mintWsTicket, originOf, ticketFailureHelp } from './lib/dashboard-bridge.mjs';
 import {
   CONTEXT_CONSENT_STORAGE_KEY,
@@ -189,6 +236,16 @@ const els = {
   sessionSearch: $('#sessionSearch'),
   sessionList: $('#sessionList'),
   sessionCount: $('#sessionCount'),
+  chatsRailButton: $('#chatsRailButton'),
+  agentsRailButton: $('#agentsRailButton'),
+  botModeRail: $('#botModeRail'),
+  webBotModeSearch: $('#webBotModeSearch'),
+  webBotModeRoster: $('#webBotModeRoster'),
+  webBotModeGroupList: $('#webBotModeGroupList'),
+  webBotModeViewAgents: $('#webBotModeViewAgents'),
+  webBotModeViewGroups: $('#webBotModeViewGroups'),
+  webBotModeStatus: $('#webBotModeStatus'),
+  webBotModeRefresh: $('#webBotModeRefresh'),
   sessionTitle: $('#sessionTitle'),
   railVisibilityToggle: $('#railVisibilityToggle'),
 
@@ -256,6 +313,11 @@ const els = {
   taskStackSummary: $('#taskStackSummary'),
   taskStackProgress: $('#taskStackProgress'),
   taskStackList: $('#taskStackList'),
+  subagentStack: $('#subagentStack'),
+  subagentStackToggle: $('#subagentStackToggle'),
+  subagentStackSummary: $('#subagentStackSummary'),
+  subagentStackList: $('#subagentStackList'),
+  subagentStackDetail: $('#subagentStackDetail'),
   settingsButton: $('#settingsButton'),
   wakeButton: $('#wakeButton'),
   settingsDialog: $('#settingsDialog'),
@@ -296,6 +358,7 @@ const els = {
   settingsProfile: $('#settingsProfile'),
   settingsGatewayUrl: $('#settingsGatewayUrl'),
   settingsApiKey: $('#settingsApiKey'),
+  settingsBotModeEnabled: $('#settingsBotModeEnabled'),
   browserContextConsentControl: $('#browserContextConsentControl'),
   browserContextConsentInput: $('#browserContextConsentInput'),
   browserContextConsentIdentity: $('#browserContextConsentIdentity'),
@@ -359,6 +422,14 @@ let activeSessionId = handoff.sessionId;
 let activeMessages = [];
 let taskStackStore = {};
 let taskStackExpanded = true;
+let subagentState = {};
+let subagentExpanded = true;
+let subagentSelectedId = '';
+let subagentSteerDraft = '';
+let subagentControlBusy = false;
+let subagentControlError = '';
+let subagentTimer = null;
+const subagentBoundClients = new WeakSet();
 let availableModels = [];
 let selectedModelProvider = '';
 let modelSelectionTarget = 'chat';
@@ -370,6 +441,9 @@ let activeRunControl = null;
 let runControlGeneration = 0;
 let attachments = [];
 let queuedTurn = null;
+let composerDraftSaveTimer = 0;
+let restoringComposerDraft = false;
+const WEB_COMPOSER_DRAFT_INSTANCE = 'web';
 const approvedForeignSessionIds = new Set();
 let pendingForeignTurn = null;
 let availableSkills = [];
@@ -384,6 +458,17 @@ let sessionHistoryLoading = true;
 let webSessionLoadRequestId = 0;
 let wakeTurnProcessingId = '';
 let dashboardConnection = null;
+let botModeConnection = null;
+let webBotModeRoster = [];
+let webBotModeGeneration = 0;
+// Synced projection rows live only for this Web Bot Mode lifecycle. Browser
+// never persists or fabricates group-room authority.
+let webBotModeGroupChats = [];
+let activeGroupProjection = null;
+let activeGroupRuntime = null;
+let activeGroupMessages = [];
+let activeGroupAbortController = null;
+let webBotModeView = 'agents';
 let dashboardLiveSessionId = '';
 let contextMenuEditor = null;
 const HERMES_WEB_SESSION_SOURCE = 'hermes_web';
@@ -424,7 +509,7 @@ const delegationWatchManager = createDelegationWatchManager({
     return { messages: await client.getSessionMessages(watch.durableSessionId) };
   },
   onComplete: async (watch, result) => {
-    await commitFullTabSessionMessages(result?.messages || [], {
+    await commitFullTabSessionMessagesWithReveal(result?.messages || [], {
       sessionId: watch.durableSessionId,
       requestId: webSessionLoadRequestId,
     });
@@ -612,15 +697,40 @@ async function ensureDashboardConnection() {
   });
   await gatewayClient.connect(buildDashboardWsUrl(settings.gatewayUrl, ticket.ticket));
   dashboardConnection = { client: gatewayClient, origin: desiredOrigin, tabId };
+  bindSubagentClient(gatewayClient);
   return dashboardConnection;
 }
 
-async function establishDashboardSession(storedSessionId = '', { isCurrent = () => true } = {}) {
+function botModeConnectionKey() {
+  return botModeRouteKey({
+    connectionId: originOf(settings.gatewayUrl || ''),
+    transport: settings.connectionTransport || settings.gatewayMode,
+    profile: settings.activeProfile || 'default',
+  });
+}
+
+async function ensureBotModeConnection() {
+  if (usesDashboardTicketTransport()) return ensureDashboardConnection();
+  const key = botModeConnectionKey();
+  if (!settings.apiKey) throw new Error('A Hermes API token is required to load agents.');
+  if (botModeConnection?.client?.readyState === 1 && botModeConnection.key === key) return botModeConnection;
+  botModeConnection?.client?.close?.();
+  const gatewayClient = createGatewayClient({ WebSocketImpl: WebSocket, requestTimeoutMs: 60_000, readyTimeoutMs: 20_000 });
+  gatewayClient.on('close', () => {
+    if (botModeConnection?.client === gatewayClient) botModeConnection = null;
+  });
+  await gatewayClient.connect(buildDashboardWsUrlWithCredential(settings.gatewayUrl, 'token', settings.apiKey));
+  botModeConnection = { client: gatewayClient, key };
+  return botModeConnection;
+}
+
+async function establishDashboardSession(storedSessionId = '', { isCurrent = () => true, profile = settings.activeProfile || '', createParams = {} } = {}) {
   const connection = await ensureDashboardConnection();
   const identity = await establishGatewaySession({
     client: connection.client,
     storedSessionId,
-    createParams: { source: HERMES_WEB_SESSION_SOURCE },
+    profile,
+    createParams: { source: HERMES_WEB_SESSION_SOURCE, ...createParams, profile },
   });
   if (!isCurrent()) {
     const error = new Error('A newer session selection replaced this dashboard request.');
@@ -668,6 +778,7 @@ async function resumeDashboardRecoverySession(connection, storedSessionId = acti
   const identity = await establishGatewaySession({
     client: connection.client,
     storedSessionId: durableSessionId,
+    profile: settings.activeProfile || '',
   });
   if (identity.storedId !== durableSessionId) {
     throw new Error('Dashboard resumed a different durable session during run recovery.');
@@ -683,29 +794,475 @@ function dashboardHistoryMessages(payload = {}) {
 async function loadDashboardSessionMessages(storedSessionId, options = {}) {
   const connection = await ensureDashboardConnection();
   const identity = await establishDashboardSession(storedSessionId, options);
-  const history = await connection.client.request(WS_METHODS.sessionHistory, { session_id: identity.liveId });
+  const history = await connection.client.request(WS_METHODS.sessionHistory, { session_id: identity.liveId, profile: settings.activeProfile || '' });
   return dashboardHistoryMessages(history);
 }
 
 async function listDashboardSessions() {
   const connection = await ensureDashboardConnection();
-  const result = await connection.client.request(WS_METHODS.sessionList, { limit: 200, offset: 0 });
+  const result = await connection.client.request(WS_METHODS.sessionList, { limit: 200, offset: 0, profile: settings.activeProfile || '' });
   return applySessionModelBindings(normalizeHermesSessions(result), settings.sessionModelBindings);
 }
 
-async function streamDashboardPrompt(prompt, { signal, onDelta, onTool, onRun } = {}) {
-  const connection = await ensureDashboardConnection();
+function setWebRailView(view = 'chats') {
+  const agents = view === 'agents' && settings.botModeEnabled === true;
+  els.sessionRail.classList.toggle('agents-view', agents);
+  els.botModeRail.hidden = !agents;
+  els.chatsRailButton?.classList.toggle('active', !agents);
+  els.agentsRailButton?.classList.toggle('active', agents);
+  if (agents) {
+    renderWebBotModeRoster(els.webBotModeSearch?.value);
+    els.webBotModeSearch?.focus();
+  }
+}
+
+function renderBotModeControls() {
+  const enabled = settings.botModeEnabled === true;
+  if (els.agentsRailButton) els.agentsRailButton.hidden = !enabled;
+  if (els.settingsBotModeEnabled) els.settingsBotModeEnabled.checked = enabled;
+  if (!enabled) setWebRailView('chats');
+}
+
+function botProfileDisplayName(row) {
+  const profileName = String(row?.profileName || row?.name || '').trim();
+  const rawDisplay = String(row?.displayName || '').trim();
+  const rawTitle = String(row?.title || '').trim();
+  if (rawDisplay && rawDisplay.toLowerCase() !== 'default') return rawDisplay;
+  if (rawTitle && rawTitle.toLowerCase() !== 'default') return rawTitle;
+  if (profileName.toLowerCase() === 'default' || !profileName) return 'Default';
+      return profileName.charAt(0).toUpperCase() + profileName.slice(1);
+}
+
+function botProfileDisplayTitle(row) {
+  const profileName = String(row?.profileName || row?.name || '').trim();
+  return row?.title || row?.description || profileName;
+}
+
+// Deterministic Blobatar-style face for the Hermes Web rail (same algorithm as the side panel).
+function appendWebBotModeAvatar(container, displayName) {
+  const seed = String(displayName || 'agent').trim();
+  let svgMarkup = '';
+  try {
+    svgMarkup = blobatarSvg(seed, { size: 40 });
+  } catch {
+    svgMarkup = '';
+  }
+  if (svgMarkup) {
+    const template = document.createElement('template');
+    template.innerHTML = svgMarkup.trim();
+    const svg = template.content.firstElementChild;
+    if (svg) {
+      svg.setAttribute('aria-hidden', 'true');
+      container.replaceChildren(svg);
+      return;
+    }
+  }
+  let hash = 0;
+  for (let index = 0; index < seed.length; index += 1) hash = (hash * 31 + seed.charCodeAt(index)) >>> 0;
+  const hue = hash % 360;
+  const fill = `hsl(${hue} ${58 + (hash % 17)}% ${58 + (hash % 9)}%)`;
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 100 100');
+  svg.setAttribute('aria-hidden', 'true');
+  const face = document.createElementNS(ns, 'path');
+  face.setAttribute('fill', fill);
+  face.setAttribute('d', 'M78.7 49.7C78.5 59.6 73.8 72.8 66 77.9C58.2 83 40.1 85 31.8 80.3C23.4 75.6 15.5 59.5 15.8 49.7C16 40 24.7 27 33.3 21.9C42 16.7 59.9 14.4 67.5 19.1C75 23.7 79 39.9 78.7 49.7Z');
+  const eye = document.createElementNS(ns, 'path');
+  eye.setAttribute('fill', 'hsl(48 38% 7%)');
+  eye.setAttribute('d', 'M42.1 46C42.3 52.9 42.1 53.5 39.1 53.6C36.1 53.6 35.8 53.1 35.6 46.1C35.5 39.2 35.7 38.6 38.7 38.6C41.7 38.5 41.9 39.1 42.1 46Z');
+  const eye2 = eye.cloneNode();
+  eye2.setAttribute('d', 'M62.6 46C63.1 53.3 62.8 53.9 59.2 54.2C55.5 54.4 55.2 53.8 54.7 46.5C54.1 39.3 54.4 38.6 58.1 38.4C61.7 38.1 62.1 38.7 62.6 46Z');
+  svg.append(face, eye, eye2);
+  container.replaceChildren(svg);
+}
+
+function renderWebBotModeRoster(query = '') {
+  if (!els.webBotModeRoster) return;
+  const needle = String(query || '').trim().toLowerCase();
+  // Agents only: group chats render in the dedicated Group Chats view.
+  const rows = webBotModeRoster.filter((row) => row.type !== 'group'
+    && `${botProfileDisplayName(row)} ${row.displayName} ${row.profileName} ${row.title} ${row.description}`.toLowerCase().includes(needle));
+  els.webBotModeRoster.replaceChildren();
+  for (const row of rows) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'bot-mode-row';
+    button.setAttribute('role', 'option');
+    button.setAttribute('aria-selected', String(row.profileName === (settings.botModeSelectedProfile || settings.activeProfile)));
+    const displayName = botProfileDisplayName(row);
+    const displayTitle = botProfileDisplayTitle(row);
+    const avatar = document.createElement('span');
+    avatar.className = 'bot-mode-avatar';
+    appendWebBotModeAvatar(avatar, displayName);
+    const copy = document.createElement('span');
+    copy.className = 'bot-mode-row-copy';
+    const name = document.createElement('strong');
+    name.textContent = displayName;
+    const meta = document.createElement('span');
+    meta.textContent = displayTitle;
+    copy.append(name, meta);
+    const state = document.createElement('span');
+    state.className = `bot-mode-row-state${row.activity.activeNow ? ' active' : ''}`;
+    state.textContent = row.activity.activeNow ? 'ACTIVE' : 'READY';
+    button.append(avatar, copy, state);
+    button.addEventListener('click', () => { void openWebBotProfile(row); });
+    els.webBotModeRoster.append(button);
+  }
+  if (!rows.length) {
+    const empty = document.createElement('p');
+    empty.className = 'bot-mode-empty';
+    empty.textContent = webBotModeRoster.length ? 'No agents match this search.' : 'No verified Hermes profiles are available.';
+    els.webBotModeRoster.append(empty);
+  }
+  if (els.webBotModeStatus) {
+    els.webBotModeStatus.textContent = webBotModeView === 'groups'
+      ? `${webBotModeGroupChats.length} group chat${webBotModeGroupChats.length === 1 ? '' : 's'} · current connected Hermes instance`
+      : `${webBotModeRoster.length} agent${webBotModeRoster.length === 1 ? '' : 's'} · current connected Hermes instance`;
+  }
+}
+
+// Web rail Group Chats view: synced projections are separate from the
+// verified agent roster and open through the profile-scoped group runtime.
+function renderWebBotModeGroupChats(query = '') {
+  const host = els.webBotModeGroupList;
+  if (!host) return;
+  const needle = String(query || '').trim().toLowerCase();
+  const rows = webBotModeGroupChats.filter((row) => `${row.displayName} ${row.id} ${row.title} ${row.members.join(' ')}`.toLowerCase().includes(needle));
+  host.replaceChildren();
+  for (const row of rows) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'bot-mode-row group-row';
+    button.dataset.group = row.id;
+    button.setAttribute('role', 'option');
+    button.title = `${row.displayName} · ${row.members.length} member${row.members.length === 1 ? '' : 's'}`;
+    const faceStack = document.createElement('span');
+    faceStack.className = 'face-stack';
+    const members = row.members.length ? row.members : ['default'];
+    members.slice(0, 3).forEach((memberName, idx) => {
+      const span = document.createElement('span');
+      span.style.setProperty('--i', idx);
+      appendWebBotModeAvatar(span, memberName);
+      faceStack.append(span);
+    });
+    const copy = document.createElement('span');
+    copy.className = 'bot-mode-row-copy';
+    const name = document.createElement('strong');
+    name.textContent = row.displayName;
+    const meta = document.createElement('span');
+    meta.textContent = row.title;
+    const preview = document.createElement('span');
+    preview.textContent = row.canonical.preview || 'Synced group projection.';
+    copy.append(name, meta, preview);
+    const state = document.createElement('span');
+    state.className = 'bot-mode-row-state';
+    const pill = document.createElement('span');
+    pill.className = 'room-pill';
+    pill.textContent = 'Synced room';
+    state.append(pill);
+    button.append(faceStack, copy, state);
+    button.addEventListener('click', () => { void openWebBotGroupChat(row); });
+    host.append(button);
+  }
+  if (!rows.length) {
+    const empty = document.createElement('p');
+    empty.className = 'bot-mode-empty';
+    empty.textContent = webBotModeGroupChats.length ? 'No group chats match this search.' : 'No group chats synced yet.';
+    host.append(empty);
+  }
+}
+
+function setWebBotModeView(view = 'agents') {
+  webBotModeView = view === 'groups' ? 'groups' : 'agents';
+  const groupsActive = webBotModeView === 'groups';
+  els.webBotModeViewAgents?.setAttribute('aria-pressed', String(!groupsActive));
+  els.webBotModeViewGroups?.setAttribute('aria-pressed', String(groupsActive));
+  if (els.webBotModeRoster) els.webBotModeRoster.hidden = groupsActive;
+  if (els.webBotModeGroupList) els.webBotModeGroupList.hidden = !groupsActive;
+  if (els.webBotModeSearch) {
+    els.webBotModeSearch.placeholder = groupsActive
+      ? translateUiText('Search group chats')
+      : translateUiText('Search agents');
+  }
+  if (groupsActive) renderWebBotModeGroupChats(els.webBotModeSearch?.value);
+  else renderWebBotModeRoster(els.webBotModeSearch?.value);
+}
+
+async function persistActiveWebGroupProjection(client, displayMessages) {
+  const row = activeGroupProjection;
+  const message = Array.isArray(displayMessages) ? displayMessages.at(-1) : null;
+  if (!row || !message) throw new Error('No active group room is selected.');
+  return persistGroupProjectionAppend(client, {
+    roomId: row.roomId || row.id,
+    roomKey: row.roomKey,
+    message,
+    now: Date.now(),
+  });
+}
+
+function webGroupRuntimeMembers(row = activeGroupProjection) {
+  return (Array.isArray(row?.members) ? row.members : [])
+    .map((memberName) => {
+      const name = typeof memberName === 'string'
+        ? memberName.trim()
+        : String(memberName?.name || memberName?.profile || memberName?.profileName || '').trim();
+      const rosterRow = webBotModeRoster.find((entry) => entry.profileName === name);
+      return {
+        name,
+        title: rosterRow ? botProfileDisplayName(rosterRow) : name,
+        source: rosterRow?.sourceId || '',
+      };
+    })
+    .filter((member) => member.name);
+}
+
+async function sendActiveWebGroupMessage(text = '', turnAttachments = []) {
+  if (!activeGroupProjection) return false;
+  if (!activeGroupRuntime) {
+    els.webBotModeStatus.textContent = 'This group room has no verified Dashboard transport on the current Hermes runtime.';
+    return false;
+  }
+  if (Array.isArray(turnAttachments) && turnAttachments.length) {
+    els.webBotModeStatus.textContent = 'Group attachments require the official portable group-operations contract.';
+    return false;
+  }
+  if (sending) {
+    els.webBotModeStatus.textContent = 'The current group turn is still running.';
+    return false;
+  }
+  const value = String(text || '').trim();
+  if (!value) return false;
+  const abortController = new AbortController();
+  activeGroupAbortController = abortController;
+  sending = true;
+  updateBusyControls();
+  els.prompt.value = '';
+  renderAttachments();
+  try {
+    const result = await activeGroupRuntime.send({
+      roomId: activeGroupProjection.roomId || activeGroupProjection.id,
+      groupName: activeGroupProjection.displayName,
+      members: webGroupRuntimeMembers(),
+      messages: activeGroupMessages,
+      text: value,
+      signal: abortController.signal,
+    });
+    activeGroupMessages = result.messages;
+    renderMessages(activeGroupMessages);
+    if (result.failures.length) {
+      els.webBotModeStatus.textContent = `${result.failures.length} group member${result.failures.length === 1 ? '' : 's'} did not complete a reply.`;
+    } else {
+      els.webBotModeStatus.textContent = `${activeGroupProjection.displayName} · group message sent.`;
+    }
+    return result.ok;
+  } catch (error) {
+    els.prompt.value = value;
+    renderAttachments();
+    els.webBotModeStatus.textContent = `Group message failed: ${error?.message || String(error)}`;
+    return false;
+  } finally {
+    if (activeGroupAbortController === abortController) activeGroupAbortController = null;
+    sending = false;
+    updateBusyControls();
+  }
+}
+
+async function openWebBotGroupChat(row) {
+  if (!row) return false;
+  if (!canSwitchActiveSession({ sending, runControl: activeRunControl })) {
+    els.webBotModeStatus.textContent = 'Stop the active run before opening a group chat.';
+    return false;
+  }
+  activeGroupProjection = row;
+  activeGroupMessages = groupProjectionMessagesForDisplay(row);
+  activeGroupRuntime = null;
+  activeSessionId = '';
+  setWebRailView('agents');
+  renderMessages(activeGroupMessages);
+  els.sessionTitle.textContent = `${row.displayName} · Group Chat`;
+  els.composerSessionLabel.textContent = row.roomId || row.id;
+  try {
+    const connection = await ensureBotModeConnection();
+    activeGroupRuntime = createBotGroupRuntime({
+      client: connection.client,
+      onMessage: (message) => {
+        activeGroupMessages = [...activeGroupMessages, message];
+        renderMessages(activeGroupMessages);
+      },
+      persist: (displayMessages) => persistActiveWebGroupProjection(connection.client, displayMessages),
+    });
+    const prepared = await activeGroupRuntime.prepare({
+      roomId: row.roomId || row.id,
+      members: webGroupRuntimeMembers(row),
+    });
+    if (!prepared.ok) {
+      els.webBotModeStatus.textContent = `Group chat opened with ${prepared.failures.length} missing member session${prepared.failures.length === 1 ? '' : 's'}; they initialize when you send.`;
+    } else {
+      els.webBotModeStatus.textContent = `Group chat opened · ${row.displayName} · ${activeGroupMessages.length} synced messages · members can reply.`;
+    }
+    els.prompt.focus();
+    return true;
+  } catch {
+    activeGroupRuntime = null;
+    els.webBotModeStatus.textContent = 'The connected Hermes runtime could not open the existing group member sessions.';
+    els.prompt.focus();
+    return false;
+  }
+}
+
+const CANONICAL_FALLBACK_PROFILES = [];
+
+const CANONICAL_FALLBACK_GROUP_CHATS = [];
+
+async function loadWebBotModeProfiles() {
+  if (settings.botModeEnabled !== true) return [];
+  const generation = ++webBotModeGeneration;
+  try {
+    const connection = await ensureBotModeConnection();
+    const payload = await connection.client.request(WS_METHODS.profilesList, { include_sessions: true });
+    if (generation !== webBotModeGeneration) return webBotModeRoster;
+    // Group projections split into their own roster and are never counted or
+    // listed as agent profiles. Selecting one opens its profile-scoped room runtime.
+    const split = splitBotRosterRows(payload, { sourceId: originOf(settings.gatewayUrl) });
+    webBotModeRoster = split.agents;
+    webBotModeGroupChats = mergeGroupChatLists(split.groupChats, webBotModeGroupChats);
+    renderWebBotModeRoster(els.webBotModeSearch?.value);
+    renderWebBotModeGroupChats(els.webBotModeSearch?.value);
+    if (!webBotModeRoster.length && !webBotModeGroupChats.length && els.webBotModeStatus) {
+      els.webBotModeStatus.textContent = 'No verified Hermes Bot Mode profiles or synced group rooms were returned.';
+    }
+  } catch {
+    // Fall through to canonical fallback if roster is empty
+  }
+
+  if (!webBotModeRoster.length && generation === webBotModeGeneration) {
+    webBotModeRoster = [];
+    webBotModeGroupChats = [];
+    renderWebBotModeRoster(els.webBotModeSearch?.value);
+    renderWebBotModeGroupChats(els.webBotModeSearch?.value);
+    if (els.webBotModeStatus) {
+      els.webBotModeStatus.textContent = 'No custom profiles on gateway';
+    }
+  }
+  return webBotModeRoster;
+}
+
+async function openWebBotProfile(row) {
+  const decision = canSwitchBotProfile({ running: sending, currentProfile: settings.activeProfile, selectedProfile: row?.profileName });
+  if (!decision.allowed) {
+    els.composerStatus.textContent = translateUiText('Stop the active run before switching agents.');
+    return false;
+  }
+  activeGroupProjection = null;
+  activeGroupRuntime = null;
+  activeGroupMessages = [];
+  settings = { ...settings, activeProfile: row.profileName, botModeSelectedProfile: row.profileName };
+  await browserApi.storage.local.set({ hermesBrowserSettings: settings });
+  renderConnectionTruth({ status: 'online' });
+  renderWebBotModeRoster(els.webBotModeSearch?.value);
+  await loadSkills({ quiet: true });
+  if (row.canonical.status === 'mismatch') {
+    els.webBotModeStatus.textContent = `Open ${row.displayName} in Hermes Desktop Bot Mode to repair its canonical Bot Chat.`;
+    return false;
+  }
+  setWebRailView('chats');
+  if (row.canonical.status === 'ready') {
+    const opened = await openSession(row.canonical.durableId);
+    if (opened === true) return opened;
+  }
+  await createSession({ title: BOT_CHAT_TITLE, hidden: true });
+  return true;
+}
+
+async function recoverAcceptedWebTurn(prompt, { signal, timeoutMs = acceptedTurnRecoveryPolicy().maxDurationMs } = {}) {
+  const startedAt = Date.now();
+  let attempt = 0;
+  while (true) {
+    if (signal?.aborted) throw new DOMException('Hermes turn stopped by user', 'AbortError');
+    try {
+      let rows = [];
+      if (usesDashboardTicketTransport()) {
+        const connection = await ensureDashboardConnection();
+        const identity = await resumeDashboardRecoverySession(connection, activeSessionId);
+        const history = await connection.client.request(WS_METHODS.sessionHistory, {
+          session_id: identity.liveId,
+          profile: settings.activeProfile || '',
+        });
+        rows = dashboardHistoryMessages(history);
+      } else {
+        rows = await client.getSessionMessages(activeSessionId);
+      }
+      const answer = latestAssistantAfterUser(rows, prompt);
+      const imageSources = [...new Set([
+        ...resolvedGeneratedImageSourcesFromMessages(rows),
+        ...resolvedGeneratedImageSources(answer),
+      ])];
+      if (answer || imageSources.length) return { answer, imageSources };
+    } catch (error) {
+      if (error?.name === 'AbortError') throw error;
+    }
+    const policy = acceptedTurnRecoveryPolicy({
+      attempt,
+      elapsedMs: Date.now() - startedAt,
+      maxDurationMs: timeoutMs,
+    });
+    if (!policy.shouldContinue) return { answer: '', imageSources: [], reason: 'timeout' };
+    const remainingMs = Math.max(1, policy.maxDurationMs - (Date.now() - startedAt));
+    await new Promise((resolve) => setTimeout(resolve, Math.min(policy.delayMs, remainingMs)));
+    attempt += 1;
+  }
+}
+
+async function readAcceptedHermesSse(response, options = {}) {
+  try {
+    return await readHermesSse(response, options);
+  } catch (error) {
+    error.requestAccepted = true;
+    throw error;
+  }
+}
+
+async function streamDashboardPrompt(prompt, { signal, onDelta, onTool, onRun, attachments: turnAttachments = [] } = {}) {
+  let connection = await ensureDashboardConnection();
   if (!dashboardLiveSessionId) await establishDashboardSession(activeSessionId);
-  const sessionId = dashboardLiveSessionId;
+  let sessionId = dashboardLiveSessionId;
   onRun?.(sessionId);
+  let submitPrompt = true;
+  let reattachAttempts = 0;
+  while (true) {
+    try {
+      return await streamDashboardPromptAttempt(connection, sessionId, prompt, {
+        signal,
+        onDelta,
+        onTool,
+        submitPrompt,
+        attachments: turnAttachments,
+      });
+    } catch (error) {
+      if (shouldReattachDashboardStream(error) && reattachAttempts < 8) {
+        reattachAttempts += 1;
+        submitPrompt = false;
+        connection = await ensureDashboardConnection();
+        if (!dashboardLiveSessionId) await establishDashboardSession(activeSessionId);
+        sessionId = dashboardLiveSessionId;
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
+async function streamDashboardPromptAttempt(connection, sessionId, prompt, { signal, onDelta, onTool, submitPrompt = true, attachments: turnAttachments = [] } = {}) {
   return new Promise((resolve, reject) => {
     let finalText = '';
+    let submitAccepted = false;
     let settled = false;
     const offs = [];
-    const timer = globalThis.setTimeout(() => finish(reject, new Error('Dashboard response timed out.')), 5 * 60 * 1000);
-    const forThisSession = (event) => event.sessionId === sessionId;
+    const sessionIds = [sessionId, dashboardLiveSessionId, activeSessionId];
+    const forThisSession = (event) => matchesDashboardSessionEvent(event, sessionIds);
     const cleanup = () => {
-      globalThis.clearTimeout(timer);
+      watchdog.stop();
       for (const off of offs) off();
       signal?.removeEventListener?.('abort', onAbort);
     };
@@ -715,14 +1272,57 @@ async function streamDashboardPrompt(prompt, { signal, onDelta, onTool, onRun } 
       cleanup();
       fn(value);
     };
+    const seedFromHistory = async () => {
+      const history = await connection.client.request(WS_METHODS.sessionHistory, {
+        session_id: sessionId,
+        profile: settings.activeProfile || '',
+      }).catch(() => null);
+      const rows = dashboardHistoryMessages(history);
+      const answer = latestAssistantAfterUser(rows, prompt)
+        || [...rows].reverse().find((row) => row.role === 'assistant')?.content
+        || '';
+      if (answer && answer !== finalText) {
+        finalText = answer;
+        onDelta?.(finalText);
+      }
+      return answer;
+    };
+    const handleIdleTimeout = async (error) => {
+      if (settled) return;
+      try {
+        const status = await connection.client.request(WS_METHODS.sessionStatus, { session_id: sessionId }).catch(() => null);
+        await seedFromHistory();
+        if (dashboardWatchdogTimeoutAction(status) === 'keep-listening') {
+          watchdog.ping();
+          return;
+        }
+        if (finalText) {
+          finish(resolve, finalText);
+          return;
+        }
+      } catch {
+        // Fall through to reattach.
+      }
+      error.requestAccepted = true;
+      error.reattach = true;
+      finish(reject, error);
+    };
+    const watchdog = createDashboardStreamWatchdog((error) => {
+      void handleIdleTimeout(error);
+    });
     const onAbort = () => {
       connection.client.request(WS_METHODS.sessionInterrupt, { session_id: sessionId }).catch(() => {});
       finish(reject, new DOMException('Hermes turn stopped by user', 'AbortError'));
     };
     if (signal?.aborted) return onAbort();
     signal?.addEventListener?.('abort', onAbort, { once: true });
+    offs.push(connection.client.on('*', (event) => {
+      if (forThisSession(event)) watchdog.ping();
+      ingestSubagentGatewayEvent(event);
+    }));
     offs.push(connection.client.on(WS_EVENTS.messageDelta, (event) => {
       if (!forThisSession(event)) return;
+      watchdog.ping();
       finalText += event.payload?.text || '';
       onDelta?.(finalText);
     }));
@@ -738,10 +1338,14 @@ async function streamDashboardPrompt(prompt, { signal, onDelta, onTool, onRun } 
       finish(resolve, finalText);
     }));
     offs.push(connection.client.on('tool.start', (event) => {
-      if (forThisSession(event)) onTool?.({ type: 'tool.start', tool_name: event.payload?.name });
+      if (!forThisSession(event)) return;
+      watchdog.ping();
+      onTool?.({ type: 'tool.start', tool_name: event.payload?.name });
     }));
     offs.push(connection.client.on('tool.complete', (event) => {
-      if (forThisSession(event)) onTool?.({
+      if (!forThisSession(event)) return;
+      watchdog.ping();
+      onTool?.({
         type: 'tool.complete',
         tool_name: event.payload?.name,
         result: event.payload?.result,
@@ -751,12 +1355,37 @@ async function streamDashboardPrompt(prompt, { signal, onDelta, onTool, onRun } 
       if (!forThisSession(event)) return;
       finish(reject, hermesGatewayTurnError({ payload: event.payload }) || new Error('Dashboard stream error'));
     }));
-    offs.push(connection.client.on('close', () => finish(reject, new Error('Dashboard connection closed mid-turn.'))));
-    connection.client.request(WS_METHODS.promptSubmit, { session_id: sessionId, text: prompt }).catch((error) => finish(reject, error));
+    offs.push(connection.client.on('close', () => {
+      const error = new Error('Dashboard connection closed mid-turn.');
+      error.requestAccepted = submitAccepted || !submitPrompt;
+      error.reattach = true;
+      finish(reject, error);
+    }));
+    if (submitPrompt) {
+      void (async () => {
+        try {
+          await attachDashboardPromptImages(connection.client, sessionId, turnAttachments);
+        } catch (error) {
+          console.warn('[Hermes Browser] Dashboard image attach failed:', error);
+        }
+        if (settled) return;
+        connection.client.request(WS_METHODS.promptSubmit, { session_id: sessionId, text: prompt })
+          .then(() => { submitAccepted = true; })
+          .catch((error) => finish(reject, error));
+      })();
+    } else {
+      void seedFromHistory();
+    }
+    void hydrateSubagentSnapshot(connection.client, sessionId);
   });
 }
 
 async function loadGatewayCapabilities() {
+  if (usesDashboardTicketTransport() && dashboardConnection?.client?.readyState === 1) {
+    gatewayCapabilities = dashboardWsGatewayCapabilities({ health: true, source: 'dashboard-ws' });
+    renderInlineAssistModelOptions();
+    return gatewayCapabilities;
+  }
   try {
     const response = await client.fetch('/v1/capabilities', { method: 'GET', cache: 'no-store' });
     const payload = await client.readJson(response);
@@ -811,6 +1440,229 @@ function renderTaskStack() {
     return item;
   });
   els.taskStackList.replaceChildren(...rows);
+}
+
+function currentSubagentSessionKeys() {
+  return [...new Set([
+    activeSessionId,
+    dashboardLiveSessionId,
+    dashboardConnection?.wsSessionId,
+    dashboardConnection?.wsStoredSessionId,
+  ].map((value) => String(value || '').trim()).filter(Boolean))];
+}
+
+function currentSubagentSessionKey() {
+  return currentSubagentSessionKeys()[0] || '';
+}
+
+function currentSubagentItems() {
+  for (const key of currentSubagentSessionKeys()) {
+    if (Array.isArray(subagentState[key]) && subagentState[key].length) return subagentState[key];
+  }
+  return [];
+}
+
+function ensureSubagentTimer(liveCount) {
+  if (liveCount && !subagentTimer) {
+    subagentTimer = setInterval(() => renderSubagentStack(), 1000);
+  } else if (!liveCount && subagentTimer) {
+    clearInterval(subagentTimer);
+    subagentTimer = null;
+  }
+}
+
+function ingestSubagentGatewayEvent(event) {
+  const type = String(event?.type || event?.name || '').trim();
+  const keys = currentSubagentSessionKeys();
+  const eventSession = String(
+    event?.sessionId
+    || event?.session_id
+    || event?.payload?.parent_session_id
+    || event?.payload?.session_id
+    || '',
+  ).trim();
+  if (type === 'message.start' && (eventSession || keys[0])) {
+    subagentState = pruneFinishedSubagents(subagentState, eventSession || keys[0]);
+    renderSubagentStack();
+    return;
+  }
+  if (!isSubagentEventName(type)) return;
+  if (eventSession && keys.length && !keys.includes(eventSession)) return;
+  const key = eventSession || keys[0] || '';
+  if (!key) return;
+  subagentState = applySubagentEvent(subagentState, key, event);
+  if (keys[0] && keys[0] !== key) {
+    subagentState = applySubagentEvent(subagentState, keys[0], event);
+  }
+  renderSubagentStack();
+}
+
+function bindSubagentClient(client) {
+  if (!client?.on || subagentBoundClients.has(client)) return;
+  subagentBoundClients.add(client);
+  client.on('*', (event) => ingestSubagentGatewayEvent(event));
+}
+
+async function hydrateSubagentSnapshot(client, sessionId = '') {
+  const sid = String(sessionId || currentSubagentSessionKey() || '').trim();
+  if (!client?.request || !sid) return;
+  try {
+    const result = await client.request(WS_METHODS.subagentList, { session_id: sid });
+    subagentState = reconcileSubagentSnapshot(subagentState, sid, subagentsFromListResult(result));
+    renderSubagentStack();
+  } catch {
+    // Older gateways omit subagent.list.
+  }
+}
+
+async function runSelectedSubagentControl(action, text = '') {
+  const connection = dashboardConnection;
+  const sessionId = String(dashboardLiveSessionId || currentSubagentSessionKey() || '').trim();
+  const payload = subagentControlPayload(action, {
+    sessionId,
+    subagentId: subagentSelectedId,
+    text,
+  });
+  if (!connection?.client || !payload.session_id || !payload.subagent_id) return;
+  if (action === 'steer' && !payload.text) return;
+  subagentControlBusy = true;
+  subagentControlError = '';
+  renderSubagentStack();
+  try {
+    const method = action === 'steer' ? WS_METHODS.subagentSteer : WS_METHODS.subagentInterrupt;
+    const result = await connection.client.request(method, payload);
+    if (action === 'interrupt' && result && result.found === false) {
+      throw new Error('Subagent is no longer running.');
+    }
+    if (action === 'steer') subagentSteerDraft = '';
+  } catch (error) {
+    subagentControlError = String(error?.message || error || 'Subagent control failed');
+  } finally {
+    subagentControlBusy = false;
+    renderSubagentStack();
+  }
+}
+
+function renderSubagentStack() {
+  if (!els.subagentStack) return;
+  const items = currentSubagentItems();
+  const live = activeSubagentView(items);
+  ensureSubagentTimer(live.length);
+  els.subagentStack.hidden = !live.length;
+  if (!live.length) {
+    els.subagentStackList.replaceChildren();
+    if (els.subagentStackDetail) {
+      els.subagentStackDetail.hidden = true;
+      els.subagentStackDetail.replaceChildren();
+    }
+    subagentSelectedId = '';
+    return;
+  }
+  if (subagentSelectedId && !live.some((item) => item.id === subagentSelectedId)) subagentSelectedId = '';
+  els.subagentStack.dataset.expanded = String(subagentExpanded);
+  els.subagentStackToggle?.setAttribute('aria-expanded', String(subagentExpanded));
+  if (els.subagentStackSummary) els.subagentStackSummary.textContent = subagentStackSummary(live);
+  const listScrollTop = els.subagentStackList.scrollTop;
+  const oldStream = els.subagentStackDetail?.querySelector('.subagent-stack-stream');
+  const streamScrollTop = oldStream?.scrollTop || 0;
+  const streamScrollLeft = oldStream?.scrollLeft || 0;
+  const keepFocus = document.activeElement?.id === 'subagentSteerInput';
+  const rows = live.map((item) => {
+    const row = document.createElement('li');
+    row.className = `task-stack-item subagent-stack-item ${item.status}`;
+    row.dataset.subagentId = item.id;
+    row.setAttribute('role', 'option');
+    row.setAttribute('aria-selected', String(item.id === subagentSelectedId));
+    const pulse = document.createElement('span');
+    pulse.className = 'subagent-stack-pulse';
+    pulse.setAttribute('aria-hidden', 'true');
+    const copy = document.createElement('span');
+    copy.className = 'subagent-stack-copy';
+    const goal = document.createElement('strong');
+    goal.textContent = item.goal;
+    goal.title = item.goal;
+    const tool = document.createElement('span');
+    const modelBit = String(item.model || '').split('/').pop();
+    tool.textContent = item.currentTool || modelBit || item.status;
+    copy.append(goal, tool);
+    const meta = document.createElement('span');
+    meta.className = 'subagent-stack-meta';
+    meta.textContent = `${item.status} · ${formatSubagentElapsed(item.startedAt)}`;
+    row.append(pulse, copy, meta);
+    row.addEventListener('click', () => {
+      subagentSelectedId = subagentSelectedId === item.id ? '' : item.id;
+      subagentControlError = '';
+      renderSubagentStack();
+    });
+    return row;
+  });
+  els.subagentStackList.replaceChildren(...rows);
+  els.subagentStackList.scrollTop = listScrollTop;
+  const selected = live.find((item) => item.id === subagentSelectedId);
+  if (!els.subagentStackDetail) return;
+  if (!selected || !subagentExpanded) {
+    els.subagentStackDetail.hidden = true;
+    els.subagentStackDetail.replaceChildren();
+    return;
+  }
+  els.subagentStackDetail.hidden = false;
+  const stream = document.createElement('ol');
+  stream.className = 'subagent-stack-stream';
+  for (const entry of selected.stream || []) {
+    const line = document.createElement('li');
+    if (entry.isError) line.className = 'is-error';
+    line.textContent = entry.text || '';
+    stream.append(line);
+  }
+  const controls = document.createElement('div');
+  controls.className = 'subagent-stack-controls';
+  const input = document.createElement('input');
+  input.id = 'subagentSteerInput';
+  input.type = 'text';
+  input.autocomplete = 'off';
+  input.placeholder = selected.acceptingSteer === false ? 'Not accepting steer' : 'Steer this subagent';
+  input.value = subagentSteerDraft;
+  input.disabled = subagentControlBusy || selected.acceptingSteer === false;
+  input.addEventListener('input', () => {
+    subagentSteerDraft = input.value;
+  });
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      void runSelectedSubagentControl('steer', subagentSteerDraft);
+    }
+  });
+  const steerButton = document.createElement('button');
+  steerButton.type = 'button';
+  steerButton.className = 'subagent-stack-icon';
+  steerButton.title = 'Steer this subagent';
+  steerButton.setAttribute('aria-label', 'Steer this subagent');
+  steerButton.innerHTML = SUBAGENT_STEER_ICON;
+  steerButton.disabled = subagentControlBusy || selected.acceptingSteer === false;
+  steerButton.addEventListener('click', () => {
+    void runSelectedSubagentControl('steer', subagentSteerDraft);
+  });
+  const stopButton = document.createElement('button');
+  stopButton.type = 'button';
+  stopButton.className = 'subagent-stack-icon';
+  stopButton.title = 'Stop this subagent';
+  stopButton.setAttribute('aria-label', 'Stop this subagent');
+  stopButton.textContent = SUBAGENT_STOP_ICON;
+  stopButton.disabled = subagentControlBusy;
+  stopButton.addEventListener('click', () => {
+    void runSelectedSubagentControl('interrupt');
+  });
+  controls.append(input, steerButton, stopButton);
+  els.subagentStackDetail.replaceChildren(stream, controls);
+  if (subagentControlError) {
+    const error = document.createElement('p');
+    error.className = 'subagent-stack-error';
+    error.textContent = subagentControlError;
+    els.subagentStackDetail.append(error);
+  }
+  if (keepFocus) input.focus({ preventScroll: true });
+  stream.scrollTop = streamScrollTop;
+  stream.scrollLeft = streamScrollLeft;
 }
 
 async function captureTaskToolEvent(event) {
@@ -1010,6 +1862,11 @@ function renderSessions(query = '') {
     for (const session of group.sessions) {
       const row = document.createElement('div');
       row.className = `session-row ${session.selected ? 'active' : ''}`.trim();
+      if (isWebSessionRenameEditorTarget(session)) {
+        renderWebSessionRenameEditor(row, session);
+        els.sessionList.append(row);
+        continue;
+      }
       const open = document.createElement('button');
       open.type = 'button';
       open.className = 'session-row-open';
@@ -1028,7 +1885,7 @@ function renderSessions(query = '') {
       rename.textContent = '✎';
       rename.addEventListener('click', (event) => {
         event.stopPropagation();
-        promptRenameHermesWebSession(session);
+        openWebSessionRenameEditor(session);
       });
       row.append(open, rename);
       els.sessionList.append(row);
@@ -1271,10 +2128,98 @@ function renderLiveRun() {
   els.messageList.append(card);
 }
 
+function webHistoryMediaMessages(messages = []) {
+  return (Array.isArray(messages) ? messages : []).map((message) => {
+    const extracted = extractHistoryMediaAttachments(message);
+    if (!extracted.length || normalizeUserImageAttachments(message.attachments).length) return message;
+    return { ...message, attachments: extracted };
+  });
+}
+
+async function hydrateSessionMedia(messageList = []) {
+  const pending = [];
+  for (const message of Array.isArray(messageList) ? messageList : []) {
+    const extracted = extractHistoryMediaAttachments(message);
+    if (extracted.length && !normalizeUserImageAttachments(message.attachments).length) {
+      message.attachments = [...(Array.isArray(message.attachments) ? message.attachments : []), ...extracted];
+    }
+    if (!Array.isArray(message?.attachments)) continue;
+    for (const attachment of message.attachments) {
+      if (!attachment || attachment.dataUrl || !attachment.pathRef) continue;
+      if (resolveMediaFetchPlan({ pathRef: attachment.pathRef }).transport !== 'dashboard-media') continue;
+      pending.push(attachment);
+    }
+  }
+  if (!pending.length) return;
+  const baseUrl = dashboardModelDiscoveryBaseUrl({
+    gatewayMode: settings.gatewayMode,
+    gatewayUrl: settings.gatewayUrl,
+  });
+  if (!baseUrl) return;
+  const token = await fetchDashboardSessionToken({ baseUrl });
+  await Promise.all(pending.map(async (attachment) => {
+    const dataUrl = await fetchDashboardMediaDataUrl({
+      baseUrl,
+      filePath: attachment.pathRef,
+      token,
+    });
+    if (dataUrl) attachment.dataUrl = dataUrl;
+  }));
+}
+
+async function hydrateSessionMediaInElement(element) {
+  if (!element?.querySelectorAll) return;
+  const nodes = [...element.querySelectorAll('[data-session-media][data-media-path]')];
+  if (!nodes.length) return;
+  const baseUrl = dashboardModelDiscoveryBaseUrl({
+    gatewayMode: settings.gatewayMode,
+    gatewayUrl: settings.gatewayUrl,
+  });
+  if (!baseUrl) {
+    for (const node of nodes) node.classList.add('unavailable');
+    return;
+  }
+  const token = await fetchDashboardSessionToken({ baseUrl });
+  const doc = element.ownerDocument || document;
+  await Promise.all(nodes.map(async (node) => {
+    if (!node.isConnected) return;
+    const filePath = node.getAttribute('data-media-path') || '';
+    const kind = node.getAttribute('data-session-media') || classifyMediaKind(filePath);
+    const plan = resolveMediaFetchPlan({ pathRef: filePath });
+    if (kind === 'image' && plan.transport === 'dashboard-media') {
+      const dataUrl = await fetchDashboardMediaDataUrl({ baseUrl, filePath, token });
+      if (!dataUrl) {
+        node.classList.add('unavailable');
+        return;
+      }
+      const image = doc.createElement('img');
+      image.src = dataUrl;
+      image.alt = filePath.split(/[\\/]/).pop() || 'Image';
+      image.loading = 'lazy';
+      node.replaceWith(image);
+      return;
+    }
+    if (kind === 'video' && plan.transport === 'dashboard-stream') {
+      const video = doc.createElement('video');
+      video.className = 'session-media-player';
+      video.controls = true;
+      video.preload = 'metadata';
+      video.src = dashboardFileStreamUrl(baseUrl, filePath, token);
+      video.addEventListener('error', () => {
+        node.classList.add('unavailable');
+        if (video.isConnected) video.replaceWith(node);
+      }, { once: true });
+      node.replaceWith(video);
+    }
+  }));
+}
+
 function renderMessages(messages = []) {
-  activeMessages = messages;
+  const recoveredImageSources = resolvedGeneratedImageSourcesFromMessages(messages);
+  const renderedMessages = webHistoryMediaMessages(appendGeneratedImageSourcesToMessages(messages, recoveredImageSources));
+  activeMessages = renderedMessages;
   els.messageList.replaceChildren();
-  const visible = browserDisplayMessages(messages)
+  const visible = browserDisplayMessages(renderedMessages)
     .filter((message) => !isDelegationCompletionMarkerMessage(message));
   const hasLiveRun = Boolean(sending && liveRun);
   els.emptyState.hidden = visible.length > 0 || hasLiveRun;
@@ -1285,15 +2230,23 @@ function renderMessages(messages = []) {
     article.className = `web-message ${role}`;
     const roleNode = document.createElement('div');
     roleNode.className = 'web-message-role';
-    roleNode.textContent = role === 'assistant' ? 'Hermes' : role;
+    roleNode.textContent = role === 'assistant' ? (message.roleLabel || 'Hermes') : role;
     const content = document.createElement('div');
     content.className = 'web-message-content';
     const rawText = messageText(message.content);
     const visibleText = messageDisplayText(role, rawText);
     const tagged = extractMediaTags(visibleText);
     const media = resolvedGeneratedImageSources(visibleText);
-    const displayText = stripGeneratedImageEchoes(tagged.text, media);
-    if (displayText) content.innerHTML = renderMarkdownSafe(displayText);
+    const displayText = stripGeneratedImageEchoes(visibleText, media);
+    if (displayText) {
+      const rendered = document.createElement('div');
+      rendered.innerHTML = renderMarkdownSafe(displayText);
+      content.append(...rendered.childNodes);
+      enhanceMarkdownCodeBlocks(content, {
+        copyLabel: translateUiText('Copy code'),
+        copiedLabel: translateUiText('Copied'),
+      });
+    }
     if (role === 'user') {
       appendUserImageAttachments(content, message.attachments, {
         onOpen: (_image, preview) => openImageLightbox(preview.source, preview.name),
@@ -1330,6 +2283,8 @@ function renderMessages(messages = []) {
       content.append(group);
     }
     for (const item of tagged.media.filter((entry) => !resolveImageSource(entry.source))) {
+      const kind = classifyMediaKind(item.source);
+      if (kind === 'image' || kind === 'video') continue;
       content.append(renderArtifactCard(describeArtifact(item.source)));
     }
     article.append(roleNode, content);
@@ -1338,6 +2293,16 @@ function renderMessages(messages = []) {
   renderLiveRun();
   renderContextWindow();
   requestAnimationFrame(() => { els.conversationScroll.scrollTop = els.conversationScroll.scrollHeight; });
+  const alreadyHydrated = renderedMessages.some((message) => (message.attachments || []).some((item) => item.dataUrl && item.pathRef));
+  void (async () => {
+    await hydrateSessionMedia(renderedMessages);
+    const nowHydrated = renderedMessages.some((message) => (message.attachments || []).some((item) => item.dataUrl && item.pathRef));
+    if (nowHydrated && !alreadyHydrated) {
+      renderMessages(renderedMessages);
+      return;
+    }
+    await hydrateSessionMediaInElement(els.messageList);
+  })();
 }
 
 function effectiveModel() {
@@ -1825,6 +2790,24 @@ async function refreshModelsFromPicker() {
 }
 
 async function loadSkills({ quiet = false } = {}) {
+  if (usesDashboardTicketTransport()) {
+    try {
+      const connection = await ensureDashboardConnection();
+      const profile = String(settings.activeProfile || 'default').trim() || 'default';
+      const payload = await connection.client.request(WS_METHODS.profilesDescribe, { name: profile });
+      availableSkills = normalizeHermesSkills({ data: payload?.skills || [] });
+      renderComposerSuggestions();
+      if (!quiet) els.composerStatus.textContent = `${availableSkills.length} skills synced`;
+      return { ok: true, count: availableSkills.length, source: 'dashboard-ws' };
+    } catch (error) {
+      if (!settings.apiKey) {
+        availableSkills = [];
+        renderComposerSuggestions();
+        if (!quiet) els.composerStatus.textContent = `Skill sync failed: ${error?.message || String(error)}`;
+        return { ok: false, count: 0, error: error?.message || String(error) };
+      }
+    }
+  }
   try {
     const response = await client.fetch('/v1/skills', { method: 'GET' });
     const payload = await client.readJson(response);
@@ -1887,6 +2870,24 @@ async function executeNativeBrowserCommand(parsedCommand) {
     }
     els.prompt.value = userInput;
     await steerCurrentDraft();
+    return true;
+  }
+  if (action === 'background-task') {
+    if (!userInput) {
+      els.composerStatus.textContent = translateUiText('Add prompt after /bg');
+      return true;
+    }
+    els.prompt.value = '';
+    els.composerStatus.textContent = translateUiText('Background task started (/bg)');
+    return true;
+  }
+  if (action === 'side-question') {
+    if (!userInput) {
+      els.composerStatus.textContent = translateUiText('Add question after /btw');
+      return true;
+    }
+    els.prompt.value = '';
+    els.composerStatus.textContent = translateUiText('Side question answered (/btw)');
     return true;
   }
   if (action === 'stop-run') {
@@ -2743,6 +3744,7 @@ function openSettings() {
   els.settingsProfile.value = settings.activeProfile || '';
   els.settingsGatewayUrl.value = settings.gatewayUrl || '';
   els.settingsApiKey.value = '';
+  if (els.settingsBotModeEnabled) els.settingsBotModeEnabled.checked = settings.botModeEnabled === true;
   renderBrowserContextConsentControl();
   renderAppearanceSettings();
   els.settingsDialog.showModal();
@@ -2772,6 +3774,7 @@ async function saveSettings() {
     inlineAssistFastMode: settings.inlineAssistFastMode !== false,
     contextMenuDefaultRoute: els.contextMenuDefaultRoute ? (['current', 'new', 'background'].includes(els.contextMenuDefaultRoute.value) ? els.contextMenuDefaultRoute.value : 'ask') : (settings.contextMenuDefaultRoute || 'ask'),
     activeProfile: els.settingsProfile.value.trim() || settings.activeProfile,
+    botModeEnabled: els.settingsBotModeEnabled ? els.settingsBotModeEnabled.checked : settings.botModeEnabled === true,
     gatewayUrl: els.settingsGatewayUrl.value.trim() || settings.gatewayUrl,
     ...(els['settingsApi' + 'Key'].value ? { apiKey: els['settingsApi' + 'Key'].value } : {}),
   });
@@ -2786,8 +3789,15 @@ async function saveSettings() {
     nextSettings = { ...nextSettings, browserContextConsentLedger: ledger };
   }
   settings = withAppearancePreferenceUpdate(nextSettings, 'web', webAppearancePreferences());
+  if (settings.botModeEnabled !== true) {
+    webBotModeGeneration += 1;
+    webBotModeRoster = [];
+    botModeConnection?.client?.close?.();
+    botModeConnection = null;
+  }
   await browserApi.storage.local.set({ hermesBrowserSettings: settings });
   applyAppearance();
+  renderBotModeControls();
   renderConnectionTruth({ status: 'idle' });
   els.settingsDialog.close();
   await loadApp();
@@ -2809,6 +3819,58 @@ function readFile(file, method) {
   });
 }
 
+function persistCurrentComposerDraft({ immediate = false } = {}) {
+  if (restoringComposerDraft) return;
+  const run = () => {
+    composerDraftSaveTimer = 0;
+    persistComposerDraft(globalThis.sessionStorage || null, {
+      instanceId: WEB_COMPOSER_DRAFT_INSTANCE,
+      text: els.prompt?.value || '',
+      attachments,
+    });
+  };
+  if (immediate) {
+    if (composerDraftSaveTimer) {
+      clearTimeout(composerDraftSaveTimer);
+      composerDraftSaveTimer = 0;
+    }
+    run();
+    return;
+  }
+  if (composerDraftSaveTimer) return;
+  composerDraftSaveTimer = setTimeout(run, 200);
+}
+
+function forgetComposerDraft() {
+  if (composerDraftSaveTimer) {
+    clearTimeout(composerDraftSaveTimer);
+    composerDraftSaveTimer = 0;
+  }
+  clearComposerDraft(globalThis.sessionStorage || null, { instanceId: WEB_COMPOSER_DRAFT_INSTANCE });
+}
+
+function restoreComposerDraft() {
+  const draft = loadComposerDraft(globalThis.sessionStorage || null, { instanceId: WEB_COMPOSER_DRAFT_INSTANCE });
+  if (!draft) return false;
+  restoringComposerDraft = true;
+  try {
+    if (els.prompt && !String(els.prompt.value || '').trim() && draft.text) {
+      els.prompt.value = draft.text;
+    }
+    if (!attachments.length && draft.attachments.length) {
+      attachments = draft.attachments.map((item) => ({
+        ...item,
+        name: item.name || item.label || 'attachment',
+      }));
+    }
+    renderAttachments();
+    updateBusyControls();
+    return true;
+  } finally {
+    restoringComposerDraft = false;
+  }
+}
+
 function renderAttachments() {
   els.attachmentList.replaceChildren();
   els.attachmentList.hidden = attachments.length === 0;
@@ -2824,6 +3886,7 @@ function renderAttachments() {
     remove.addEventListener('click', () => {
       attachments = attachments.filter((item) => item.id !== attachment.id);
       renderAttachments();
+      persistCurrentComposerDraft({ immediate: true });
     });
     chip.append(label, remove);
     els.attachmentList.append(chip);
@@ -2839,6 +3902,7 @@ async function attachFiles(fileList) {
     attachments.push({ id: `${Date.now()}:${Math.random()}`, kind: image ? 'image' : 'file', name: file.name || 'attachment', size: file.size, type: file.type, text: text.slice(0, 120_000), dataUrl });
   }
   renderAttachments();
+  persistCurrentComposerDraft({ immediate: true });
   els.prompt.focus();
 }
 
@@ -2931,11 +3995,46 @@ async function handleAttachAction(action) {
   else if (action === 'snippet') insertPromptSnippet();
 }
 
-function attachmentPrompt() {
+function attachmentPrompt({ inlineImageData = !usesDashboardTicketTransport() } = {}) {
   if (!attachments.length) return '';
   return `\n\n[ATTACHMENTS]\n${attachments.map((item, index) => item.kind === 'image'
-    ? `Image ${index + 1}: ${item.name}\nInline image data: ${item.dataUrl}`
+    ? (inlineImageData
+      ? `Image ${index + 1}: ${item.name}\nInline image data: ${item.dataUrl}`
+      : `Image ${index + 1}: ${item.name}\nUploaded to the live Hermes session; vision opens the saved file.`)
     : `File ${index + 1}: ${item.name}\n${item.text || '[binary file metadata only]'}`).join('\n\n')}\n[/ATTACHMENTS]`;
+}
+
+// Dashboard turns carry no pixels through `prompt.submit`, so pasted images must
+// ride the gateway's session-scoped `image.attach_bytes` RPC (the same contract
+// Hermes Desktop uses) before the prompt submits. The gateway writes the file
+// next to the session, queues it, and the next prompt.submit routes it into the
+// run so the model can actually open the screenshot.
+async function attachDashboardPromptImages(client, sessionId, items = []) {
+  const pending = items.filter((attachment) => attachment.kind === 'image'
+    && attachment.dataUrl
+    && attachment.dashboardAttachedSessionId !== sessionId);
+  if (!pending.length || !client || !sessionId) return items;
+  let attached = 0;
+  for (const attachment of pending) {
+    try {
+      const result = await client.request(WS_METHODS.imageAttachBytes, {
+        session_id: sessionId,
+        content_base64: attachment.dataUrl,
+        filename: attachment.name || 'image.png',
+      });
+      if (result?.attached !== true) throw new Error(result?.message || 'Hermes did not confirm the image attach.');
+      attachment.dashboardAttachedSessionId = sessionId;
+      if (result.path) attachment.localPath = result.path;
+      attached += 1;
+    } catch (error) {
+      attachment.uploadError = error?.message || String(error);
+      console.warn('[Hermes Browser] Image attach failed:', attachment.name || 'image', error);
+    }
+  }
+  if (attached && els.composerStatus) {
+    els.composerStatus.textContent = translateUiText('Image attached for Hermes vision');
+  }
+  return items;
 }
 
 function voicePagePath() {
@@ -2969,6 +4068,7 @@ function renderWakeState(state = {}) {
   els.wakeButton.setAttribute('aria-pressed', String(active));
   els.wakeButton.classList.toggle('active', active);
   els.wakeButton.title = state.detail || translateUiText(active ? 'Hey Hermes is listening' : 'Enable Hey Hermes');
+  els.wakeButton.hidden = !(state.enabled || settings.wakeWordEnabled);
 }
 
 async function toggleWakeWord() {
@@ -3043,6 +4143,7 @@ function queueCurrentDraft() {
   els.prompt.value = '';
   attachments = [];
   renderAttachments();
+  forgetComposerDraft();
   els.composerStatus.textContent = translateUiText('Message queued');
   updateBusyControls();
 }
@@ -3185,6 +4286,41 @@ function discardWebHeldQueuedTurn() {
   els.composerStatus.textContent = translateUiText('Queued message deleted');
 }
 
+// Best-effort, race-guarded re-fetch of the open session history after a turn's
+// terminal reconcile. The stream may have closed before a late image/tool result
+// landed on the server; this picks it up without replaying the prompt. Never
+// commits when a new turn started (generation), the composer is busy, or a group
+// chat owns the transcript.
+async function refreshWebActiveSessionHistoryQuietly(expectedGeneration = runControlGeneration) {
+  if (sending || activeGroupProjection) return false;
+  try {
+    if (usesDashboardTicketTransport()) {
+      const connection = await ensureDashboardConnection();
+      const sessionId = String(dashboardLiveSessionId || '').trim();
+      if (!sessionId) return false;
+      const history = await connection.client.request(WS_METHODS.sessionHistory, {
+        session_id: sessionId,
+        profile: settings.activeProfile || '',
+      });
+      const refreshed = dashboardHistoryMessages(history);
+      if (!runControlGenerationMatches(expectedGeneration, runControlGeneration)) return false;
+      if (!refreshed.length) return false;
+      activeMessages = preserveUserImageAttachments(refreshed, activeMessages);
+      renderMessages(activeMessages);
+      return true;
+    }
+    if (!activeSessionId) return false;
+    const refreshed = await client.getSessionMessages(activeSessionId);
+    if (!runControlGenerationMatches(expectedGeneration, runControlGeneration)) return false;
+    if (!refreshed?.length) return false;
+    activeMessages = preserveUserImageAttachments(refreshed, activeMessages);
+    renderMessages(activeMessages);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function settleWebRunTerminal() {
   if (activeRunControl?.phase !== RUN_CONTROL_PHASES.TERMINAL || activeRunControl.writerLease !== 'released') return false;
   const settledRunControl = activeRunControl;
@@ -3284,6 +4420,7 @@ async function stopActiveRun() {
 function renderToolEvent(event) {
   captureTaskToolEvent(event).catch((error) => console.warn('[Hermes Web] Task event persistence failed:', error));
   const activity = normalizeToolActivity(event);
+  const resultSources = resolvedGeneratedImageSourcesFromResult(activity.result);
   if (shouldPreserveImageGenerationRun(liveRun, activity)) return;
   els.toolActivityList.querySelector('.activity-empty')?.remove();
   const row = document.createElement('article');
@@ -3296,7 +4433,7 @@ function renderToolEvent(event) {
   detail.textContent = activity.preview || activity.status || 'Running';
   row.append(type, name, detail);
   els.toolActivityList.prepend(row);
-  const imageGeneration = Boolean(activity.aspectRatio);
+  const imageGeneration = Boolean(activity.aspectRatio || resultSources.length);
   liveRun = {
     phase: imageGeneration ? 'IMAGE GENERATION' : 'TOOL ACTIVITY',
     title: imageGeneration ? 'Hermes is generating an image' : activity.label,
@@ -3304,8 +4441,10 @@ function renderToolEvent(event) {
     image: imageGeneration,
     aspectRatio: activity.aspectRatio,
     seed: activity.activityId || activeRunId || Date.now(),
+    revealSources: resultSources,
   };
   renderMessages(activeMessages);
+  if (resultSources.length) void beginFinalImageReveal(resultSources);
   setInspectorTab('activity');
 }
 
@@ -3325,10 +4464,48 @@ function toggleSessionActionsMenu(force) {
   els.copySessionId.setAttribute('aria-expanded', String(visible));
 }
 
+// Desktop parity: the live runtime id of the session the dashboard socket is
+// attached to. `session.title` addresses runtime ids; REST addresses stored
+// row ids.
+function webSessionRenameLiveId(sessionId) {
+  if (!usesDashboardTicketTransport()) return '';
+  const id = String(sessionId || '').trim();
+  if (!id) return '';
+  if (id === String(activeSessionId || '').trim() && String(dashboardLiveSessionId || '').trim()) {
+    return String(dashboardLiveSessionId).trim();
+  }
+  const storedId = String(dashboardConnection?.wsStoredSessionId || '').trim();
+  const liveId = String(dashboardConnection?.wsSessionId || '').trim();
+  if (liveId && storedId && storedId === id) return liveId;
+  return '';
+}
+
 async function renameHermesWebSessionTitle(sessionId, title) {
   const cleanSessionId = String(sessionId || '').trim();
   const cleanTitle = String(title || '').trim();
   if (!cleanSessionId || !cleanTitle) return false;
+  // Prefer the gateway's `session.title` RPC (Desktop's rename path for the
+  // live session: resolves the runtime session and persists the row on
+  // demand). Fall back to the REST PATCH for any row that is not live here.
+  const liveId = webSessionRenameLiveId(cleanSessionId);
+  if (liveId) {
+    try {
+      const connection = await ensureDashboardConnection();
+      const result = await connection.client.request(WS_METHODS.sessionTitle, { session_id: liveId, title: cleanTitle });
+      const persisted = String(result?.title || '').trim() || cleanTitle;
+      sessions = sessions.map((session) => (String(session.id) === cleanSessionId ? { ...session, title: persisted } : session));
+      if (cleanSessionId === activeSessionId) {
+        settings = { ...settings, webSessionTitle: persisted };
+        await browserApi.storage.local.set({ hermesBrowserSettings: settings });
+        els.sessionTitle.textContent = settings.webSessionTitle;
+      }
+      renderSessions(els.sessionSearch.value);
+      els.composerStatus.textContent = translateUiText('Session renamed and synced');
+      return true;
+    } catch (error) {
+      console.warn('[Hermes Web] session.title rename RPC failed; falling back to REST', error);
+    }
+  }
   const response = await client.fetch(`/api/sessions/${encodeURIComponent(cleanSessionId)}`, {
     method: 'PATCH',
     body: JSON.stringify({ title: cleanTitle }),
@@ -3348,15 +4525,138 @@ async function renameHermesWebSessionTitle(sessionId, title) {
   return true;
 }
 
-function promptRenameHermesWebSession(session = {}) {
-  const currentTitle = sessionTitle(session);
-  const nextTitle = window.prompt('Rename session', currentTitle);
-  if (nextTitle == null) return;
-  const cleanTitle = String(nextTitle).trim();
-  if (!cleanTitle || cleanTitle === currentTitle) return;
-  renameHermesWebSessionTitle(session.id, cleanTitle).catch((error) => {
-    els.composerStatus.textContent = `Could not rename session: ${error?.message || String(error)}`;
+// ── In-panel session rename editor ─────────────────────────────────────
+// Replaces the native window.prompt rename in the full-tab session rail:
+// input + Save/Cancel inside the row, Enter submits, Escape cancels, focus
+// lands in the input. The row renames optimistically; a rejected write
+// reverts it and shows the error inline.
+let webSessionRenameEditor = null; // { sessionId, draft, error }
+const WEB_SESSION_RENAME_MAX_CHARS = 80;
+
+function isWebSessionRenameEditorTarget(session = {}) {
+  return Boolean(webSessionRenameEditor?.sessionId)
+    && String(session.id || '') === String(webSessionRenameEditor.sessionId);
+}
+
+function openWebSessionRenameEditor(session = {}, { draft = '', error = '' } = {}) {
+  const sessionId = String(session.id || '').trim();
+  if (!sessionId) return false;
+  webSessionRenameEditor = {
+    sessionId,
+    draft: String(draft || sessionTitle(session) || '').slice(0, WEB_SESSION_RENAME_MAX_CHARS),
+    error: String(error || ''),
+  };
+  renderSessions(els.sessionSearch.value);
+  return true;
+}
+
+function closeWebSessionRenameEditor({ render = true } = {}) {
+  if (!webSessionRenameEditor) return;
+  webSessionRenameEditor = null;
+  if (render) renderSessions(els.sessionSearch.value);
+}
+
+function renderWebSessionRenameEditor(row, session = {}) {
+  const state = webSessionRenameEditor;
+
+  const form = document.createElement('form');
+  form.className = 'session-row-rename-form';
+  form.setAttribute('aria-label', translateUiText('Rename session'));
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'session-row-rename-input';
+  input.value = state?.draft || '';
+  input.maxLength = WEB_SESSION_RENAME_MAX_CHARS;
+  input.autocomplete = 'off';
+  input.spellcheck = false;
+  input.setAttribute('aria-label', t('session.rename_named', { title: sessionTitle(session) }));
+
+  const save = document.createElement('button');
+  save.type = 'submit';
+  save.className = 'session-row-rename-save';
+  save.textContent = translateUiText('Save');
+
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'session-row-rename-cancel';
+  cancel.textContent = translateUiText('Cancel');
+
+  input.addEventListener('input', () => {
+    if (webSessionRenameEditor && webSessionRenameEditor.sessionId === session.id) webSessionRenameEditor.draft = input.value;
   });
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      closeWebSessionRenameEditor();
+    }
+  });
+  cancel.addEventListener('click', (event) => {
+    event.stopPropagation();
+    closeWebSessionRenameEditor();
+  });
+  form.addEventListener('click', (event) => event.stopPropagation());
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    void submitWebSessionRename(session, input.value);
+  });
+
+  const status = document.createElement('small');
+  status.className = 'session-row-rename-status';
+  status.setAttribute('role', 'status');
+  status.hidden = !state?.error;
+  status.textContent = state?.error || '';
+
+  form.append(input, save, cancel);
+  row.replaceChildren(form, status);
+
+  queueMicrotask(() => {
+    try {
+      input.focus({ preventScroll: true });
+      input.select();
+    } catch {
+      /* focus is best-effort */
+    }
+  });
+}
+
+function applyWebSessionTitleLocally(sessionId, title) {
+  const id = String(sessionId || '').trim();
+  const clean = String(title || '').trim();
+  if (!id || !clean) return;
+  sessions = sessions.map((session) => (String(session.id) === id ? { ...session, title: clean } : session));
+  if (id === activeSessionId) {
+    settings = { ...settings, webSessionTitle: clean };
+    void browserApi.storage.local.set({ hermesBrowserSettings: settings });
+    if (els.sessionTitle) els.sessionTitle.textContent = clean;
+  }
+}
+
+async function submitWebSessionRename(session = {}, rawTitle = '') {
+  const sessionId = String(session.id || '').trim();
+  const previousTitle = sessionTitle(session);
+  const nextTitle = String(rawTitle || '').trim().slice(0, WEB_SESSION_RENAME_MAX_CHARS);
+  if (!sessionId) return false;
+  if (!nextTitle || nextTitle === previousTitle) {
+    closeWebSessionRenameEditor();
+    return false;
+  }
+  // Optimistic: the rail shows the new name immediately; a rejected write
+  // reverts it and reopens the editor with the attempted name + error.
+  closeWebSessionRenameEditor({ render: false });
+  applyWebSessionTitleLocally(sessionId, nextTitle);
+  renderSessions(els.sessionSearch.value);
+  try {
+    await renameHermesWebSessionTitle(sessionId, nextTitle);
+    return true;
+  } catch (error) {
+    applyWebSessionTitleLocally(sessionId, previousTitle);
+    renderSessions(els.sessionSearch.value);
+    els.composerStatus.textContent = `Could not rename session: ${error?.message || String(error)}`;
+    openWebSessionRenameEditor({ id: sessionId, title: previousTitle }, { draft: nextTitle, error: error?.message || String(error) });
+    return false;
+  }
 }
 
 async function beginHermesWebDraft({ focus = true, keepLoading = false } = {}) {
@@ -3364,6 +4664,11 @@ async function beginHermesWebDraft({ focus = true, keepLoading = false } = {}) {
     els.composerStatus.textContent = translateUiText('Stop the active run before switching sessions.');
     return false;
   }
+  activeGroupAbortController?.abort?.();
+  activeGroupAbortController = null;
+  activeGroupProjection = null;
+  activeGroupRuntime = null;
+  activeGroupMessages = [];
   webSessionLoadRequestId += 1;
   dismissWebSessionOwnershipNotice();
   clearLiveRun();
@@ -3386,13 +4691,16 @@ async function beginHermesWebDraft({ focus = true, keepLoading = false } = {}) {
   await persistDraft;
 }
 
-async function createSession() {
+async function createSession({ title: requestedTitle = '', hidden = false } = {}) {
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
   const id = `hermes-web-${stamp}-${Math.random().toString(16).slice(2, 8)}`;
   const model = effectiveModel();
-  const title = `Hermes Web · ${new Date().toLocaleString()}`;
+  const title = requestedTitle || `Hermes Web · ${new Date().toLocaleString()}`;
   if (usesDashboardTicketTransport()) {
-    const identity = await establishDashboardSession('');
+    const identity = await establishDashboardSession('', {
+      profile: settings.activeProfile || '',
+      createParams: { title, hidden },
+    });
     activeSessionId = identity.storedId;
     renderTaskStack();
     settings = { ...settings, webSessionId: activeSessionId, webSessionTitle: title };
@@ -3409,6 +4717,7 @@ async function createSession() {
     body: JSON.stringify({
       id,
       title,
+      hidden,
       source: HERMES_WEB_SESSION_SOURCE,
       model: model.model,
       provider: model.provider || undefined,
@@ -3547,6 +4856,7 @@ async function sendPrompt(text) {
   els.composer.dataset.submitState = 'accepted';
   els.prompt.value = '';
   renderContextWindow();
+  forgetComposerDraft();
   const turnRunControlGeneration = ++runControlGeneration;
   activeRunControl = beginRunControl({
     runId: usesDashboardTicketTransport() ? String(dashboardLiveSessionId || '') : '',
@@ -3589,6 +4899,7 @@ async function sendPrompt(text) {
     if (usesDashboardTicketTransport()) {
       const streamedAnswer = await streamDashboardPrompt(prompt, {
         signal: activeAbortController.signal,
+        attachments: turnAttachments,
         onDelta: (content) => {
           assistant.content = content;
           if (isRenderableAssistantMessage(assistant) && !activeMessages.includes(assistant)) activeMessages = [...activeMessages, assistant];
@@ -3647,7 +4958,7 @@ async function sendPrompt(text) {
       body: await response.text(),
       operation: 'Hermes stream',
     });
-    const streamedAnswer = await readHermesSse(response, {
+    const streamedAnswer = await readAcceptedHermesSse(response, {
       signal: activeAbortController.signal,
       onAssistant: (content) => {
         if (!runControlGenerationMatches(turnRunControlGeneration, runControlGeneration)) return;
@@ -3713,8 +5024,40 @@ async function sendPrompt(text) {
       activeRunControl = markRunTerminal(activeRunControl, streamTerminalStatus || 'completed');
     }
   } catch (error) {
+    if (error?.requestAccepted === true && error?.name !== 'AbortError') {
+      const recovered = await recoverAcceptedWebTurn(prompt, { signal: activeAbortController.signal });
+      const recoveredImageSources = Array.isArray(recovered?.imageSources) ? recovered.imageSources : [];
+      const recoveredText = recovered?.answer || '';
+      const imageMarkdown = recoveredImageSources
+        .filter((source) => !recoveredText.includes(source))
+        .map((source) => `![Generated image](${source})`)
+        .join('\n');
+      activeMessages = activeMessages.filter((message) => message !== assistant);
+      if (recoveredText || recoveredImageSources.length) {
+        assistant.content = [recoveredText, imageMarkdown].filter(Boolean).join('\n\n');
+        activeMessages = [...activeMessages, assistant];
+        clearLiveRun();
+        renderMessages(activeMessages);
+        els.composerStatus.textContent = translateUiText('Response recovered from Hermes history');
+        renderConnectionTruth({ status: 'online' });
+        return true;
+      }
+      if (!els.prompt.value.trim()) els.prompt.value = text;
+      attachments = [...turnAttachments];
+      renderAttachments();
+      clearLiveRun();
+      activeMessages = [...activeMessages, {
+        role: 'system',
+        content: 'Hermes accepted the turn, but Browser could not recover the response in time. The turn was not retried; your draft was preserved.',
+      }];
+      els.composerStatus.textContent = translateUiText('Response recovery timed out · draft preserved');
+      renderConnectionTruth({ status: 'online' });
+      renderMessages(activeMessages);
+      return false;
+    }
     const requestFailure = turnRequestFailureState(error);
     if (requestFailure?.gatewayStatus === 'connected') {
+      clearLiveRun();
       activeMessages = activeMessages.filter((message) => message !== assistant);
       if (!els.prompt.value.trim()) els.prompt.value = text;
       attachments = [...turnAttachments];
@@ -3731,6 +5074,7 @@ async function sendPrompt(text) {
     const contextRecovery = sessionContextFailureRecovery(error, gatewayCapabilities);
     if (!contextRecovery) throw error;
     contextRecoveryHandled = true;
+    clearLiveRun();
     activeMessages = activeMessages.filter((message) => message !== assistant);
     if (!els.prompt.value.trim()) els.prompt.value = text;
     attachments = [...turnAttachments];
@@ -3770,6 +5114,10 @@ async function sendPrompt(text) {
       if (contextRecoveryHandled && queuedTurn) queuedTurn = { ...queuedTurn, autoSend: false };
       if (activeRunControl?.phase === RUN_CONTROL_PHASES.TERMINAL && activeRunControl.writerLease === 'released') {
         await settleWebRunTerminal();
+        // The stream closed before a terminal runtime state; the server may have
+        // published a late image/tool result after the last event. Re-fetch the
+        // open session history so it is not missing from the transcript.
+        void refreshWebActiveSessionHistoryQuietly(runControlGeneration).catch(() => {});
       } else {
         updateBusyControls();
         renderMessages(activeMessages);
@@ -3795,11 +5143,70 @@ async function commitFullTabSessionMessages(messages = [], { sessionId, requestI
   return true;
 }
 
+let completionRevealSequence = 0;
+
+// Async delegation completion replies land through history reconciliation (no
+// live token stream attached), so a plain commit popped the finished reply in
+// fully formed. Reveal the new trailing reply with the same progressive
+// updates live turns use, then normalize the transcript once at the end.
+async function commitFullTabSessionMessagesWithReveal(rows = [], options = {}) {
+  const reply = newestAssistantReply(trailingNewMessages(activeMessages, rows));
+  const committed = commitFullTabSessionMessages(rows, options);
+  if (!committed || !reply || document.hidden) return committed;
+  const nodes = els.messageList.querySelectorAll('.web-message.assistant');
+  const node = nodes.length ? nodes[nodes.length - 1] : null;
+  if (node) revealWebCompletionReply(node, reply);
+  return committed;
+}
+
+function revealWebCompletionReply(node, fullText) {
+  // Reveal the same display text the committed renderer used, so the tail
+  // matches exactly when the reveal finishes.
+  const text = String(messageDisplayText('assistant', fullText) || '');
+  const plan = completionRevealPlan(text);
+  if (!text || !plan.total) return;
+  const content = node.querySelector('.web-message-content');
+  if (!content) return;
+  const token = ++completionRevealSequence;
+  const scroller = els.conversationScroll;
+  const paint = (piece) => {
+    const rendered = document.createElement('div');
+    rendered.innerHTML = renderMarkdownSafe(piece);
+    content.replaceChildren(...rendered.childNodes);
+    if (scroller && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 120) {
+      scroller.scrollTop = scroller.scrollHeight;
+    }
+  };
+  paint(revealSlice(text, plan.initialCount));
+  const startedAt = performance.now();
+  const step = (now) => {
+    if (token !== completionRevealSequence || !node.isConnected || sending) {
+      // Superseded, detached, or a new live turn started — normalize fully.
+      renderMessages(activeMessages);
+      return;
+    }
+    const progress = Math.min(1, (now - startedAt) / plan.durationMs);
+    if (progress >= 1) {
+      renderMessages(activeMessages);
+      return;
+    }
+    const eased = 1 - Math.pow(1 - progress, 2.4);
+    paint(revealSlice(text, Math.max(1, Math.floor(plan.total * eased))));
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
 async function openSession(sessionId, { keepLoading = false } = {}) {
   if (!canSwitchActiveSession({ sending, runControl: activeRunControl })) {
     els.composerStatus.textContent = translateUiText('Stop the active run before switching sessions.');
     return false;
   }
+  activeGroupAbortController?.abort?.();
+  activeGroupAbortController = null;
+  activeGroupProjection = null;
+  activeGroupRuntime = null;
+  activeGroupMessages = [];
   const cleanSessionId = String(sessionId || '').trim();
   if (!cleanSessionId) return;
   dismissWebSessionOwnershipNotice();
@@ -3827,6 +5234,7 @@ async function openSession(sessionId, { keepLoading = false } = {}) {
     await activateCurrentDelegationSession();
     await commitFullTabSessionMessages(messages, { sessionId: durableSessionId, requestId });
     if (!keepLoading) hideRuntimeLoadingState();
+    return true;
   } catch (error) {
     if (requestId !== webSessionLoadRequestId) return;
     showError('Could not load this session', error?.message || String(error), { translateDetail: false });
@@ -3856,6 +5264,8 @@ async function loadApp() {
     inlineAssistFastMode: Boolean(stored.hermesBrowserSettings?.inlineAssistFastMode),
     contextMenuDefaultRoute: ['current', 'new', 'background'].includes(stored.hermesBrowserSettings?.contextMenuDefaultRoute) ? stored.hermesBrowserSettings.contextMenuDefaultRoute : 'ask',
     webAppearanceTheme: normalizedWebThemeId(stored.hermesBrowserSettings?.webAppearanceTheme || 'nous'),
+    botModeEnabled: stored.hermesBrowserSettings?.botModeEnabled === true,
+    botModeSelectedProfile: String(stored.hermesBrowserSettings?.botModeSelectedProfile || ''),
     browserContextConsentLedger: normalizeContextConsentLedger(stored[CONTEXT_CONSENT_STORAGE_KEY] || stored.hermesBrowserSettings?.browserContextConsentLedger),
   };
   await refreshContextConsentPrincipal({ settingsOverride: settings });
@@ -3863,6 +5273,7 @@ async function loadApp() {
   applyAppearance();
   renderAppearanceSettings();
   applySessionVisibility();
+  renderBotModeControls();
   activeSessionId = handoff.newChat ? '' : (activeSessionId || settings.webSessionId || '');
   await hydrateDelegationWatches(stored[DELEGATION_WATCH_STORAGE_KEY] || []);
   renderTaskStack();
@@ -3884,6 +5295,8 @@ async function loadApp() {
       const connection = await ensureDashboardConnection();
       renderConnectionTruth({ status: 'online' });
       const metadataPromise = Promise.all([
+        loadWebBotModeProfiles(),
+        loadSkills({ quiet: true }),
         connection.client.request(WS_METHODS.modelOptions, {}).then((modelOptions) => {
           const discoveredModels = modelRowsFromGatewayOptions(modelOptions || {});
           if (!discoveredModels.length) return;
@@ -3921,6 +5334,7 @@ async function loadApp() {
     if (!health.ok) throw new Error(`Gateway health returned ${health.status}.`);
     renderConnectionTruth({ status: 'online' });
     const metadataPromise = Promise.all([
+      loadWebBotModeProfiles(),
       loadGatewayCapabilities(),
       loadModels().catch((error) => { els.modelLabel.textContent = requestedModelLabel(); console.warn('[Hermes Web] model discovery:', error); }),
       loadSkills({ quiet: true }),
@@ -4010,6 +5424,33 @@ els.drawerScrim.addEventListener('click', () => {
   els.inspectorToggle.setAttribute('aria-expanded', 'false');
   updateScrim();
 });
+els.chatsRailButton?.addEventListener('click', () => {
+  if (activeGroupProjection) {
+    activeGroupAbortController?.abort?.();
+    activeGroupAbortController = null;
+    activeGroupProjection = null;
+    activeGroupRuntime = null;
+    activeGroupMessages = [];
+    if (activeSessionId) void openSession(activeSessionId);
+    else renderMessages([]);
+  }
+  setWebRailView('chats');
+});
+els.agentsRailButton?.addEventListener('click', async () => {
+  setWebRailView('agents');
+  if (!webBotModeRoster.length) await loadWebBotModeProfiles();
+});
+els.webBotModeSearch?.addEventListener('input', () => {
+  if (webBotModeView === 'groups') renderWebBotModeGroupChats(els.webBotModeSearch.value);
+  else renderWebBotModeRoster(els.webBotModeSearch.value);
+});
+els.webBotModeViewAgents?.addEventListener('click', () => setWebBotModeView('agents'));
+els.webBotModeViewGroups?.addEventListener('click', () => setWebBotModeView('groups'));
+els.webBotModeRefresh?.addEventListener('click', () => {
+  els.webBotModeRefresh.classList.add('is-refreshing');
+  setTimeout(() => els.webBotModeRefresh?.classList.remove('is-refreshing'), 600);
+  void loadWebBotModeProfiles();
+});
 els.sessionSearch.addEventListener('input', () => renderSessions(els.sessionSearch.value));
 els.railVisibilityToggle.addEventListener('click', () => persistSessionVisibility({ webSessionsVisible: settings.webSessionsVisible === false }));
 els.webSessionOwnershipNotice?.addEventListener('click', handleWebSessionOwnershipDecision);
@@ -4027,6 +5468,11 @@ els.composer.addEventListener('submit', async (event) => {
       els.prompt.value = '';
       await executeNativeBrowserCommand(browserCommand);
       renderContextWindow();
+      return;
+    }
+    if (activeGroupProjection) {
+      els.composer.dataset.submitState = 'group';
+      await sendActiveWebGroupMessage(text, [...attachments]);
       return;
     }
     if (sending) {
@@ -4061,6 +5507,7 @@ els.prompt.addEventListener('input', () => {
   updateBusyControls();
   renderComposerSuggestions();
   renderContextWindow();
+  persistCurrentComposerDraft();
 });
 els.prompt.addEventListener('paste', (event) => {
   handleComposerPaste(event).catch((error) => { els.composerStatus.textContent = `Paste failed: ${error?.message || String(error)}`; });
@@ -4082,7 +5529,13 @@ els.composer.addEventListener('dragleave', (event) => {
 els.composer.addEventListener('drop', (event) => {
   handleComposerDrop(event).catch((error) => { els.composerStatus.textContent = `Drop failed: ${error?.message || String(error)}`; });
 });
-els.stopRun.addEventListener('click', () => stopActiveRun().catch((error) => { els.composerStatus.textContent = error?.message || String(error); }));
+els.stopRun.addEventListener('click', () => {
+  if (activeGroupAbortController) {
+    activeGroupAbortController.abort();
+    return;
+  }
+  stopActiveRun().catch((error) => { els.composerStatus.textContent = error?.message || String(error); });
+});
 els.webRetryRunStatusButton?.addEventListener('click', () => { void retryWebRunTerminalStatus(); });
 els.webDiscardHeldQueueButton?.addEventListener('click', discardWebHeldQueuedTurn);
 els.attachButton.addEventListener('click', () => toggleAttachMenu());
@@ -4110,6 +5563,10 @@ els.settingsLanguageSelect?.addEventListener('change', () => {
 els.taskStackToggle?.addEventListener('click', () => {
   taskStackExpanded = !taskStackExpanded;
   renderTaskStack();
+});
+els.subagentStackToggle?.addEventListener('click', () => {
+  subagentExpanded = !subagentExpanded;
+  renderSubagentStack();
 });
 els.closeSettings.addEventListener('click', () => els.settingsDialog.close());
 els.settingsDialog.addEventListener('click', (event) => {
@@ -4287,7 +5744,7 @@ els.sessionActionsMenu.addEventListener('click', (event) => {
   if (!action || !activeSessionId) return;
   toggleSessionActionsMenu(false);
   if (action === 'rename') {
-    promptRenameHermesWebSession(sessions.find((session) => session.id === activeSessionId) || { id: activeSessionId, title: settings.sessionTitle });
+    openWebSessionRenameEditor(sessions.find((session) => session.id === activeSessionId) || { id: activeSessionId, title: settings.sessionTitle });
     return;
   }
   navigator.clipboard.writeText(activeSessionId)
@@ -4388,6 +5845,7 @@ initializeResponsiveShell();
 updateScrim();
 loadApp()
   .then(async () => {
+    restoreComposerDraft();
     renderWakeState(await browserApi.runtime.sendMessage({ type: WAKE_MESSAGES.getState }).catch(() => ({})));
     await consumePendingVoiceDraft();
     await consumePendingWakeTurn();
