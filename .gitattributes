@@ -1,0 +1,8 @@
+# Keep JSON files LF in the repository. The fork's manifest.json was committed
+# with CRLF line endings, which made every upstream merge a whole-file conflict
+# (git saw every line as changed) and dead-ended the sync workflow in its
+# conflict path every week.
+*.json text eol=lf
+
+# Windows batch scripts stay CRLF.
+*.cmd text eol=crlf
