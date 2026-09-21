@@ -91,6 +91,7 @@ import {
   resolveCatalogModelIdForBinding,
   skillSuggestionsForInput,
   restSkillsFallbackAllowed,
+  shouldRecoverSkillsFromDashboard,
   updateBrowserModelScope,
   updateBrowserModelOptionScope,
   updateReviewState,
@@ -100,6 +101,23 @@ import {
   agentDiscoveryAppliesToMode,
   agentDiscoveryModeNote,
 } from './lib/common.mjs';
+import {
+  BUILD_RELOAD_BOOT_RECHECK_MS,
+  BUILD_RELOAD_WATCH_INTERVAL_MS,
+  HBE_RELEASES_URL,
+  RELEASES_DOWNLOAD_LABEL,
+  RELOAD_NOW_LABEL,
+  UPDATE_CHECK_CACHE_KEY,
+  buildIdentityChanged,
+  buildIdentityFromInfo,
+  buildUpdateAgentPrompt,
+  reloadPendingNotice,
+  shouldAutoCheckUpdates,
+  shouldRefreshBuildIdentity,
+  updateButtonEmphasis,
+  updateCheckCacheEntry,
+  updateInstallNoteText,
+} from './lib/update-flow.mjs';
 import { resolveCanonicalBotSession } from './lib/bot-canonical-session.mjs';
 import {
   discoverLocalDashboardBaseUrl,
@@ -180,8 +198,10 @@ import { createStreamPacer } from './lib/stream-pacing.mjs';
 import { contextTelemetryFromRuntime, formatTokenCount, mergeContextTelemetry } from './lib/session-context-telemetry.mjs';
 import { liveStateBadge, mergeLiveSignals } from './lib/session-live-state.mjs';
 import { appendUserImageAttachments, extractHistoryMediaAttachments, normalizeUserImageAttachments, preserveUserImageAttachments, rawGeneratedImageCandidatesFromResult, resolveImageSource, resolvedGeneratedImageSources, resolvedGeneratedImageSourcesFromMessages } from './lib/image-render.mjs';
-import { mediaDisplayName, mediaSourcePlan } from './lib/media-source.mjs';
+import { mediaDisplayName, mediaSourcePlan, probeArtifactFileSource, resolveArtifactDownloadSource, resolveArtifactFileSource } from './lib/media-source.mjs';
 import { classifyMediaKind, resolveMediaFetchPlan } from './lib/media-persistence.mjs';
+import { artifactActionPlan, artifactFailureNotice } from './lib/artifact-actions.mjs';
+import { hydrateArtifactCards, setArtifactCardBusy, setArtifactCardNote } from './lib/artifact-card.mjs';
 import { pickSidecarArt, sidecarArtCssValue } from './lib/sidecar-art.mjs';
 import {
   activeSubagentView,
@@ -326,7 +346,7 @@ import {
   normalizeCachedModelCatalog,
   normalizeExternalModelSourceList,
   selectModelCatalogFallback,
-  profileDefaultModelFromOptions,
+  resolveProfileSessionModel,
   shouldEnrichCanonicalProviderCatalog,
   shouldTrySessionModelFallback,
   unionCachedModelCatalogs,
@@ -481,6 +501,7 @@ import {
   normalizeConnectionMode,
   resolvePhaseATransport,
   sanitizeGatewayUrlForConnectionMode,
+  transportRequiresApiKey,
   transportUsesDashboardTicket,
 } from './lib/connection-modes.mjs';
 import { CONNECTION_ACTIONS, connectionActionForSettings } from './lib/connection-dispatch.mjs';
@@ -788,6 +809,10 @@ const els = {
   maybeLaterButton: $('#maybeLaterButton'),
   closeUpdateDialogButton: $('#closeUpdateDialogButton'),
   updateInstallNote: $('#updateInstallNote'),
+  updateReleaseLink: $('#updateReleaseLink'),
+  updateReloadPending: $('#updateReloadPending'),
+  updateReloadPendingText: $('#updateReloadPendingText'),
+  reloadBuildButton: $('#reloadBuildButton'),
   operationToast: $('#operationToast'),
   operationToastTitle: $('#operationToastTitle'),
   operationToastDetail: $('#operationToastDetail'),
@@ -810,6 +835,7 @@ const els = {
   browserControlStripTitle: $('#browserControlStripTitle'),
   browserControlStripDetail: $('#browserControlStripDetail'),
   browserControlAttachButton: $('#browserControlAttachButton'),
+  browserControlAuthorizeButton: $('#browserControlAuthorizeButton'),
   browserControlDismissButton: $('#browserControlDismissButton'),
   browserControlPauseButton: $('#browserControlPauseButton'),
   browserControlStopButton: $('#browserControlStopButton'),
@@ -1709,6 +1735,25 @@ function minimumConnectionReady() {
   return isConnected() && (usesDashboardWsChatTransport() || apiCredentialSatisfied(settings));
 }
 
+// The browser controller registers through the API transport (local-api /
+// remote-api) and needs a saved credential for it. Chat can be connected over
+// the local Desktop dashboard fallback with no credential at all, so "chat is
+// connected" says nothing about tab control.
+function controllerCredentialMissing() {
+  return settings?.browserControlEnabled === true
+    && transportRequiresApiKey(settings.connectionTransport)
+    && !apiCredentialSatisfied(settings);
+}
+
+// Run the loopback pairing flow when tab control needs a credential it does not
+// have. The approval page stays the user's consent gate; this only replaces the
+// dead end ("no token saved", connect panel hidden) with the flow that mints one.
+async function ensureControllerCredentialForControl() {
+  if (!controllerCredentialMissing() || !automaticApiPairingAllowed(settings)) return false;
+  await connectApiWithPairing();
+  return true;
+}
+
 function positionStartupSettings(active = document.body?.classList.contains('startup-active')) {
   const topbar = els.settingsButton?.closest('.topbar') || document.querySelector('.topbar');
   const actions = els.startupActions || document.getElementById('startupActions');
@@ -2001,7 +2046,8 @@ function renderBrowserControl() {
     && Array.isArray(browserControlStatus?.leasedTabIds)
     && browserControlStatus.leasedTabIds.some((tabId) => Number(tabId) === activeTabIdForStrip);
   const stripToggleMode = stripTabAttached ? 'detach' : 'attach';
-  els.browserControlAttachButton.hidden = !(view.canAttach || stripTabAttached);
+  els.browserControlAttachButton.hidden = !(view.canAttach || stripTabAttached) || view.canAuthorize;
+  els.browserControlAuthorizeButton.hidden = !view.canAuthorize;
   els.browserControlAttachButton.dataset.mode = stripToggleMode;
   els.browserControlAttachButton.textContent = t(stripToggleMode === 'detach' ? 'browser_control.detach' : 'ui.attach');
   els.browserControlAttachButton.title = t(stripToggleMode === 'detach' ? 'browser_control.detach' : 'ui.attach.to.current.tab');
@@ -2074,22 +2120,28 @@ async function attachBrowserControlToCurrentTab() {
     throw new Error('Start or select a Hermes session, then attach this tab.');
   }
   const replacement = currentTabLeaseReplacement({ status: browserControlStatus || {}, activeTab: tab, allowLocalFiles: true });
-  if (!replacement.ok) {
+  let resolvedReplacement = replacement;
+  if (!replacement.ok && replacement.error === 'controller_unavailable'
+    && await ensureControllerCredentialForControl().catch(() => false)) {
+    await refreshBrowserControlStatus({ follow: false });
+    resolvedReplacement = currentTabLeaseReplacement({ status: browserControlStatus || {}, activeTab: tab, allowLocalFiles: true });
+  }
+  if (!resolvedReplacement.ok) {
     const messages = {
       controller_busy: 'Wait for the current browser action to finish before attaching another tab.',
       controller_unavailable: 'Hermes Control is still reconnecting. Try Attach this tab again in a moment.',
       restricted_url: 'Open a normal HTTP or HTTPS page before attaching Hermes Control.',
     };
-    throw new Error(messages[replacement.error] || 'This tab cannot be attached right now.');
+    throw new Error(messages[resolvedReplacement.error] || 'This tab cannot be attached right now.');
   }
-  if (replacement.releaseTabIds.length) {
+  if (resolvedReplacement.releaseTabIds.length) {
     const released = await browserControlMessage('HERMES_CONTROLLER_LEASE_RELEASE', {
-      ownerId: replacement.ownerId,
-      tabIds: replacement.releaseTabIds,
+      ownerId: resolvedReplacement.ownerId,
+      tabIds: resolvedReplacement.releaseTabIds,
     });
     if (!released?.ok) throw new Error(released?.error || 'Could not release the previous tab lease.');
   }
-  const acquired = await browserControlMessage('HERMES_CONTROLLER_LEASE_ACQUIRE', replacement.acquire);
+  const acquired = await browserControlMessage('HERMES_CONTROLLER_LEASE_ACQUIRE', resolvedReplacement.acquire);
   if (!acquired?.ok) throw new Error(acquired?.error || 'Could not lease this tab.');
   const candidate = browserControlCandidate({
     context: { activeTab: tab },
@@ -2139,8 +2191,11 @@ async function enableBrowserControl() {
       browserControlPaused: false,
       browserControlScope: scope,
     });
-    const rebound = await browserControlMessage('HERMES_CONTROLLER_SETTINGS_REFRESH');
+    let rebound = await browserControlMessage('HERMES_CONTROLLER_SETTINGS_REFRESH');
     if (!rebound?.ok) throw new Error(rebound?.error || 'Controller capability refresh failed.');
+    if (!rebound.connected && await ensureControllerCredentialForControl()) {
+      rebound = await browserControlMessage('HERMES_CONTROLLER_STATUS').catch(() => null) || rebound;
+    }
     const acquired = await browserControlMessage('HERMES_CONTROLLER_LEASE_ACQUIRE', {
       ...leaseRequest,
       ownership: 'owned',
@@ -3722,27 +3777,20 @@ function renderUpdateDialog(review = { loading: true }) {
   }
   els.updateNowButton.hidden = !review.available;
   els.maybeLaterButton.textContent = translateUiText(review.available ? 'MAYBE LATER' : 'CLOSE');
-  els.updateInstallNote.textContent = review.available
-    ? translateUiText('Update now starts a guarded Hermes agent turn. It will stop on local changes, build dist/, and reload through computer-use when available.')
-    : translateUiText('This check compares the loaded build metadata with the public Hermes Browser repository.');
+  els.updateInstallNote.textContent = translateUiText(updateInstallNoteText({ available: Boolean(review.available) }));
   (review.available ? els.updateNowButton : els.maybeLaterButton)?.focus({ preventScroll: true });
 }
 
 function launchBrowserUpdateWithHermes() {
   const review = latestUpdateReview || {};
-  const updatePrompt = [
-    'Update my Hermes Browser Extension from the official repository: https://github.com/abundantbeing/hermes-browser-extension',
-    `The Browser update review reports ${review.commitCount || 'new'} public commit${review.commitCount === 1 ? '' : 's'} available.`,
-    'First locate the existing Hermes Browser Extension checkout that this user intends to update.',
-    'If the checkout has uncommitted changes, stop and report them. Do not discard, overwrite, commit, or push any local work.',
-    'If it is clean, fetch and fast-forward the current branch from the official remote, install dependencies only if required, and run npm run build.',
-    'After a successful build, use computer-use to reload the unpacked dist/ extension from chrome://extensions when available. Otherwise tell me exactly how to reload it manually.',
-    'Verify the extension build before reporting success.',
-  ].join('\n\n');
+  const updatePrompt = buildUpdateAgentPrompt({ review });
   closeUpdateDialog({ restoreFocus: false });
   closeSettingsDialog();
   els.input.value = updatePrompt;
   els.input.dispatchEvent(new Event('input', { bubbles: true }));
+  // The agent's rebuild lands as a new build on disk: watch for it as soon as
+  // this turn finishes so the panel can offer Reload now.
+  updateTurnAwaitingBuild = true;
   if (!isConnected() || sending) {
     showOperationToast({ kind: 'warn', title: 'Update prompt ready', detail: sending ? 'Send it when the current Hermes run finishes.' : 'Connect to Hermes, then send the prepared update request.' });
     els.input.focus();
@@ -3752,13 +3800,17 @@ function launchBrowserUpdateWithHermes() {
   requestAnimationFrame(() => els.composer.requestSubmit());
 }
 
-async function checkForUpdates({ openReview = false } = {}) {
-  if (!els.checkUpdatesButton) return;
-  els.checkUpdatesButton.disabled = true;
-  if (els.reviewUpdateButton) els.reviewUpdateButton.disabled = true;
-  els.checkUpdatesButton.textContent = translateUiText('Checking...');
-  renderVersionInfo('Checking GitHub main and this loaded build commit...');
-  if (openReview) renderUpdateDialog({ loading: true });
+async function checkForUpdates({ openReview = false, silent = false } = {}) {
+  // silent: the automatic once-a-day check. No dialog, no toast, no button
+  // churn, and a failure leaves the manual Check path exactly as it was.
+  if (!silent) {
+    if (!els.checkUpdatesButton) return;
+    els.checkUpdatesButton.disabled = true;
+    if (els.reviewUpdateButton) els.reviewUpdateButton.disabled = true;
+    els.checkUpdatesButton.textContent = translateUiText('Checking...');
+    renderVersionInfo('Checking GitHub main and this loaded build commit...');
+    if (openReview) renderUpdateDialog({ loading: true });
+  }
   try {
     const [buildInfo, latestInfo] = await Promise.all([
       loadExtensionBuildInfo(),
@@ -3805,24 +3857,186 @@ async function checkForUpdates({ openReview = false } = {}) {
       sourceMatchesMain,
     };
     renderVersionInfo(status);
-    if (openReview) renderUpdateDialog(latestUpdateReview);
+    renderUpdateActionEmphasis(latestUpdateReview);
+    if (openReview && !silent) renderUpdateDialog(latestUpdateReview);
     return latestUpdateReview;
   } catch (error) {
+    if (silent) {
+      console.warn('[Hermes Browser] Silent update check failed:', error?.message || error);
+      return null;
+    }
     const detail = `${error?.message || String(error)} Open ${REPO_URL} for manual update instructions.`;
     renderVersionInfo(detail);
     if (openReview) renderUpdateDialog({ title: 'Update check unavailable', summary: 'Hermes Browser could not read public update metadata.', error: detail });
     return null;
   } finally {
-    els.checkUpdatesButton.disabled = false;
-    if (els.reviewUpdateButton) els.reviewUpdateButton.disabled = false;
-    els.checkUpdatesButton.textContent = translateUiText('Check');
+    if (!silent) {
+      els.checkUpdatesButton.disabled = false;
+      if (els.reviewUpdateButton) els.reviewUpdateButton.disabled = false;
+      els.checkUpdatesButton.textContent = translateUiText('Check');
+    }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Update trust: the build this panel booted from vs the build now on disk, the
+// honest no-checkout fallback, and the silent once-a-day check. The pure rules
+// live in lib/update-flow.mjs so the tests assert the same strings the panel
+// renders without needing a browser.
+// ---------------------------------------------------------------------------
+
+let loadedBuildIdentity = null;
+let buildIdentityCheckInFlight = false;
+let buildIdentityCheckedAt = 0;
+let updateTurnAwaitingBuild = false;
+
+async function readBuildIdentityFromDisk() {
+  // loadExtensionBuildInfo reads build-info.json over an extension URL with
+  // cache: 'no-store', so this is the patched dist/ file, never a cached copy.
+  const info = await loadExtensionBuildInfo().catch(() => null);
+  return buildIdentityFromInfo(info);
+}
+
+/**
+ * Re-read build-info.json and compare it with the identity this panel booted
+ * from. The first read establishes the baseline. A later change means dist/ was
+ * rebuilt under the running panel, so the panel offers Reload now — it never
+ * reloads on its own.
+ */
+async function checkLoadedBuildIdentity({ reason = 'interval', force = false } = {}) {
+  if (buildIdentityCheckInFlight) return false;
+  if (!force && !shouldRefreshBuildIdentity({ lastCheckedAt: buildIdentityCheckedAt })) return false;
+  buildIdentityCheckInFlight = true;
+  buildIdentityCheckedAt = Date.now();
+  try {
+    const nextIdentity = await readBuildIdentityFromDisk();
+    if (!loadedBuildIdentity) {
+      loadedBuildIdentity = nextIdentity;
+      return false;
+    }
+    if (!buildIdentityChanged(loadedBuildIdentity, nextIdentity)) return false;
+    renderUpdateReloadPending(nextIdentity);
+    console.info(`[Hermes Browser] A newer build is on disk; reload offered (${reason}).`);
+    return true;
+  } catch (error) {
+    console.warn('[Hermes Browser] Build identity re-read skipped:', error?.message || error);
+    return false;
+  } finally {
+    buildIdentityCheckInFlight = false;
+  }
+}
+
+function renderUpdateReloadPending(identity = null) {
+  if (!els.updateReloadPending) return;
+  if (els.updateReloadPendingText) els.updateReloadPendingText.textContent = translateUiText(reloadPendingNotice(identity));
+  els.updateReloadPending.hidden = false;
+}
+
+function reloadBrowserRuntimeForNewBuild() {
+  const runtime = browserApi?.runtime;
+  if (typeof runtime?.reload !== 'function') {
+    showOperationToast({ kind: 'warn', title: 'Reload unavailable', detail: 'Reload this extension from your browser extensions page to run the new build.' });
+    return;
+  }
+  try {
+    // Load-unpacked reloads re-read the files from disk, so the rebuilt dist/
+    // is what runs on the next paint of this panel.
+    runtime.reload();
+  } catch (error) {
+    showOperationToast({ kind: 'warn', title: 'Reload failed', detail: error?.message || String(error) });
+  }
+}
+
+async function readUpdateCheckCache() {
+  try {
+    const stored = await browserApi.storage.local.get([UPDATE_CHECK_CACHE_KEY]);
+    return stored?.[UPDATE_CHECK_CACHE_KEY] || null;
+  } catch (error) {
+    console.warn('[Hermes Browser] Update check cache read failed:', error?.message || error);
+    return null;
+  }
+}
+
+async function writeUpdateCheckCache(review = null) {
+  if (!review) return false;
+  try {
+    await browserApi.storage.local.set({ [UPDATE_CHECK_CACHE_KEY]: updateCheckCacheEntry({ review }) });
+    return true;
+  } catch (error) {
+    console.warn('[Hermes Browser] Update check cache write failed:', error?.message || error);
+    return false;
+  }
+}
+
+/**
+ * Silent automatic check: at most once every 24h, no dialog, no toast. Any
+ * failure returns false without touching the status line, so the manual Check
+ * button remains the only thing that can claim anything.
+ */
+async function runAutomaticUpdateCheck() {
+  try {
+    const cached = await readUpdateCheckCache();
+    if (!shouldAutoCheckUpdates({ entry: cached })) return false;
+    const review = await checkForUpdates({ silent: true });
+    if (!review) return false;
+    await writeUpdateCheckCache(review);
+    return true;
+  } catch (error) {
+    console.warn('[Hermes Browser] Automatic update check skipped:', error?.message || error);
+    return false;
+  }
+}
+
+function renderUpdateActionEmphasis(review = null) {
+  if (!els.reviewUpdateButton) return;
+  const emphasis = updateButtonEmphasis(review);
+  if (emphasis) els.reviewUpdateButton.setAttribute('data-update-action', emphasis);
+  else els.reviewUpdateButton.removeAttribute('data-update-action');
+}
+
+function applyUpdateFlowStatics() {
+  if (els.updateReleaseLink) {
+    els.updateReleaseLink.href = HBE_RELEASES_URL;
+    els.updateReleaseLink.textContent = translateUiText(RELEASES_DOWNLOAD_LABEL);
+  }
+  if (els.reloadBuildButton) els.reloadBuildButton.textContent = translateUiText(RELOAD_NOW_LABEL);
+}
+
+/**
+ * Boot wiring for the update path. Never awaited by the boot sequence: the
+ * panel must paint whether or not GitHub, storage, or build-info.json answer.
+ */
+async function initializeUpdateFlow() {
+  applyUpdateFlowStatics();
+  await checkLoadedBuildIdentity({ reason: 'boot', force: true });
+  window.setTimeout(() => { void checkLoadedBuildIdentity({ reason: 'boot-recheck', force: true }); }, BUILD_RELOAD_BOOT_RECHECK_MS);
+  window.setInterval(() => { void checkLoadedBuildIdentity({ reason: 'interval' }); }, BUILD_RELOAD_WATCH_INTERVAL_MS);
+  window.addEventListener('focus', () => { void checkLoadedBuildIdentity({ reason: 'focus' }); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') void checkLoadedBuildIdentity({ reason: 'visible' });
+  });
+  void runAutomaticUpdateCheck();
+}
+
+/**
+ * Called when a turn settles. A turn that started from the prepared update
+ * prompt is the one most likely to have rebuilt dist/, so re-read the identity
+ * right away instead of waiting for the next interval.
+ */
+function recheckBuildIdentityAfterUpdateTurn() {
+  if (!updateTurnAwaitingBuild) return;
+  void checkLoadedBuildIdentity({ reason: 'update-turn', force: true }).then((changed) => {
+    if (changed) updateTurnAwaitingBuild = false;
+  });
 }
 
 function updateConnectionPrompt() {
   const state = currentConnectionState();
   const connected = state.connected;
   const summary = currentGatewaySummary();
+  // Connected is connected: the first-run setup card never comes back for a
+  // working panel. Tab control's own credential step lives in the control strip
+  // ("Authorize control"), not in this card.
   els.connectPanel.hidden = connected;
   els.connectionPill.textContent = '●';
   els.connectionPill.className = `connection-pill ${state.pillClass || 'warn'}`;
@@ -4474,6 +4688,7 @@ async function settleActiveRunTerminal() {
   sending = false;
   updateComposerBusyState();
   renderContextWindow();
+  recheckBuildIdentityAfterUpdateTurn();
   const shouldFlushQueue = shouldAutoFlushQueuedTurn(queuedTurn, settledRunControl);
   if (!shouldFlushQueue) return true;
   const next = queuedTurn;
@@ -7744,6 +7959,83 @@ function refreshModelCatalogInBackground() {
   return modelCatalogSyncPromise;
 }
 
+const profileModelSync = { name: '', promise: null, token: 0 };
+
+function profileModelRosterRow(profileName = '') {
+  const name = String(profileName || '').trim();
+  if (!name) return null;
+  return botModeRoster.find((entry) => entry?.profileName === name)
+    || availableProfiles.find((profile) => profile?.name === name)
+    || null;
+}
+
+function pinProfileDefaultModel(pinnedModel, { persist = true } = {}) {
+  if (!pinnedModel?.model) return;
+  const matched = availableModels.find((model) => (
+    (model.rawModelId === pinnedModel.model || model.id === pinnedModel.model)
+    && (!pinnedModel.provider || model.provider === pinnedModel.provider)
+  )) || {
+    id: pinnedModel.model,
+    rawModelId: pinnedModel.model,
+    provider: pinnedModel.provider || '',
+    name: pinnedModel.model,
+  };
+  settings = {
+    ...settings,
+    model: matched.id,
+    provider: matched.provider || pinnedModel.provider || settings.provider,
+    extensionPreferredModel: null,
+  };
+  renderModelOptions(availableModels);
+  renderModelRuntimeOptions();
+  updateModelButtonMeta();
+  if (persist) void browserApi.storage.local.set({ hermesBrowserSettings: settings });
+}
+
+async function syncProfileModelSelection(profileName = '', { row = null } = {}) {
+  const name = String(profileName || '').trim();
+  if (!name) return { ok: true, skipped: true };
+  if (profileModelSync.promise && profileModelSync.name === name) return profileModelSync.promise;
+  const token = ++profileModelSync.token;
+  profileModelSync.name = name;
+  profileModelSync.promise = (async () => {
+    const rosterRow = row || profileModelRosterRow(name);
+    const rosterPin = resolveProfileSessionModel({
+      rosterModel: rosterRow?.model || '',
+      rosterProvider: rosterRow?.provider || '',
+    });
+    if (rosterPin) pinProfileDefaultModel(rosterPin, { persist: false });
+
+    const modelSync = await loadModels({ quiet: true, refresh: true });
+    if (token !== profileModelSync.token) return { ok: false, stale: true };
+
+    let optionsPayload = null;
+    if (desktopDashboardUrl) {
+      try {
+        const optionsResponse = await dashboardApiRequest(`/api/model/options?profile=${encodeURIComponent(name)}`, { timeoutMs: 3_000 });
+        optionsPayload = await optionsResponse.json();
+      } catch {
+        optionsPayload = null;
+      }
+    }
+    if (token !== profileModelSync.token) return { ok: false, stale: true };
+
+    const pin = resolveProfileSessionModel({
+      rosterModel: rosterRow?.model || '',
+      rosterProvider: rosterRow?.provider || '',
+      optionsPayload,
+    });
+    if (pin) pinProfileDefaultModel(pin, { persist: true });
+    return modelSync || { ok: Boolean(pin) };
+  })().finally(() => {
+    if (profileModelSync.token === token) {
+      profileModelSync.promise = null;
+      profileModelSync.name = '';
+    }
+  });
+  return profileModelSync.promise;
+}
+
 async function loadModels({ quiet = false, payload = null, refresh = false, startup = false } = {}) {
   const previousSelectedModel = settings.model;
   const previousAvailableModels = availableModels;
@@ -7995,48 +8287,70 @@ async function refreshModelsFromMenu() {
 }
 
 async function loadSkills({ quiet = false } = {}) {
-  if (usesDashboardWsChatTransport()) {
-    const connection = isRemoteWsMode()
-      ? remoteWsConnection
-      : (profileWsConnection?.client?.readyState === 1 ? profileWsConnection : activeDashboardWsConnection);
-    if (connection?.client?.readyState === 1) {
-      try {
-        const profile = safeActiveProfile() || 'default';
-        const payload = await connection.client.request(WS_METHODS.profilesDescribe, { name: profile });
-        availableSkills = normalizeHermesSkills({ data: payload?.skills || [] });
-        renderSkillSuggestions();
-        if (!quiet) setStatus('ok', 'Hermes skills synced', `${availableSkills.length} /skill commands available`);
-        return { ok: true, count: availableSkills.length, source: 'dashboard-ws' };
-      } catch (error) {
-        if (!settings.apiKey || !restSkillsFallbackAllowed({ profileName: safeActiveProfile() || 'default' })) {
-          availableSkills = [];
-          renderSkillSuggestions();
-          if (!quiet) setStatus('warn', 'Skill sync failed', error?.message || String(error), { translateDetail: false });
-          return { ok: false, count: 0, error: error?.message || String(error) };
-        }
-      }
-    }
-  }
-  if (!settings.apiKey || !restSkillsFallbackAllowed({ profileName: safeActiveProfile() || 'default' })) {
-    availableSkills = [];
-    renderSkillSuggestions();
-    return { ok: false, count: 0, error: 'Connect to Hermes before refreshing skills.' };
-  }
-  try {
-    const response = await apiFetch('/v1/skills', {
-      method: 'GET',
-      signal: typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(2_000) : undefined,
-    });
-    const payload = await readJsonResponse(response);
-    if (!response.ok) throw new Error(payload?.error?.message || payload?.error || `Skills list failed (${response.status})`);
+  const profile = safeActiveProfile() || 'default';
+  const applyDashboardSkills = (payload, source = 'dashboard-ws') => {
     availableSkills = normalizeHermesSkills(payload);
     renderSkillSuggestions();
     if (!quiet) setStatus('ok', 'Hermes skills synced', `${availableSkills.length} /skill commands available`);
-  } catch (error) {
+    return { ok: true, count: availableSkills.length, source };
+  };
+  const failSkills = (error) => {
     availableSkills = [];
     renderSkillSuggestions();
     if (!quiet) setStatus('warn', 'Skill sync failed', error?.message || String(error), { translateDetail: false });
     return { ok: false, count: 0, error: error?.message || String(error) };
+  };
+  const describeFromConnection = async (connection) => {
+    if (connection?.client?.readyState !== 1) return null;
+    const payload = await connection.client.request(WS_METHODS.profilesDescribe, { name: profile });
+    return applyDashboardSkills(payload);
+  };
+
+  const readyConnection = isRemoteWsMode()
+    ? remoteWsConnection
+    : (profileWsConnection?.client?.readyState === 1 ? profileWsConnection : activeDashboardWsConnection);
+  try {
+    const ready = await describeFromConnection(readyConnection);
+    if (ready) return ready;
+  } catch {
+    // Ready-socket describe failed; REST and dashboard recovery still run.
+  }
+
+  let restOutcome = 'skipped';
+  if (settings.apiKey && restSkillsFallbackAllowed({ profileName: profile })) {
+    try {
+      const response = await apiFetch('/v1/skills', {
+        method: 'GET',
+        signal: typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(2_000) : undefined,
+      });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) throw new Error(payload?.error?.message || payload?.error || `Skills list failed (${response.status})`);
+      const skills = normalizeHermesSkills(payload);
+      if (skills.length) {
+        availableSkills = skills;
+        renderSkillSuggestions();
+        if (!quiet) setStatus('ok', 'Hermes skills synced', `${availableSkills.length} /skill commands available`);
+        return { ok: true, count: availableSkills.length, source: 'rest' };
+      }
+      restOutcome = 'empty';
+    } catch {
+      restOutcome = 'error';
+    }
+  }
+
+  if (!shouldRecoverSkillsFromDashboard({ restOutcome })) {
+    return { ok: true, count: availableSkills.length, source: 'rest' };
+  }
+
+  try {
+    const connection = isRemoteWsMode()
+      ? await ensureRemoteWsClient()
+      : await ensureProfileWsConnection({ readyTimeoutMs: 8_000, allowDashboardTrust: !quiet });
+    const recovered = await describeFromConnection(connection);
+    if (recovered) return recovered;
+    return failSkills(new Error('Skill catalog unavailable.'));
+  } catch (error) {
+    return failSkills(error);
   }
 }
 
@@ -8501,6 +8815,7 @@ async function ensureDesktopDashboardUrl({ timeoutMs = 8_000 } = {}) {
     desktopDashboardUrl = url;
     void writeCachedRosterUrl(url);
     void loadProfiles({ quiet: true, allowDashboardTrust: true });
+    void loadSkills({ quiet: true });
   });
   return desktopDashboardUrl || '';
 }
@@ -10037,8 +10352,8 @@ async function applySelectedProfile(profileName = '', { quiet = false, viaBotMod
       { translateDetail: false },
     );
   }
-  void refreshModelCatalogInBackground().then((modelSync) => {
-    if (!modelSync?.ok && !quiet && !viaBotMode) {
+  void syncProfileModelSelection(profileName).then((modelSync) => {
+    if (!modelSync?.ok && !modelSync?.stale && !quiet && !viaBotMode) {
       // The switch itself succeeded — messaging on the new profile is already
       // wired. Only the model metadata sync degraded; say so without implying
       // the agent switch failed.
@@ -10305,34 +10620,7 @@ async function openBotProfile(row) {
   // returns what `hermes <profile>` runs (verified against the live gateway:
   // default→gemini-3.7-flash-high, namine→z-ai/glm-5.3-flash, riku→deepseek-v4).
   // Falls back to the roster row's model when the dashboard route is offline.
-  let pinnedModel = row.model ? { model: row.model, provider: row.provider || '' } : null;
-  if (!pinnedModel && desktopDashboardUrl) {
-    try {
-      const optionsPayload = await dashboardApiRequest(`/api/model/options?profile=${encodeURIComponent(row.profileName)}`, { timeoutMs: 3_000 });
-      pinnedModel = profileDefaultModelFromOptions(await optionsPayload.json());
-    } catch {
-      pinnedModel = null;
-    }
-  }
-  if (pinnedModel) {
-    const matched = availableModels.find((m) => (
-      (m.rawModelId === pinnedModel.model || m.id === pinnedModel.model)
-      && (!pinnedModel.provider || m.provider === pinnedModel.provider)
-    ))
-      || { id: pinnedModel.model, rawModelId: pinnedModel.model, provider: pinnedModel.provider || '', name: pinnedModel.model };
-    settings = {
-      ...settings,
-      model: matched.id,
-      provider: matched.provider || pinnedModel.provider || settings.provider,
-      // Clear the old session's model binding so the new Bot Chat session
-      // adopts the profile default, and the model menu stays user-changeable
-      // for the rest of the session (per-session override, not a lock).
-      extensionPreferredModel: null,
-    };
-    renderModelOptions(availableModels);
-    renderModelRuntimeOptions();
-    updateModelButtonMeta();
-  }
+  await syncProfileModelSelection(row.profileName, { row });
 
   await browserApi.storage.local.set({ hermesBrowserSettings: settings });
 
@@ -13076,6 +13364,214 @@ async function hydrateSessionMediaInElement(element) {
   }));
 }
 
+// ── Returned-file cards ──────────────────────────────────────────────────────
+// A finished turn often hands back a file — a PDF report, a spreadsheet, an
+// HTML page, an archive. The transcript used to answer with nothing but the
+// path it sits at. These cards make the file actionable: Open renders viewable
+// kinds in a new tab from bytes fetched over the same authenticated dashboard
+// transport the media routes use, Open on computer hands the file to the OS
+// default app through downloads.download + downloads.open, and Save keeps a
+// copy. Every state is honest — when the dashboard cannot read the file, the
+// buttons are disabled and say why instead of failing on click.
+const ARTIFACT_CARD_LIMIT = 6;
+const ARTIFACT_PROBE_CACHE_MS = 30_000;
+const ARTIFACT_BLOB_TTL_MS = 120_000;
+const ARTIFACT_DOWNLOAD_TIMEOUT_MS = 120_000;
+const artifactProbeCache = new Map();
+let artifactDashboardContext = { baseUrl: '', token: '' };
+
+function artifactCardLabels() {
+  return {
+    open: translateUiText('Open'),
+    'open-on-computer': translateUiText('Open on computer'),
+    save: translateUiText('Save'),
+    localSource: translateUiText('On this computer'),
+    remoteSource: translateUiText('Returned by Hermes'),
+    checking: translateUiText('Checking whether Hermes can read this file…'),
+    opening: translateUiText('Opening…'),
+    openingOnComputer: translateUiText('Opening on this computer…'),
+    saving: translateUiText('Saving…'),
+  };
+}
+
+async function resolveArtifactDashboardContext() {
+  const baseUrl = await resolveDashboardMediaBaseUrl();
+  if (!baseUrl) {
+    artifactDashboardContext = { baseUrl: '', token: '' };
+    return artifactDashboardContext;
+  }
+  const token = await fetchDashboardSessionToken({ baseUrl });
+  artifactDashboardContext = { baseUrl, token };
+  return artifactDashboardContext;
+}
+
+// One HEAD probe decides whether a card may offer buttons at all; the result is
+// cached briefly so a streaming render does not re-ask per token.
+async function probeArtifactReadable(filePath) {
+  if (!artifactDashboardContext.baseUrl) await resolveArtifactDashboardContext();
+  const { baseUrl, token } = artifactDashboardContext;
+  if (!baseUrl) return { ok: false, reason: 'missing-base-url' };
+  const key = `${baseUrl}|${filePath}`;
+  const cached = artifactProbeCache.get(key);
+  if (cached && Date.now() - cached.at < ARTIFACT_PROBE_CACHE_MS) return cached.state;
+  const state = await probeArtifactFileSource(filePath, { baseUrl, token });
+  artifactProbeCache.set(key, { at: Date.now(), state });
+  return state;
+}
+
+async function artifactPlanForFile(filePath) {
+  const probe = await probeArtifactReadable(filePath);
+  if (probe.ok) return { plan: artifactActionPlan(filePath, { readable: true }), size: probe.size };
+  return { plan: artifactActionPlan(filePath, { readable: false, reason: probe.reason }), size: null };
+}
+
+function scheduleArtifactBlobRevoke(url) {
+  if (!String(url || '').startsWith('blob:')) return;
+  setTimeout(() => {
+    try {
+      URL.revokeObjectURL(url);
+    } catch {
+      /* the opened tab already holds the bytes */
+    }
+  }, ARTIFACT_BLOB_TTL_MS);
+}
+
+async function openArtifactUrlInTab(url) {
+  if (browserApi?.tabs?.create) {
+    try {
+      await browserApi.tabs.create({ url, active: true });
+      return;
+    } catch (error) {
+      // Some Chromium forks reject tabs.create from a side panel; a normal
+      // window.open keeps the click useful.
+      const opened = window.open(url, '_blank', 'noopener,noreferrer');
+      if (opened) return;
+      throw error;
+    }
+  }
+  if (!window.open(url, '_blank', 'noopener,noreferrer')) {
+    throw new Error('This browser would not open a new tab for the file.');
+  }
+}
+
+async function openArtifactCardInBrowser(plan) {
+  const { baseUrl, token } = artifactDashboardContext.baseUrl
+    ? artifactDashboardContext
+    : await resolveArtifactDashboardContext();
+  const result = await resolveArtifactFileSource(plan.source, { baseUrl, token });
+  if (!result.ok) throw new Error(artifactFailureNotice(result.reason));
+  scheduleArtifactBlobRevoke(result.url);
+  await openArtifactUrlInTab(result.url);
+}
+
+function artifactInterruptedMessage(delta = {}) {
+  const reason = delta.error?.current;
+  return reason ? `The download was interrupted (${reason}).` : 'The download was interrupted.';
+}
+
+function waitForArtifactDownload(downloadId) {
+  return new Promise((resolve, reject) => {
+    const downloads = browserApi?.downloads;
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      try {
+        downloads?.onChanged?.removeListener?.(listener);
+      } catch {
+        /* the listener registry is gone — nothing left to detach */
+      }
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve();
+    };
+    const listener = (delta = {}) => {
+      if (delta.id !== downloadId) return;
+      const state = delta.state?.current;
+      if (state === 'complete') finish();
+      else if (state === 'interrupted') finish(new Error(artifactInterruptedMessage(delta)));
+    };
+    const timer = setTimeout(() => finish(new Error('The download did not finish in time.')), ARTIFACT_DOWNLOAD_TIMEOUT_MS);
+    downloads?.onChanged?.addListener?.(listener);
+    // The download can already be complete before the listener attaches.
+    Promise.resolve(downloads?.search?.({ id: downloadId })).then((items) => {
+      const state = Array.isArray(items) ? items[0]?.state : '';
+      if (state === 'complete') finish();
+      else if (state === 'interrupted') finish(new Error('The download was interrupted.'));
+    }).catch(() => {});
+  });
+}
+
+// downloads.download cannot set request headers, so the blob route is what
+// keeps the session token out of the URL: the bytes come over the same
+// header-authenticated transport Open uses, and the browser's download
+// machinery only ever sees a blob: object URL. The token-carrying query URL is
+// the deliberate fallback for surfaces that cannot hold the bytes at all
+// (resolveArtifactDownloadSource states exactly when and why).
+async function artifactDownloadUrlFor(plan) {
+  const { baseUrl, token } = artifactDashboardContext.baseUrl
+    ? artifactDashboardContext
+    : await resolveArtifactDashboardContext();
+  const source = await resolveArtifactDownloadSource(plan.source, { baseUrl, token });
+  if (!source.ok) throw new Error(artifactFailureNotice(source.reason));
+  // A blob URL stays alive long enough for the download (and the OS hand-off
+  // that follows it) to read it; the query URL needs no cleanup.
+  scheduleArtifactBlobRevoke(source.url);
+  return source.url;
+}
+
+async function openArtifactCardOnComputer(plan) {
+  const url = await artifactDownloadUrlFor(plan);
+  const downloadId = await browserApi.downloads.download({ url, filename: plan.name });
+  if (!Number.isInteger(Number(downloadId))) throw new Error('The browser did not start the download.');
+  await waitForArtifactDownload(Number(downloadId));
+  await browserApi.downloads.open(Number(downloadId));
+}
+
+async function saveArtifactCardFile(plan) {
+  const url = await artifactDownloadUrlFor(plan);
+  await browserApi.downloads.download({ url, filename: plan.name, saveAs: true });
+}
+
+async function runArtifactCardAction(plan, card, busyLabelKey, action) {
+  if (card?.dataset?.artifactBusy === 'true') return;
+  const labels = artifactCardLabels();
+  setArtifactCardBusy(card, true, { note: labels[busyLabelKey] || '' });
+  try {
+    await action();
+    if (card?.isConnected !== false) {
+      setArtifactCardBusy(card, false);
+      setArtifactCardNote(card, '');
+    }
+  } catch (error) {
+    if (card?.isConnected !== false) {
+      setArtifactCardBusy(card, false);
+      setArtifactCardNote(card, String(error?.message || error || 'The file action failed.'));
+    }
+  }
+}
+
+function artifactCardHandlers() {
+  return {
+    open: (plan, card) => runArtifactCardAction(plan, card, 'opening', () => openArtifactCardInBrowser(plan)),
+    'open-on-computer': (plan, card) => runArtifactCardAction(plan, card, 'openingOnComputer', () => openArtifactCardOnComputer(plan)),
+    save: (plan, card) => runArtifactCardAction(plan, card, 'saving', () => saveArtifactCardFile(plan)),
+  };
+}
+
+// Chips from the markdown renderer plus paths written as ordinary text both
+// become the same card; the shared hydrator owns the mechanics so the side
+// panel and the full tab cannot drift apart.
+async function hydrateArtifactFileCards(root, { scanText = true } = {}) {
+  return hydrateArtifactCards(root, {
+    buildPlan: artifactPlanForFile,
+    labels: artifactCardLabels,
+    handlers: artifactCardHandlers,
+    scanText,
+    limit: ARTIFACT_CARD_LIMIT,
+  });
+}
+
 async function commitFetchedSessionMessages(result, { sessionId, requestId = null, scopeRevisionId = scopeRevision.current() } = {}) {
   if (!scopeRevision.isCurrent(scopeRevisionId)) return false;
   if (requestId != null && requestId !== sessionLoadRequestId) return false;
@@ -13438,6 +13934,9 @@ function renderMessageContentElement(element, content = '') {
   });
   wrapGeneratedImagesForInspection(element);
   void hydrateSessionMediaInElement(element);
+  // Only Hermes' own replies can name a file it just produced; a path the user
+  // typed stays ordinary text.
+  if (!element?.closest?.('.message.user')) void hydrateArtifactFileCards(element);
 }
 
 // Any generated picture in the transcript gets the same inspect affordance the
@@ -14204,6 +14703,7 @@ function renderMessagesFromStorage() {
       return;
     }
     await hydrateSessionMediaInElement(els.messages);
+    await hydrateArtifactFileCards(els.messages);
   })();
 }
 
@@ -15496,6 +15996,14 @@ async function ensureHermesSession() {
     });
   }
 
+  // Session titles are unique on the gateway, and the bare default title is
+  // already owned by this extension's long-lived session: creating a new session
+  // with it is refused (invalid_title) and the chat never starts. Mint a unique
+  // title first — auto-naming still treats the stamped title as a default.
+  if (!String(settings.sessionTitle || '').trim() || isDefaultBrowserSessionTitle(settings.sessionTitle)) {
+    settings = { ...settings, sessionTitle: makeBrowserSessionTitle() };
+    await browserApi.storage.local.set({ hermesBrowserSettings: settings });
+  }
   const createResponse = await apiFetch('/api/sessions', {
     method: 'POST',
     body: JSON.stringify({
@@ -16507,6 +17015,12 @@ async function connectApiWithPairing() {
     await browserApi.storage.local.set({ hermesBrowserSettings: settings });
     syncSettingsForm();
     updateConnectionPrompt();
+    // The controller keeps its own copy of the settings; without an explicit
+    // refresh a freshly paired token only reaches it through the background
+    // storage listener, which is not reliable (an idle MV3 worker may not be
+    // awake for the write). Then tab control stays in "reconnecting" until the
+    // extension is reloaded, so ask for the rebind here.
+    await browserControlMessage('HERMES_CONTROLLER_SETTINGS_REFRESH').catch(() => null);
     await runPanelConnectionReadiness({ restoreSettings: false });
     if (!connectionController.transition(generation, CONNECTION_STATES.READY, { gateway: 'hermes' })) return;
     els.connectStatus.textContent = translateUiText('Connected to Hermes. You can start chatting with page context.');
@@ -17110,6 +17624,7 @@ ${streamError.message}`);
         renderContextWindow();
       }
       els.input.focus();
+      recheckBuildIdentityAfterUpdateTurn();
     }
   }
   return didSend;
@@ -18357,6 +18872,7 @@ function bindEvents() {
   els.closeUpdateDialogButton?.addEventListener('click', () => closeUpdateDialog());
   els.maybeLaterButton?.addEventListener('click', () => closeUpdateDialog());
   els.updateNowButton?.addEventListener('click', launchBrowserUpdateWithHermes);
+  els.reloadBuildButton?.addEventListener('click', reloadBrowserRuntimeForNewBuild);
   els.closeOperationToastButton?.addEventListener('click', hideOperationToast);
   els.refreshModelsButton.addEventListener('click', refreshModelsFromMenu);
   renderModelRefreshState();
@@ -18639,6 +19155,22 @@ function bindEvents() {
       renderBrowserControl();
     }
   });
+  els.browserControlAuthorizeButton?.addEventListener('click', async () => {
+    // One-time Hermes authorization for tab control. The panel is (usually)
+    // already connected for chat, so this is scoped to the control surface and
+    // never re-runs the first-run connect flow.
+    els.browserControlAuthorizeButton.disabled = true;
+    try {
+      await ensureControllerCredentialForControl();
+      await refreshBrowserControlStatus({ follow: false });
+      if (settings.browserControlEnabled === true) await attachBrowserControlToCurrentTab().catch(() => null);
+    } catch (error) {
+      showOperationToast({ kind: 'warn', title: 'Control not authorized', detail: error?.message || String(error) });
+    } finally {
+      els.browserControlAuthorizeButton.disabled = false;
+      renderBrowserControl();
+    }
+  });
   els.browserControlDetachButton?.addEventListener('click', () => {
     detachBrowserControl().catch((error) => showOperationToast({ kind: 'warn', title: 'Detach incomplete', detail: error?.message || String(error) }));
   });
@@ -18789,6 +19321,31 @@ function bindEvents() {
   });
   browserApi.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== 'local') return;
+    if (Object.hasOwn(changes, 'hermesBrowserSettings')) {
+      const next = changes.hermesBrowserSettings?.newValue;
+      if (next && typeof next === 'object') {
+        // The controller worker and the pairing flow rewrite this record (a
+        // rejected pairing token is dropped, the transport can flip). Without
+        // adopting those writes the panel keeps a stale apiKey and keeps hiding
+        // the connect panel that owns the "Connect to Hermes" repair button,
+        // which leaves tab control stuck with no reachable way to reconnect.
+        const tracked = [
+          'apiKey', 'tokenSource', 'lastConnectionTestedAt',
+          'browserControlEnabled', 'browserControlPaused',
+          'connectionMode', 'connectionTransport', 'gatewayMode', 'gatewayUrl',
+          'trustedDashboardOrigin', 'trustedDashboardTabId', 'remoteDashboardSession',
+        ];
+        const patch = {};
+        for (const key of tracked) {
+          if (Object.hasOwn(next, key)) patch[key] = next[key];
+        }
+        if (Object.keys(patch).length) {
+          settings = { ...settings, ...patch };
+          updateConnectionPrompt();
+          renderBrowserControl();
+        }
+      }
+    }
     if (Object.hasOwn(changes, CUSTOM_THEME_STORAGE_KEY)) void handleCustomThemeStoreChange();
     if (Object.hasOwn(changes, CONTEXT_CONSENT_STORAGE_KEY)) {
       settings = {
@@ -19263,3 +19820,5 @@ renderVersionInfo();
 renderContextScopeControls();
 updateVoiceButtonState();
 renderEmptyState();
+// Not awaited: the update watch and the silent check must never delay boot.
+void initializeUpdateFlow();

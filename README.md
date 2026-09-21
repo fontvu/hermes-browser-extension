@@ -26,7 +26,7 @@ This repo is specifically for the **Hermes Browser Extension**: the Chrome/Edge/
 ### New in v0.3.2: Hermes Bot Mode, Multi-Agent Threads and Intelligent Tab Scoping
 
 v0.3.2 introduces **Hermes Bot Mode**, bringing your full Hermes multi-agent roster directly into the browser side panel:
-- **Instant Multi-Agent Switching**: Seamlessly toggle between default and named agent profiles with lazy model hydration and Desktop dashboard discovery from known candidates, cached URLs, and open dashboard tabs.
+- **Instant Multi-Agent Switching**: Seamlessly toggle between default and named agent profiles. Switching an agent reloads that profile's model catalog and starts on its live default model (`/api/model/options?profile=`), and Desktop dashboard discovery uses known candidates, cached URLs, and open dashboard tabs.
 - **Desktop Names, Avatars, and Last Activity**: Bot Mode uses authenticated Desktop `profiles.list` metadata for display names, avatars, last-activity stamps, and existing Bot Chat identity instead of internal profile ids or public health-name lists.
 - **Existing Bot Chat Resume**: Opening a bot resumes that profile's existing hidden Bot Chat. Lookup failures stay fail-closed so the extension does not mint a duplicate chat.
 - **Group Chats & Collaborative Threads**: Synced multi-agent room projections, room-level thread tracking, and synchronized conversation histories without blank chat states.
@@ -119,10 +119,12 @@ Hermes Web Alpha currently uses token-backed **Local or Remote API** connections
 - Captures active tab title/URL, open tabs, selected text, readable page text, metadata, headings, forms, links, and buttons where available.
 - Supports voice dictation through Hermes audio transcription when available: the side panel shows Dictating with a timer and live meter, then transcribes on stop. Browser speech fallback is used when the connected runtime does not expose STT.
 - Reopens session images from Hermes-managed cache/image paths, including Telegram sessions that stored `image_url` cache files. Hermes-sent `MEDIA:` videos play when the dashboard can stream them.
+- Turns returned files into one-click cards: a produced PDF, HTML page, spreadsheet, document, archive, CSV, or image shows its name and type with **Open** (viewable kinds render in a new tab), **Open on computer** (downloads the file and launches the OS default app), and **Save**. A file the dashboard cannot read stays honest — the buttons are disabled and the reason is printed on the card.
 - Wraps webpage text as untrusted context before sending it to Hermes.
 - Streams Hermes responses and falls back to non-streaming chat when needed.
 - Includes Desktop-style appearance settings with Light/Dark/System mode and nine themes: Nous, Midnight, Ember, Mono, Cyberpunk, Slate, Senter Space, Aphrodite, and Solstice.
 - The start screen's local sidecar card shows a different illustration on every panel open, drawn from the bundled art set, and button hovers keep a visible outline in Light and Dark modes alike.
+- The update card watches its own build: when a rebuilt `dist/` is sitting on disk, the panel says **A newer build is on disk (built …). Reload to run it.** with a **Reload now** button instead of leaving you on stale code, checks the public repository once a day on its own, and states plainly that the in-place update needs a local checkout of this repository — with a **Download the latest release** link for anyone without one.
 - Adds generated-image reveal animation plus a lightbox with zoom, reset, open, and explicit download controls.
 - Omits credential-bearing tab URLs from prompt-facing context, including decoded/nested query or hash parameters and common signed-URL credentials/signatures.
 - Includes a localhost agent picker for switching between trusted local Hermes API gateway ports.
@@ -312,7 +314,8 @@ After a Local or Remote API connection, the side panel loads from the connected 
 
 - `/v1/models` — all providers/models Hermes can enumerate, including provider-qualified IDs.
 - `/api/sessions` — recent Hermes sessions grouped by source.
-- `/v1/skills` — slash-command skill suggestions in the composer.
+- `/v1/skills` — slash-command skill suggestions in the composer. If that route is empty or unavailable, Local connections recover the catalog from the dashboard profile snapshot (`profiles.describe`). Named profiles never inherit the default catalog; switching profiles refreshes that profile's own skills.
+- `/api/model/options` — provider/model catalog, including the live default for the active profile. Switching profiles in Settings or Bot Mode reloads this catalog and pins that profile's default model.
 - `/v1/profiles` — profile picker when the gateway exposes profile metadata.
 - `/v1/capabilities` — feature flags such as audio transcription and Browser upload support.
 
