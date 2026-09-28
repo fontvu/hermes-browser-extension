@@ -41,6 +41,46 @@ test('local readiness reaches ready only after its durable session binding succe
   assert.equal(events.at(-1).type, 'ready');
 });
 
+test('profile roster unavailability is degraded without blocking API readiness', async () => {
+  const events = [];
+  const result = await runCanonicalConnectionReadiness({
+    mode: 'remote',
+    transport: 'remote-api',
+    operations: successfulOperations({
+      restoreSettings: async () => ({ mode: 'remote', transport: 'remote-api' }),
+      loadProfiles: async () => ({
+        status: 'degraded',
+        detail: 'Profile roster unavailable in Remote API mode.',
+      }),
+    }),
+    onEvent: (event) => events.push(event),
+  });
+
+  assert.equal(result.ready, true);
+  assert.equal(events.find((event) => event.step === 'profiles' && event.status !== 'active')?.status, 'degraded');
+  assert.equal(events.find((event) => event.step === 'profiles' && event.status !== 'active')?.detail,
+    'Profile roster unavailable in Remote API mode.');
+  assert.equal(events.at(-1).type, 'ready');
+});
+
+test('a successful empty profile roster remains ready and distinct from an unavailable roster', async () => {
+  const events = [];
+  const result = await runCanonicalConnectionReadiness({
+    mode: 'remote',
+    transport: 'remote-api',
+    operations: successfulOperations({
+      restoreSettings: async () => ({ mode: 'remote', transport: 'remote-api' }),
+      loadProfiles: async () => ({ status: 'ready', detail: '0 PROFILES LOADED.' }),
+    }),
+    onEvent: (event) => events.push(event),
+  });
+
+  const profileStage = events.find((event) => event.step === 'profiles' && event.status !== 'active');
+  assert.equal(result.ready, true);
+  assert.equal(profileStage?.status, 'ready');
+  assert.equal(profileStage?.detail, '0 PROFILES LOADED.');
+});
+
 test('ticket readiness skips REST-only skills/profiles, falls back from session list failure, and still binds a durable session', async () => {
   const events = [];
   const result = await runCanonicalConnectionReadiness({

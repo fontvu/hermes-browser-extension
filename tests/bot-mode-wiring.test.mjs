@@ -32,6 +32,24 @@ test('Profiles always load; cron and PetDex stay Bot-Mode-gated', () => {
 
 });
 
+test('Remote API-only connections do not probe or retry for a Dashboard roster', () => {
+  const retryStart = sidepanelSource.indexOf('function scheduleRosterRetry(');
+  const loaderStart = sidepanelSource.indexOf('async function loadProfiles(', retryStart);
+  const loaderEnd = sidepanelSource.indexOf('function profileSwitchDisplayName', loaderStart);
+  const retrySource = sidepanelSource.slice(retryStart, loaderStart);
+  const loaderSource = sidepanelSource.slice(loaderStart, loaderEnd);
+  const remoteApiGuard = 'if (isRemoteMode() && !isRemoteWsMode())';
+
+  assert.ok(retrySource.indexOf(remoteApiGuard) >= 0);
+  assert.ok(retrySource.indexOf(remoteApiGuard) < retrySource.indexOf('setTimeout('));
+  assert.ok(loaderSource.indexOf(remoteApiGuard) >= 0);
+  assert.ok(loaderSource.indexOf(remoteApiGuard) < loaderSource.indexOf('ensureProfileWsConnection('));
+  assert.match(loaderSource, /return \{ status: 'degraded', detail: botModeRosterNote \};/);
+  assert.match(loaderSource, /return \{ status: 'ready', detail: count === 1/);
+  assert.match(sidepanelSource, /loadProfiles: async \(\) => loadProfiles\(\{ quiet: true \}\)/);
+  assert.ok(sidepanelSource.includes('els.profileStatus.textContent = botModeRosterNote;'));
+});
+
 test('profile avatars hydrate from overrides and pet cache even when Bot Mode is off', () => {
   assert.match(sidepanelSource, /void loadBotProfileOverrides\(\)/);
   assert.match(sidepanelSource, /async function refreshPetAvatarCache\(\) \{\s*try \{/);
@@ -215,12 +233,15 @@ test('the petdex picker moved out of Settings into the profile sheet', () => {
   assert.match(sidepanelSource, /from '\.\/lib\/pet-avatar\.mjs'/);
 });
 
-test('active-now chips render above the roster rows', () => {
-  assert.match(sidepanelHtml, /id="botModeActiveStrip"/);
-  assert.match(sidepanelHtml, /id="botModeActiveStrip"[^>]*hidden/s);
-  assert.match(sidepanelSource, /renderBotModeActiveStrip/);
+test('the roster carries no active-now chip strip', () => {
+  // Jon removed the mockup chip strip: the roster row already carries the
+  // presence dot, so a second activity surface above the rows is noise.
+  assert.doesNotMatch(sidepanelHtml, /botModeActiveStrip/);
+  assert.doesNotMatch(sidepanelSource, /renderBotModeActiveStrip/);
+  assert.doesNotMatch(sidepanelCss, /\.bot-mode-chip/);
+  assert.doesNotMatch(sidepanelCss, /bot-mode-active-strip/);
+  // The row-level presence dot stays.
   assert.match(sidepanelSource, /activity\.activeNow/);
-  assert.match(sidepanelCss, /\.bot-mode-chip/);
 });
 
 test('Bot Mode settings expose an Active Cron Jobs viewer card', () => {
@@ -380,7 +401,7 @@ test('the shared message renderer is the universal iMessage-style bubble layer',
   assert.match(sidepanelCss, /\.message\.assistant \{[^}]*border-radius: 18px 18px 18px 4px/);
   // User role labels are hidden; assistant headers keep real agent identity.
   assert.match(sidepanelCss, /\.message\.user \.message-role \{ display: none/);
-  assert.match(sidepanelCss, /\.message\.assistant \.message-role \{ font: 700 9px\/1 var\(--hermes-font-mono\)/);
+  assert.match(sidepanelCss, /\.message\.assistant \.message-role \{ font: 700 calc\(9px \* var\(--hermes-text-zoom, 1\)\)\/1 var\(--hermes-font-mono\)/);
   assert.match(sidepanelSource, /function assistantMessageRoleLabel/);
   // Markdown/streaming pipeline stays intact underneath the bubble layer.
   assert.match(sidepanelSource, /patchRenderedMessageContent/);
@@ -429,4 +450,41 @@ test('opening a bot resumes the confirmed canonical Bot Chat and never forks on 
   assert.doesNotMatch(openBody, /creating local fallback/);
 });
 
+test('the petdex never hangs a tile or requires a profile name before staging', () => {
+  const iconBody = sidepanelSource.match(/async function petIconFor\([\s\S]*?\r?\n\}/)?.[0] || '';
+  assert.match(iconBody, /PET_THUMB_TIMEOUT_MS/);
+  assert.match(iconBody, /setTimeout/);
+  assert.match(iconBody, /petIconJobs\.delete\(key\)/);
+  const applyBody = sidepanelSource.match(/async function applyPetSelection\([\s\S]*?\r?\n\}/)?.[0] || '';
+  assert.doesNotMatch(applyBody, /if \(!profile/);
+  assert.match(applyBody, /petSelection\.slug/);
+  assert.match(applyBody, /syncPetPickerState\(\)/);
+});
 
+test('leaving a Bot Mode group chat clears the composer cluster sizing', () => {
+  const indicatorBody = sidepanelSource.match(/function renderActiveProfileIndicator\([\s\S]*?\r?\n\}/)?.[0] || '';
+  assert.match(indicatorBody, /classList\.remove\('group-roster'\)/);
+  assert.match(indicatorBody, /style\.maxWidth = ''/);
+  assert.match(indicatorBody, /style\.flexBasis = ''/);
+});
+
+test('the signature display face lifts section headlines back to optical size', async () => {
+  const appearanceSource = await read('extension/lib/appearance-preferences.mjs');
+  assert.match(appearanceSource, /--hermes-display-scale/);
+  assert.match(appearanceSource, /1\.3/);
+  assert.match(sidepanelCss, /var\(--hermes-display-scale, 1\)/);
+});
+
+test('pet thumbs paint the first screenful eagerly and top up on open', () => {
+  assert.match(sidepanelSource, /eager: index < 12/);
+  assert.match(sidepanelSource, /function primePetThumbs/);
+  assert.match(sidepanelSource, /primePetThumbs\(\)/);
+  assert.match(sidepanelSource, /root: null, rootMargin/);
+});
+
+test('the profile switch menu pins its mode header above the scrolling list', () => {
+  assert.match(sidepanelSource, /profile-switch-options/);
+  assert.match(sidepanelCss, /\.profile-switch-modes \{[\s\S]*?flex: 0 0 auto/);
+  assert.match(sidepanelCss, /\.profile-switch-options \{[\s\S]*?overflow-y: auto/);
+  assert.match(sidepanelCss, /\.profile-switch-menu \{[\s\S]*?overflow: hidden/);
+});

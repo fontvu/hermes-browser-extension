@@ -100,6 +100,7 @@ import {
   withSessionBindingIdentity,
   agentDiscoveryAppliesToMode,
   agentDiscoveryModeNote,
+  interceptChatLinkClick,
 } from './lib/common.mjs';
 import {
   BUILD_RELOAD_BOOT_RECHECK_MS,
@@ -168,12 +169,16 @@ import {
 import {
   ZOOM_PRESETS,
   appearancePreferencesForSurface,
+  appearancePreferencesForTheme,
   applyAppearancePreferences,
+  fontFamilyPreview,
   normalizeTextZoomPercent,
   sanitizeLocalFontFamily,
   stepTextZoomPercent,
+  themeOwnsFont,
   withAppearancePreferenceUpdate,
 } from './lib/appearance-preferences.mjs';
+import { mountBrandedSelect } from './lib/branded-select.mjs';
 import {
   CUSTOM_THEME_MAX_INPUT_BYTES,
   CUSTOM_THEME_STORAGE_KEY,
@@ -672,6 +677,11 @@ const els = {
   botModeLeaveDetail: $('#botModeLeaveDetail'),
   botModeLeaveConfirmButton: $('#botModeLeaveConfirmButton'),
   botModeLeaveCancelButton: $('#botModeLeaveCancelButton'),
+  modelSwitchDialog: $('#modelSwitchDialog'),
+  modelSwitchTitle: $('#modelSwitchTitle'),
+  modelSwitchDetail: $('#modelSwitchDetail'),
+  modelSwitchConfirmButton: $('#modelSwitchConfirmButton'),
+  modelSwitchCancelButton: $('#modelSwitchCancelButton'),
   composerDropZone: $('#composerDropZone'),
   dropOverlay: $('#dropOverlay'),
   skillMenu: $('#skillMenu'),
@@ -750,7 +760,6 @@ const els = {
   botModeEditButton: $('#botModeEditButton'),
   botModeNewAgentButton: $('#botModeNewAgentButton'),
   botModeNewGroupButton: $('#botModeNewGroupButton'),
-  botModeActiveStrip: $('#botModeActiveStrip'),
   botChatIntro: $('#botChatIntro'),
   botChatIntroAvatar: $('#botChatIntroAvatar'),
   botChatIntroTitle: $('#botChatIntroTitle'),
@@ -765,6 +774,7 @@ const els = {
   botModeSheetAvatarPreview: $('#botModeSheetAvatarPreview'),
   botModeSheetFaceGrid: $('#botModeSheetFaceGrid'),
   botModeSheetImageInput: $('#botModeSheetImageInput'),
+  botModeSheetImageButton: $('#botModeSheetImageButton'),
   botModeSheetUploadText: $('#botModeSheetUploadText'),
   botModeSheetSkillsSearch: $('#botModeSheetSkillsSearch'),
   botModeSheetSkillsCount: $('#botModeSheetSkillsCount'),
@@ -777,6 +787,7 @@ const els = {
   botModeSheetWarning: $('#botModeSheetWarning'),
   botModeEnabledInput: $('#botModeEnabledInput'),
   botModeDisplayDensity: $('#botModeDisplayDensity'),
+  botModeAnimateAvatars: $('#botModeAnimateAvatars'),
   botModeSettingsStatus: $('#botModeSettingsStatus'),
   botModeCronCard: $('#botModeCronCard'),
   botModeCronList: $('#botModeCronList'),
@@ -976,6 +987,8 @@ const els = {
 let settings = { ...DEFAULT_SETTINGS };
 let appearanceMutationId = 0;
 let appearanceSaveStatus = '';
+let themeFontPinned = false;
+let themeFontPinnedFor = '';
 let appearanceWriteQueue = Promise.resolve();
 let customThemeStoreState = { ok: true, status: 'empty', themes: [] };
 let customThemePreviewState = null;
@@ -1060,6 +1073,7 @@ let activeConversationTransport = 'rest';
 let activeDashboardWsConnection = null;
 let activeGroupProjection = null;
 let activeGroupRuntime = null;
+let activeGroupGeneration = 0;
 let activeGroupMessages = [];
 let activeGroupAbortController = null;
 // Desktop-parity threading: the room log groups by `thread` id. The strip
@@ -2695,6 +2709,20 @@ async function openFullView() {
     runtimeApi: browserApi.runtime,
     windowOpen: globalThis.open?.bind(globalThis),
   });
+}
+
+function showWebDeprecationNotice() {
+  const dialog = document.getElementById('webDeprecationDialog');
+  if (!dialog) return;
+  dialog.hidden = false;
+  document.getElementById('webDeprecationClose')?.focus();
+}
+
+function hideWebDeprecationNotice() {
+  const dialog = document.getElementById('webDeprecationDialog');
+  if (!dialog || dialog.hidden) return;
+  dialog.hidden = true;
+  els.openFullViewButton?.focus();
 }
 
 function contextScopeSessionKey() {
@@ -6383,6 +6411,25 @@ function panelAppearanceSnapshot() {
   };
 }
 
+function mountSettingsBrandedSelects() {
+  const root = document.getElementById('settingsDialog');
+  if (!root) return;
+  for (const select of root.querySelectorAll('select')) {
+    if (select.hidden || select.hasAttribute('hidden')) continue;
+    if (select.id === 'languageSelect') {
+      mountBrandedSelect(select, { language: true });
+      continue;
+    }
+    if (select.id === 'fontProfileSelect') {
+      mountBrandedSelect(select, {
+        previewFont: (value) => fontFamilyPreview(value, settings.customFontFamily),
+      });
+      continue;
+    }
+    mountBrandedSelect(select);
+  }
+}
+
 function applyAppearanceSettings() {
   const colorMode = normalizeColorMode(settings.colorMode);
   const resolvedMode = resolvedColorMode(colorMode);
@@ -6404,7 +6451,12 @@ function applyAppearanceSettings() {
     ? 'light'
     : resolvedMode;
   root.style.colorScheme = effectiveColorScheme;
-  applyAppearancePreferences(root, appearancePreferencesForSurface(settings, 'panel'));
+  const visualTheme = selection.kind === 'custom' ? '' : theme;
+  applyAppearancePreferences(root, appearancePreferencesForTheme(
+    appearancePreferencesForSurface(settings, 'panel'),
+    visualTheme,
+    { pinThemeFont: themeFontPinned && themeFontPinnedFor === visualTheme },
+  ));
 }
 
 function renderAppearanceControls() {
@@ -6434,11 +6486,17 @@ function renderAppearanceControls() {
     els.textZoomInput.setAttribute('aria-valuetext', t('appearance.percent_value', { percent: preferences.textZoomPercent }));
   }
   if (els.fontProfileSelect) els.fontProfileSelect.value = requestedProfile;
+  mountSettingsBrandedSelects();
   if (els.customFontFamilyField) els.customFontFamilyField.hidden = requestedProfile !== 'custom-local';
   if (els.customFontFamilyInput && document.activeElement !== els.customFontFamilyInput) {
     els.customFontFamilyInput.value = settings.customFontFamily || preferences.customFontFamily;
   }
-  if (els.appearanceSaveStatus) els.appearanceSaveStatus.textContent = appearanceSaveStatus;
+  if (els.appearanceSaveStatus) {
+    const overlay = themeOwnsFont(activeTheme) && !(themeFontPinned && themeFontPinnedFor === activeTheme)
+      ? t('appearance.theme_font_overlay')
+      : '';
+    els.appearanceSaveStatus.textContent = [appearanceSaveStatus, overlay].filter(Boolean).join(' ');
+  }
   renderCustomThemeManagement();
   if (!els.themeGrid) return;
   const builtInCards = APPEARANCE_THEMES.map((theme) => {
@@ -7296,13 +7354,15 @@ function renderModelMenu(query = els.modelSearchInput?.value || '') {
 
       const meta = document.createElement('span');
       meta.className = 'model-option-meta';
-      meta.textContent = model.id === menuModelId ? '✓' : (!requestable ? 'observed' : (model.contextTokens ? formatTokens(model.contextTokens).replace(' tokens', '') : runtimeStatus.label));
+      meta.textContent = model.id === menuModelId
+        ? '✓'
+        : (!requestable ? 'observed' : formatTokens(model.contextTokens || 256_000).replace(' tokens', ''));
 
       button.append(name, meta);
       button.addEventListener('click', async () => {
-        if (modelSelectionTarget === 'assist') await applyAssistSelectedModel(model);
-        else applySelectedModel(model.id, { keepOpen: true });
-      });
+              if (modelSelectionTarget === 'assist') await applyAssistSelectedModel(model);
+              else requestSelectedModelWithContextConfirm(model);
+            });
       els.modelMenuList.appendChild(button);
     }
   }
@@ -7624,6 +7684,67 @@ function renderContextWindow(userText = els.input?.value || '') {
     <dt>${label}</dt>
     <dd title="${part.enabled ? 'included' : 'disabled'}">${part.enabled ? `${formatNumber(part.estimatedTokens)} tok · ${formatNumber(part.chars)} chars` : 'disabled'}</dd>
   `).join('');
+}
+
+// Desktop parity (hermes-agent model switch guard): switching the session
+// model while a large context is loaded makes the next Hermes turn re-read the
+// whole transcript without a cache. Confirm first when the session holds more
+// than modelSwitchContextConfirmTokens (0 disables the prompt).
+let pendingModelSwitch = null;
+
+function modelSwitchContextConfirmTokens() {
+  const configured = Number(settings.modelSwitchContextConfirmTokens);
+  return Number.isFinite(configured) && configured >= 0 ? Math.floor(configured) : 100_000;
+}
+
+function currentSessionContextUsedTokens() {
+  const loaded = loadedSessionContextEstimate.sessionId === settings.sessionId
+    ? loadedSessionContextEstimate
+    : { contextTokens: 0, visibleTokens: 0 };
+  const localSessionContextTokens = estimateLocalSessionContextTokens({
+    messages,
+    nextPromptTokens: 0,
+    loadedContextTokens: loaded.contextTokens,
+    loadedVisibleTokens: loaded.visibleTokens,
+  });
+  const merged = mergeContextTelemetry(
+    reportedContextTelemetry.sessionId === settings.sessionId ? reportedContextTelemetry.telemetry : null,
+    { usedTokens: localSessionContextTokens, limitTokens: 0 },
+  );
+  return Math.max(0, Math.floor(Number(merged.usedTokens) || 0));
+}
+
+function requestSelectedModelWithContextConfirm(model) {
+  const nextId = model?.id;
+  const threshold = modelSwitchContextConfirmTokens();
+  const switching = nextId && nextId !== settings.model;
+  const usedTokens = threshold > 0 && switching ? currentSessionContextUsedTokens() : 0;
+  if (threshold <= 0 || !switching || usedTokens < threshold) {
+    applySelectedModel(nextId, { keepOpen: true });
+    return;
+  }
+  pendingModelSwitch = { model, usedTokens };
+  openModelSwitchDialog(model, usedTokens);
+}
+
+function openModelSwitchDialog(model, usedTokens) {
+  if (!els.modelSwitchDialog) return;
+  // One font for the whole title line: mixing the display face with a mono span
+  // read as two different headlines, so the model id rides the same type as the
+  // rest of the sentence in every font profile.
+  els.modelSwitchTitle.textContent = t('bot_mode.model_switch_title', { model: modelDisplayName(model) });
+  els.modelSwitchDetail.textContent = t('bot_mode.model_switch_detail', { tokens: formatNumber(usedTokens) });
+  els.modelSwitchDialog.hidden = false;
+  els.modelSwitchDialog.setAttribute('aria-hidden', 'false');
+  els.modelSwitchConfirmButton?.focus?.();
+}
+
+function closeModelSwitchDialog() {
+  if (els.modelSwitchDialog) {
+    els.modelSwitchDialog.hidden = true;
+    els.modelSwitchDialog.setAttribute('aria-hidden', 'true');
+  }
+  pendingModelSwitch = null;
 }
 
 function applySelectedModel(selectedId, { persist = true, keepOpen = false } = {}) {
@@ -8713,6 +8834,8 @@ function renderProfiles() {
         skills: active.skillCount ? ` · ${active.skillCount} ${translateUiText('skills')}` : '',
       })
       : t('profile.available', { count: availableProfiles.length });
+  } else if (botModeRosterNote) {
+    els.profileStatus.textContent = botModeRosterNote;
   } else if (isRemoteWsMode()) {
     els.profileStatus.textContent = 'Profile API unavailable from the extension origin. Open the Hermes dashboard and sign in to select a profile.';
   } else {
@@ -9042,7 +9165,26 @@ async function refreshPetAvatarCache() {
   }
 }
 
+function animatedPetFor(profileName) {
+  if (settings.botModeAnimateAvatars !== true || !profileName) return null;
+  const pet = petAvatarsByProfile.get(profileName);
+  if (!pet) return null;
+  const sheet = pet.spritesheetUrl
+    || petGalleryCache.find((entry) => entry.slug === pet.slug || entry.displayName === pet.displayName)?.spritesheetUrl
+    || '';
+  return sheet ? { ...pet, spritesheetUrl: sheet } : null;
+}
+
 function appendBotModeAvatar(container, displayName, profileName = '', remoteAvatar = null) {
+  const livePet = animatedPetFor(profileName);
+  if (livePet) {
+    const live = document.createElement('span');
+    live.className = 'bot-mode-pet-live';
+    live.style.backgroundImage = `url("${livePet.spritesheetUrl}")`;
+    live.title = livePet.displayName || livePet.slug || '';
+    container.replaceChildren(live);
+    return;
+  }
   const override = botProfileOverrideFor(profileName);
   const overrideImage = typeof override?.icon === 'string' && override.icon.startsWith('data:image/')
     ? override.icon
@@ -9065,7 +9207,15 @@ function appendBotModeAvatar(container, displayName, profileName = '', remoteAva
     return;
   }
   const pet = profileName ? petAvatarsByProfile.get(profileName) : null;
-  if (pet) {
+    if (pet?.spritesheetUrl && settings.botModeAnimateAvatars === true) {
+      const live = document.createElement('span');
+      live.className = 'bot-mode-pet-live';
+      live.style.backgroundImage = `url("${pet.spritesheetUrl}")`;
+      live.title = pet.displayName || pet.slug || '';
+      container.replaceChildren(live);
+      return;
+    }
+    if (pet) {
     const img = document.createElement('img');
     img.src = pet.icon;
     img.alt = '';
@@ -9100,6 +9250,8 @@ function appendBotModeAvatar(container, displayName, profileName = '', remoteAva
 // (same session-token bootstrap as the roster fetch). Results cache per
 // connection+profile; a miss keeps the deterministic blobatar fallback.
 const botModeRemoteAvatarCache = new Map();
+const botModeRemoteAvatarInflight = new Map();
+let profileSwitchMode = 'bot';
 
 function botModeAvatarCacheKey(profileName) {
   return botModeRouteKey({
@@ -9123,52 +9275,57 @@ function botModeAvatarDataUrlFromAsset(asset) {
 
 async function fetchBotModeRemoteAvatar(row) {
   const cacheKey = botModeAvatarCacheKey(row.profileName);
-  if (botModeRemoteAvatarCache.has(cacheKey)) return botModeRemoteAvatarCache.get(cacheKey);
-  botModeRemoteAvatarCache.set(cacheKey, ''); // negative-cache until a fetch lands
-  let dataUrl = '';
-  try {
-    const connection = await ensureProfileWsConnection({ readyTimeoutMs: 5_000 }).catch(() => null);
-    if (connection?.client?.readyState === 1) {
-      const asset = await connection.client.request(WS_METHODS.profilesGetAsset, { name: row.profileName, asset: 'avatar' });
-      dataUrl = botModeAvatarDataUrlFromAsset(asset);
-    } else if (isRemoteWsMode()) {
-      const connection = await ensureRemoteWsClient();
-      const asset = await connection.client.request(WS_METHODS.profilesGetAsset, { name: row.profileName, asset: 'avatar' });
-      dataUrl = botModeAvatarDataUrlFromAsset(asset);
-    } else if (desktopDashboardUrl) {
-      const base = String(desktopDashboardUrl).replace(/\/+$/, '');
-      const rootResponse = await fetch(base, {
-        headers: { Accept: 'text/html' },
-        cache: 'no-store',
-        signal: typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(2500) : undefined,
-      });
-      const token = extractDashboardSessionToken(await rootResponse.text());
-      if (rootResponse.ok && token) {
-        const response = await fetch(`${base}/api/profiles/${encodeURIComponent(row.profileName)}/avatar`, {
-          headers: { Accept: 'image/*', 'X-Hermes-Session-Token': token },
-          credentials: 'include',
-          signal: typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(8000) : undefined,
+  const cached = botModeRemoteAvatarCache.get(cacheKey);
+  if (cached) return cached;
+  if (botModeRemoteAvatarInflight.has(cacheKey)) return botModeRemoteAvatarInflight.get(cacheKey);
+  const pending = (async () => {
+    let dataUrl = '';
+    try {
+      const connection = await ensureProfileWsConnection({ readyTimeoutMs: 5_000 }).catch(() => null);
+      if (connection?.client?.readyState === 1) {
+        const asset = await connection.client.request(WS_METHODS.profilesGetAsset, { name: row.profileName, asset: 'avatar' });
+        dataUrl = botModeAvatarDataUrlFromAsset(asset);
+      } else if (isRemoteWsMode()) {
+        const remote = await ensureRemoteWsClient();
+        const asset = await remote.client.request(WS_METHODS.profilesGetAsset, { name: row.profileName, asset: 'avatar' });
+        dataUrl = botModeAvatarDataUrlFromAsset(asset);
+      } else if (desktopDashboardUrl) {
+        const base = String(desktopDashboardUrl).replace(/\/+$/, '');
+        const rootResponse = await fetch(base, {
+          headers: { Accept: 'text/html' },
+          cache: 'no-store',
+          signal: typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(2500) : undefined,
         });
-        if (response.ok) {
-          const blob = await response.blob();
-          // Cap decoded assets using the same 256px / small-binary limits the
-          // avatar editor enforces before anything reaches the DOM.
-          if (blob.size > 0 && blob.size <= 2_000_000) {
-            dataUrl = await new Promise((resolve) => {
-              const reader = new FileReader();
-              reader.onload = () => resolve(String(reader.result || '').startsWith('data:image/') ? String(reader.result) : '');
-              reader.onerror = () => resolve('');
-              reader.readAsDataURL(blob);
-            });
+        const token = extractDashboardSessionToken(await rootResponse.text());
+        if (rootResponse.ok && token) {
+          const response = await fetch(`${base}/api/profiles/${encodeURIComponent(row.profileName)}/avatar`, {
+            headers: { Accept: 'image/*', 'X-Hermes-Session-Token': token },
+            credentials: 'include',
+            signal: typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(8000) : undefined,
+          });
+          if (response.ok) {
+            const blob = await response.blob();
+            if (blob.size > 0 && blob.size <= 2_000_000) {
+              dataUrl = await new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(String(reader.result || '').startsWith('data:image/') ? String(reader.result) : '');
+                reader.onerror = () => resolve('');
+                reader.readAsDataURL(blob);
+              });
+            }
           }
         }
       }
+    } catch {
+      dataUrl = '';
     }
-  } catch {
-    dataUrl = '';
-  }
-  if (dataUrl) botModeRemoteAvatarCache.set(cacheKey, dataUrl);
-  return dataUrl;
+    if (dataUrl) botModeRemoteAvatarCache.set(cacheKey, dataUrl);
+    return dataUrl || botModeRemoteAvatarCache.get(cacheKey) || '';
+  })().finally(() => {
+    botModeRemoteAvatarInflight.delete(cacheKey);
+  });
+  botModeRemoteAvatarInflight.set(cacheKey, pending);
+  return pending;
 }
 
 async function hydrateBotModeRemoteAvatar(row, container) {
@@ -9181,43 +9338,6 @@ async function hydrateBotModeRemoteAvatar(row, container) {
   img.className = 'bot-mode-avatar-pet';
   img.title = botProfileDisplayName(row);
   container.replaceChildren(img);
-}
-
-// Active-now chip strip (mockup: horizontally scrollable chips above the roster).
-// Clicking a chip selects that agent — same handler as clicking its roster row.
-function renderBotModeActiveStrip(rows) {
-  const strip = els.botModeActiveStrip;
-  if (!strip) return;
-  const activeRows = rows.filter((row) => row.activity.activeNow);
-  if (!activeRows.length) {
-    strip.hidden = true;
-    strip.replaceChildren();
-    return;
-  }
-  strip.hidden = false;
-  strip.replaceChildren();
-  for (const row of activeRows) {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'bot-mode-chip';
-    chip.dataset.profile = row.profileName;
-    chip.setAttribute('aria-label', botProfileDisplayName(row));
-    const avatar = document.createElement('span');
-    avatar.className = 'bot-mode-avatar bot-mode-avatar-mini';
-    appendBotModeAvatar(avatar, botProfileDisplayName(row), row.profileName, row.avatar);
-    if (row.hasAvatar && !remoteAvatarImageOf(row.avatar)) {
-      void hydrateBotModeRemoteAvatar(row, avatar);
-    }
-    const dot = document.createElement('i');
-    dot.className = 'bot-mode-chip-dot';
-    dot.setAttribute('aria-hidden', 'true');
-    const name = document.createElement('span');
-    name.className = 'bot-mode-chip-name';
-    name.textContent = botProfileDisplayName(row);
-    chip.append(dot, avatar, name);
-    chip.addEventListener('click', () => { void openBotProfile(row); });
-    strip.append(chip);
-  }
 }
 
 function renderBotModeRoster(query = '') {
@@ -9236,7 +9356,6 @@ function renderBotModeRoster(query = '') {
     els.botModePanel.hidden = true;
     els.botModeButton.setAttribute('aria-expanded', 'false');
     els.botModeRoster.replaceChildren();
-    renderBotModeActiveStrip([]);
     return;
   }
   const needle = String(query || '').trim().toLowerCase();
@@ -9244,7 +9363,6 @@ function renderBotModeRoster(query = '') {
   // Group Chats view and never appear in the agent roster.
   const rows = botModeRoster.filter((row) => row.type !== 'group'
     && `${botProfileDisplayName(row)} ${row.profileName} ${row.title} ${row.description}`.toLowerCase().includes(needle));
-  renderBotModeActiveStrip(rows);
   els.botModeRoster.replaceChildren();
   for (const row of rows) {
     const button = document.createElement('button');
@@ -9280,8 +9398,8 @@ function renderBotModeRoster(query = '') {
     stamp.textContent = row.activity.lastActiveText || '';
     if (stamp.textContent) nameRow.append(stamp);
     const meta = document.createElement('span');
-    meta.className = 'bot-mode-row-meta';
-    meta.textContent = `@${row.profileName} · ${row.title || 'Agent'}`;
+        meta.className = 'bot-mode-row-meta';
+        meta.hidden = true;
     const preview = document.createElement('span');
     preview.className = 'bot-mode-row-preview';
     // Last thing the Bot said (or was asked) — desktop roster preview parity.
@@ -9351,13 +9469,17 @@ function renderBotModeGroupChats(query = '') {
       const faceStack = document.createElement('span');
       faceStack.className = 'face-stack';
       const members = row.members.length ? row.members : ['default'];
-      members.slice(0, 3).forEach((memberName, idx) => {
-        const span = document.createElement('span');
-        span.style.setProperty('--i', idx);
-        appendBotModeAvatar(span, memberName, memberName);
-        faceStack.append(span);
-      });
-      button.append(faceStack);
+            members.slice(0, 3).forEach((memberName, idx) => {
+              const span = document.createElement('span');
+              span.style.setProperty('--i', idx);
+              const rosterRow = botModeRoster.find((entry) => entry.profileName === memberName);
+              appendBotModeAvatar(span, memberName, memberName, rosterRow?.avatar || null);
+              if (rosterRow?.hasAvatar && !remoteAvatarImageOf(rosterRow.avatar)) {
+                void hydrateBotModeRemoteAvatar(rosterRow, span);
+              }
+              faceStack.append(span);
+            });
+            button.append(faceStack);
     }
 
     const copy = document.createElement('span');
@@ -9424,7 +9546,6 @@ function setBotModeView(view = 'agents') {
   els.botModeViewGroups?.setAttribute('aria-pressed', String(groupsActive));
   if (els.botModeRoster) els.botModeRoster.hidden = groupsActive;
   if (els.botModeGroupList) els.botModeGroupList.hidden = !groupsActive;
-  if (els.botModeActiveStrip) els.botModeActiveStrip.hidden = groupsActive || els.botModeActiveStrip.childElementCount === 0;
   if (els.botModeSearch) {
     els.botModeSearch.placeholder = groupsActive
       ? translateUiText('Search group chats')
@@ -9558,6 +9679,10 @@ async function sendActiveGroupMessage(text = '', turnAttachments = []) {
   }
   const value = String(text || '').trim();
   if (!value) return false;
+  const groupProjection = activeGroupProjection;
+  const groupRuntime = activeGroupRuntime;
+  const groupMessages = activeGroupMessages;
+  const groupGeneration = activeGroupGeneration;
   const abortController = new AbortController();
   activeGroupAbortController = abortController;
   sending = true;
@@ -9575,15 +9700,23 @@ async function sendActiveGroupMessage(text = '', turnAttachments = []) {
     } else {
       targetThreadId = 'main';
     }
-    const result = await activeGroupRuntime.send({
-      roomId: activeGroupProjection.roomId || activeGroupProjection.id,
-      groupName: activeGroupProjection.displayName,
-      members: groupRuntimeMembers(),
-      messages: activeGroupMessages,
+    const result = await groupRuntime.send({
+      roomId: groupProjection.roomId || groupProjection.id,
+      groupName: groupProjection.displayName,
+      members: groupRuntimeMembers(groupProjection),
+      messages: groupMessages,
       text: value,
       signal: abortController.signal,
       thread: targetThreadId,
     });
+    // Staleness is the generation/runtime token only. An in-place roster sync
+    // replaces the projection object for the SAME open room, so identity here
+    // would silently discard a legitimate completed turn mid-send.
+    if (
+      abortController.signal.aborted
+      || groupGeneration !== activeGroupGeneration
+      || activeGroupRuntime !== groupRuntime
+    ) return false;
     if (isStartingNewThread) {
       activeGroupThreadId = targetThreadId;
       activeGroupExpandedThreads.add(targetThreadId);
@@ -9600,11 +9733,18 @@ async function sendActiveGroupMessage(text = '', turnAttachments = []) {
     if (result.failures.length) {
       setStatus('warn', 'Group message partially delivered', `${result.failures.length} member${result.failures.length === 1 ? '' : 's'} did not complete a reply.`, { translateDetail: false });
     } else {
-      setStatus('ok', 'Group message sent', `${activeGroupProjection.displayName} · ${result.messages.length} messages in the current room view.`, { translateDetail: false });
+      setStatus('ok', 'Group message sent', `${groupProjection.displayName} · ${result.messages.length} messages in the current room view.`, { translateDetail: false });
     }
     return result.ok;
   } catch (error) {
-    setStatus('error', 'Group message failed', String(error?.message || error), { translateDetail: false });
+    if (
+      !abortController.signal.aborted
+      && groupGeneration === activeGroupGeneration
+      && activeGroupProjection === groupProjection
+      && activeGroupRuntime === groupRuntime
+    ) {
+      setStatus('error', 'Group message failed', String(error?.message || error), { translateDetail: false });
+    }
     return false;
   } finally {
     if (activeGroupAbortController === abortController) activeGroupAbortController = null;
@@ -9631,19 +9771,36 @@ function renderGroupAvatarCrest(container, row = null, image = null) {
     return;
   }
   const members = Array.isArray(row?.members) && row.members.length ? row.members : ['default'];
-  const faceStack = document.createElement('span');
-  faceStack.className = 'face-stack face-stack-preview';
-  members.slice(0, 3).forEach((memberName, idx) => {
-    const span = document.createElement('span');
-    span.style.setProperty('--i', idx);
-    appendBotModeAvatar(span, memberName, memberName);
-    faceStack.append(span);
-  });
+    const faceStack = document.createElement('span');
+    faceStack.className = 'face-stack face-stack-preview';
+    members.slice(0, 3).forEach((memberName, idx) => {
+      const span = document.createElement('span');
+      span.style.setProperty('--i', idx);
+      const rosterRow = botModeRoster.find((entry) => entry.profileName === memberName);
+      appendBotModeAvatar(span, memberName, memberName, rosterRow?.avatar || null);
+      if (rosterRow?.hasAvatar && !remoteAvatarImageOf(rosterRow.avatar)) {
+        void hydrateBotModeRemoteAvatar(rosterRow, span);
+      }
+      faceStack.append(span);
+    });
   container.replaceChildren(faceStack);
 }
 
-function updateNewGroupIconPreview() {
-  if (!els.newGroupIcon) return;
+async function generateGroupRoomPicture(seedName, members = []) {
+  const connection = await ensureActiveDashboardWsConnection();
+  const who = [seedName, members.length ? `a team of ${members.join(', ')}` : ''].filter(Boolean).join(', ');
+  const res = await connection.client.request('image.generate', {
+    prompt: `Group chat icon for an AI agent team called "${who || 'a bot team'}". Friendly minimal emblem, bold flat vector style, solid color background, centered, no text.`,
+    aspect_ratio: 'square',
+  });
+  if (!res?.success) throw new Error(res?.error || 'generation failed');
+  const image = res.image_data || res.image || '';
+  if (!image) throw new Error('generation returned no image');
+  return image;
+  }
+
+  function updateNewGroupIconPreview() {
+    if (!els.newGroupIcon) return;
   const members = [...newGroupSelection];
   const selectedMembers = members.length ? members : ['default'];
   if (newGroupPendingImage) {
@@ -9779,9 +9936,12 @@ function renderNewGroupBotList(query = '') {
     label.className = 'new-group-bot-row';
     const avatar = document.createElement('span');
     avatar.className = 'bot-mode-avatar bot-mode-avatar-mini';
-    appendBotModeAvatar(avatar, botProfileDisplayName(row), row.profileName, row.avatar);
-    const copy = document.createElement('span');
-    copy.className = 'new-group-bot-copy';
+        appendBotModeAvatar(avatar, botProfileDisplayName(row), row.profileName, row.avatar);
+        if (row.hasAvatar && !remoteAvatarImageOf(row.avatar)) {
+          void hydrateBotModeRemoteAvatar(row, avatar);
+        }
+        const copy = document.createElement('span');
+        copy.className = 'new-group-bot-copy';
     const name = document.createElement('strong');
     name.textContent = botProfileDisplayName(row);
     const meta = document.createElement('span');
@@ -9876,15 +10036,20 @@ function syncBotModeThreadsButton() {
     return;
   }
   const threads = groupThreadsFromProjection(activeGroupProjection);
-  if (button) {
-    button.hidden = false;
-    button.disabled = false;
-    button.textContent = threads.length ? `Threads (${threads.length})` : 'Threads';
-  }
-  if (newThreadBtn) {
-    newThreadBtn.hidden = false;
-    newThreadBtn.disabled = false;
-  }
+  const narrow = (els.composerActions?.clientWidth || 400) < 360;
+    if (button) {
+      button.hidden = false;
+      button.disabled = false;
+      const count = threads.length ? ` (${threads.length})` : '';
+      button.textContent = narrow ? (threads.length ? String(threads.length) : 'Threads') : `Threads${count}`;
+      button.title = threads.length ? `Threads (${threads.length})` : 'Threads';
+      button.setAttribute('aria-label', button.title);
+    }
+    if (newThreadBtn) {
+      newThreadBtn.hidden = false;
+      newThreadBtn.disabled = false;
+      newThreadBtn.textContent = narrow ? '+' : '+ New Thread';
+    }
 }
 
 function renderGroupThreadStrip() {
@@ -9945,14 +10110,19 @@ function renderGroupThreadStrip() {
 
 async function syncActiveGroupRoomFromGateway() {
   if (!activeGroupProjection || sending) return;
+  const groupProjection = activeGroupProjection;
+  const groupGeneration = activeGroupGeneration;
+  const isCurrentGroup = () => groupGeneration === activeGroupGeneration && activeGroupProjection === groupProjection;
   try {
     const connection = await ensureProfileWsConnection();
+    if (!isCurrentGroup()) return;
     const payload = await connection.client.request(WS_METHODS.profilesList, { include_sessions: true });
+    if (!isCurrentGroup()) return;
     const split = splitBotRosterRows(payload, { sourceId: normalizeGatewayUrl(settings.gatewayUrl) });
     if (split.groupChats.length) {
       adoptSyncedGroupChats(split.groupChats);
-      const targetId = activeGroupProjection.roomId || activeGroupProjection.id;
-      const updated = split.groupChats.find((g) => (g.roomId || g.id) === targetId || g.displayName === activeGroupProjection.displayName);
+      const targetId = groupProjection.roomId || groupProjection.id;
+      const updated = split.groupChats.find((g) => (g.roomId || g.id) === targetId || g.displayName === groupProjection.displayName);
       if (updated && Array.isArray(updated.messages)) {
         activeGroupProjection = updated;
         activeGroupMessages = groupProjectionMessagesForDisplay(updated);
@@ -9970,6 +10140,10 @@ async function syncActiveGroupRoomFromGateway() {
 
 async function openBotGroupChat(row) {
   if (!row) return false;
+  if (isRemoteMode() && !isRemoteWsMode()) {
+    setStatus('warn', 'Group chat unavailable', 'Group chats require the connected Hermes Dashboard. Switch to Dashboard mode to open this room.', { translateDetail: false });
+    return false;
+  }
   if (sending) {
     setStatus('warn', 'Hermes is working…', 'Stop the active run before opening a group chat.');
     return false;
@@ -9979,6 +10153,7 @@ async function openBotGroupChat(row) {
   if (activeRunControl && activeRunControl.phase !== 'terminal') {
     activeRunControl = markRunTerminal(activeRunControl, 'failed');
   }
+  const groupGeneration = ++activeGroupGeneration;
   activeGroupProjection = row;
   activeGroupMessages = groupProjectionMessagesForDisplay(row);
   messages = activeGroupMessages;
@@ -9997,16 +10172,32 @@ async function openBotGroupChat(row) {
   renderGroupThreadStrip();
   renderMessagesFromStorage();
   updateSessionLabel();
+  let groupRuntime = null;
+  // Liveness is the generation token, never the projection object's identity.
+  // Every teardown path (Remote API-only cleanup, profile switch, leaving Bot
+  // Mode, new/resumed session) bumps activeGroupGeneration, and a successful
+  // room sync bumps it too only when it retires the room. An in-place
+  // `sessions.changed` roster sync legitimately REPLACES activeGroupProjection
+  // with a freshly parsed object for the SAME room, so identity would reject
+  // the live runtime's own callbacks and silently freeze the open room.
+  const isCurrentOpen = () => groupGeneration === activeGroupGeneration;
+  const isCurrentRuntime = () => isCurrentOpen() && groupRuntime !== null && activeGroupRuntime === groupRuntime;
+  // Read the live projection: a roster sync may have swapped the object since
+  // this runtime was created, and callbacks must land on the current room.
+  const liveProjection = () => activeGroupProjection;
   try {
     const connection = await ensureActiveDashboardWsConnection();
-    activeGroupRuntime = createBotGroupRuntime({
+    if (!isCurrentOpen()) return false;
+    groupRuntime = createBotGroupRuntime({
       client: connection.client,
       onMessage: (message) => {
+        if (!isCurrentRuntime()) return;
         activeGroupMessages = [...activeGroupMessages, message];
         messages = activeGroupMessages;
-        if (activeGroupProjection) {
-          const entry = groupProjectionEntryFromDisplayMessage(message);
-          activeGroupProjection.messages = [...(activeGroupProjection.messages || []), entry];
+        const entry = groupProjectionEntryFromDisplayMessage(message);
+        const projection = liveProjection();
+        if (projection) {
+          projection.messages = [...(projection.messages || []), entry];
         }
         renderGroupThreadStrip();
         renderMessagesFromStorage();
@@ -10014,23 +10205,29 @@ async function openBotGroupChat(row) {
         renderActiveProfileIndicator();
       },
       onActivity: (activity) => {
+        if (!isCurrentRuntime()) return;
         updateActiveGroupActivity(activity);
+        const projection = liveProjection();
         if (activity.kind === 'working') {
           setStatus('ok', 'Group member responding', `${activity.roleLabel || activity.member} is working on the room message.`, { translateDetail: false });
         } else if (activity.kind === 'tool_start') {
           captureTaskToolEvent({
             tool: activity.tool,
             data: activity.data || {},
-          }, activeGroupProjection?.roomId || activeGroupProjection?.id).catch(() => {});
+          }, (projection || row).roomId || (projection || row).id).catch(() => {});
           setStatus('ok', 'Tool running', `${activity.roleLabel || activity.member} is using ${activity.tool || 'a tool'}…`, { translateDetail: false });
         }
       },
-      persist: (displayMessages) => persistActiveGroupProjection(connection.client, displayMessages),
+      persist: (displayMessages) => isCurrentRuntime()
+        ? persistActiveGroupProjection(connection.client, displayMessages)
+        : undefined,
     });
-    const prepared = await activeGroupRuntime.prepare({
+    activeGroupRuntime = groupRuntime;
+    const prepared = await groupRuntime.prepare({
       roomId: row.roomId || row.id,
       members: groupRuntimeMembers(row),
     });
+    if (!isCurrentRuntime()) return false;
     if (!prepared.ok) {
       setStatus('warn', 'Group chat opened with missing member sessions', `${prepared.failures.length} member session${prepared.failures.length === 1 ? '' : 's'} will initialize when you send.`, { translateDetail: false });
     } else {
@@ -10039,6 +10236,7 @@ async function openBotGroupChat(row) {
     els.input.focus();
     return true;
   } catch {
+    if (groupRuntime ? !isCurrentRuntime() : !isCurrentOpen()) return false;
     activeGroupRuntime = null;
     setStatus('warn', 'Group chat transport unavailable', 'The connected Hermes runtime could not open the existing member sessions for this room.', { translateDetail: false });
     els.input.focus();
@@ -10058,6 +10256,10 @@ const CANONICAL_FALLBACK_GROUP_CHATS = [];
 let desktopDashboardUrl = '';
 
 function scheduleRosterRetry({ force = false } = {}) {
+  if (isRemoteMode() && !isRemoteWsMode()) {
+    rosterRetryCount = 0;
+    return;
+  }
   if (botModeRoster.length && !force) {
     rosterRetryCount = 0;
     return;
@@ -10076,10 +10278,52 @@ async function loadProfiles({ quiet = false, allowDashboardTrust = !quiet } = {}
   // Public status and REST profile summaries are discovery, never roster data.
   const generation = ++botModeRosterGeneration;
   const gatewayUrl = normalizeGatewayUrl(settings.gatewayUrl);
+  if (isRemoteMode() && !isRemoteWsMode()) {
+    availableProfiles = [];
+    botModeRoster = [];
+    botModeRosterNote = 'Profile roster unavailable in Remote API mode. Connect a Hermes Dashboard to use profile switching.';
+    rosterRetryCount = 0;
+    activeConversationTransport = 'rest';
+    activeDashboardWsConnection = null;
+    activeGroupGeneration += 1;
+    const clearedActiveGroup = Boolean(activeGroupProjection);
+    if (clearedActiveGroup) {
+      activeGroupAbortController?.abort?.();
+      activeGroupAbortController = null;
+      activeGroupProjection = null;
+      activeGroupRuntime = null;
+      activeGroupMessages = [];
+      activeGroupThreadId = '';
+      activeGroupPendingNewThread = false;
+      activeGroupExpandedThreads.clear();
+      resetActiveGroupTypingIndicator();
+      messages = [];
+      document.body.classList.remove('bot-mode-engaged');
+      if (els.botChatIntro) els.botChatIntro.hidden = true;
+      if (settings.botModeEnabled === true) {
+        setBotModeView('agents');
+        if (els.botModePanel) els.botModePanel.hidden = false;
+        els.botModeButton?.setAttribute('aria-expanded', 'true');
+      }
+      renderGroupThreadStrip();
+      renderMessagesFromStorage();
+      updateSessionLabel();
+    }
+    // The prior Dashboard roster is connection-scoped. Drop its synced rows,
+    // but preserve any local draft rooms owned by this browser session.
+    adoptSyncedGroupChats([], { authoritative: true, allowCanonicalFallback: false });
+    renderProfiles();
+    renderBotModeRoster(els.botModeSearch?.value);
+    renderActiveProfileIndicator();
+    if (!quiet || clearedActiveGroup) setStatus('warn', 'Profile roster unavailable', botModeRosterNote, { translateDetail: false });
+    return { status: 'degraded', detail: botModeRosterNote };
+  }
   try {
     const connection = await ensureProfileWsConnection({ readyTimeoutMs: 8_000, allowDashboardTrust });
     const payload = await connection.client.request(WS_METHODS.profilesList, { include_sessions: true });
-    if (generation !== botModeRosterGeneration || gatewayUrl !== normalizeGatewayUrl(settings.gatewayUrl)) return;
+    if (generation !== botModeRosterGeneration || gatewayUrl !== normalizeGatewayUrl(settings.gatewayUrl)) {
+      return { status: 'skipped', detail: 'Profile sync was superseded.' };
+    }
     if (!Array.isArray(payload?.profiles)) throw new Error('invalid-profile-roster');
     const sourceId = connection.baseUrl || gatewayUrl;
     const split = splitBotRosterRows(payload, { sourceId });
@@ -10088,24 +10332,33 @@ async function loadProfiles({ quiet = false, allowDashboardTrust = !quiet } = {}
     adoptSyncedGroupChats(split.groupChats, { allowCanonicalFallback: false });
     botModeRosterNote = '';
     rosterRetryCount = 0;
-    botModeRemoteAvatarCache.clear();
+    // Keep a successful avatar so refresh does not flash a generic face while the next fetch is in flight.
     await writeLastKnownRoster({ agents: split.agents, groupChats: split.groupChats, sourceId });
-    if (generation !== botModeRosterGeneration) return;
+    if (generation !== botModeRosterGeneration) {
+      return { status: 'skipped', detail: 'Profile sync was superseded.' };
+    }
     renderProfiles();
     renderBotModeRoster(els.botModeSearch?.value);
     renderBotModeGroupChats(els.botModeSearch?.value);
+    renderActiveProfileIndicator();
     void loadSessions({ quiet: true });
-    if (!quiet) setStatus('ok', 'Hermes profiles synced', `${availableProfiles.length} profile${availableProfiles.length === 1 ? '' : 's'} available`);
+    const count = botModeRoster.length;
+    if (!quiet) setStatus('ok', 'Hermes profiles synced', `${count} profile${count === 1 ? '' : 's'} available`);
+    return { status: 'ready', detail: count === 1 ? '1 PROFILE LOADED.' : `${count} PROFILES LOADED.` };
   } catch {
-    if (generation !== botModeRosterGeneration || gatewayUrl !== normalizeGatewayUrl(settings.gatewayUrl)) return;
+    if (generation !== botModeRosterGeneration || gatewayUrl !== normalizeGatewayUrl(settings.gatewayUrl)) {
+      return { status: 'skipped', detail: 'Profile sync was superseded.' };
+    }
     // Preserve live rich rows and groups. Do not restore legacy caches: earlier
     // versions persisted status-only rows without authority or connection scope.
     botModeRosterNote = 'Desktop profile sync unavailable. Existing bot details are preserved. Open the connected Dashboard and refresh profiles to reconnect.';
     renderProfiles();
     renderBotModeRoster(els.botModeSearch?.value);
     renderBotModeGroupChats(els.botModeSearch?.value);
+    renderActiveProfileIndicator();
     if (!quiet) setStatus('warn', 'Desktop profile sync unavailable', botModeRosterNote, { translateDetail: false });
     scheduleRosterRetry({ force: true });
+    return { status: 'degraded', detail: botModeRosterNote };
   }
 }
 
@@ -10571,10 +10824,16 @@ async function openBotProfile(row) {
     if (els.botModeLoadingAgentTitle) els.botModeLoadingAgentTitle.textContent = `OPENING ${name.toUpperCase()}…`;
     if (els.botModeLoadingAgentSubtitle) els.botModeLoadingAgentSubtitle.textContent = `Loading profile, model, and Bot Chat session…`;
     if (els.botModeLoadingAvatar) {
-      appendBotModeAvatar(els.botModeLoadingAvatar, name, row?.profileName, row?.avatar);
-    }
+          let avatar = row?.avatar;
+          if (row?.hasAvatar && !remoteAvatarImageOf(avatar)) {
+            const dataUrl = await fetchBotModeRemoteAvatar(row);
+            if (dataUrl) avatar = { ...(avatar || {}), image: dataUrl, data_url: dataUrl };
+          }
+          appendBotModeAvatar(els.botModeLoadingAvatar, name, row?.profileName, avatar);
+        }
     els.botModeLoadingOverlay.hidden = false;
   }
+  activeGroupGeneration += 1;
   activeGroupAbortController?.abort?.();
   activeGroupAbortController = null;
   activeGroupProjection = null;
@@ -10695,6 +10954,7 @@ async function leaveBotModeForRegularSession() {
     );
     const nextProfile = returnProfile || String(settings.activeProfile || '').trim();
 
+    activeGroupGeneration += 1;
     activeGroupAbortController?.abort?.();
     activeGroupAbortController = null;
     activeGroupProjection = null;
@@ -10763,16 +11023,34 @@ async function leaveBotModeForRegularSession() {
 function renderActiveProfileIndicator() {
   if (!els.activeProfileIndicator) return;
   els.activeProfileIndicator.replaceChildren();
+  if (!botModeRoster.length) {
+    closeProfileSwitchMenu();
+    els.activeProfileIndicator.classList.remove('group-roster');
+    els.activeProfileIndicator.style.width = '';
+    els.activeProfileIndicator.style.maxWidth = '';
+    els.activeProfileIndicator.style.flexBasis = '';
+    els.activeProfileIndicator.removeAttribute('aria-disabled');
+    els.activeProfileIndicator.hidden = true;
+    return;
+  }
 
   // If inside a group chat, show all group bot members side-by-side (max 4, then +N)
   if (activeGroupProjection) {
     els.activeProfileIndicator.classList.add('group-roster');
     const members = groupRuntimeMembers(activeGroupProjection);
     if (!members.length) {
+      els.activeProfileIndicator.style.width = '';
+      els.activeProfileIndicator.style.maxWidth = '';
+      els.activeProfileIndicator.style.flexBasis = '';
       els.activeProfileIndicator.hidden = true;
       return;
     }
-    const maxVisible = 4;
+    const rowWidth = els.composerActions?.clientWidth || 320;
+        const fit = rowWidth < 300 ? 1 : (rowWidth < 380 ? 2 : 3);
+        let maxVisible = Math.max(1, Math.min(fit, members.length));
+        if (members.length > maxVisible && maxVisible * 30 + 34 > 96) {
+          maxVisible = Math.max(1, Math.floor((96 - 34) / 30));
+        }
     const visibleMembers = members.slice(0, maxVisible);
     const overflowCount = members.length - maxVisible;
 
@@ -10799,12 +11077,21 @@ function renderActiveProfileIndicator() {
     }
 
     els.activeProfileIndicator.title = `${activeGroupProjection.displayName} · ${members.length} members`;
-    els.activeProfileIndicator.hidden = false;
+        els.activeProfileIndicator.setAttribute('aria-disabled', 'true');
+        const clusterWidth = maxVisible * 32 + (overflowCount > 0 ? 42 : 4);
+    els.activeProfileIndicator.style.width = `${clusterWidth}px`;
+    els.activeProfileIndicator.style.maxWidth = `${clusterWidth}px`;
+    els.activeProfileIndicator.style.flexBasis = `${clusterWidth}px`;
+        els.activeProfileIndicator.hidden = false;
     return;
   }
 
   // Regular single-profile indicator for Bot Chat or active profile
   els.activeProfileIndicator.classList.remove('group-roster');
+  els.activeProfileIndicator.style.width = '';
+  els.activeProfileIndicator.style.maxWidth = '';
+  els.activeProfileIndicator.style.flexBasis = '';
+  els.activeProfileIndicator.removeAttribute('aria-disabled');
   const engaged = document.body.classList.contains('bot-mode-engaged');
   const activeProfile = engaged
     ? (settings.botModeSelectedProfile || settings.activeProfile)
@@ -10814,16 +11101,93 @@ function renderActiveProfileIndicator() {
     return;
   }
   const row = botModeRoster.find((entry) => entry.profileName === activeProfile);
-  const name = botProfileDisplayName(row || { profileName: activeProfile });
+  if (!row) {
+    els.activeProfileIndicator.hidden = true;
+    return;
+  }
+  const name = botProfileDisplayName(row);
   appendBotModeAvatar(els.activeProfileIndicator, name, activeProfile, row?.avatar);
   if (row?.hasAvatar && !remoteAvatarImageOf(row?.avatar)) {
     void hydrateBotModeRemoteAvatar(row, els.activeProfileIndicator);
   }
   els.activeProfileIndicator.title = `Active profile: ${name}`;
   els.activeProfileIndicator.hidden = false;
-}
+  }
 
-function renderBotChatIntro(row = null) {
+  function closeProfileSwitchMenu() {
+    const menu = document.getElementById('profileSwitchMenu');
+    if (menu) menu.hidden = true;
+    els.activeProfileIndicator?.setAttribute('aria-expanded', 'false');
+  }
+
+  function renderProfileSwitchMenu() {
+    const menu = document.getElementById('profileSwitchMenu');
+    if (!menu) return;
+    menu.replaceChildren();
+    const modes = document.createElement('div');
+    modes.className = 'profile-switch-modes';
+    for (const [value, label] of [['browser', 'Browser chat'], ['bot', 'Bot chat']]) {
+      const mode = document.createElement('button');
+      mode.type = 'button';
+      mode.className = 'profile-switch-mode';
+      mode.classList.toggle('on', profileSwitchMode === value);
+            mode.textContent = label;
+            mode.title = value === 'browser'
+        ? 'Switch the Hermes profile for this browser chat. The next message starts a fresh session on that profile.'
+        : 'Open this agent in Bot Chat and load that profile, its skills, and its tools.';
+      mode.addEventListener('click', (event) => {
+        event.stopPropagation();
+        profileSwitchMode = value;
+        renderProfileSwitchMenu();
+      });
+      modes.append(mode);
+    }
+    menu.append(modes);
+    const options = document.createElement('div');
+    options.className = 'profile-switch-options';
+    const active = profileSwitchMode === 'bot'
+      ? (settings.botModeSelectedProfile || settings.activeProfile || '')
+      : (settings.activeProfile || '');
+    for (const row of botModeRoster || []) {
+      const name = String(row?.profileName || '').trim();
+      if (!name) continue;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'profile-switch-option';
+      button.setAttribute('role', 'menuitem');
+      if (name === active) button.classList.add('selected');
+      const face = document.createElement('span');
+      appendBotModeAvatar(face, botProfileDisplayName(row), name, row.avatar);
+      if (row.hasAvatar && !remoteAvatarImageOf(row.avatar)) void hydrateBotModeRemoteAvatar(row, face);
+      const label = document.createElement('span');
+      label.textContent = botProfileDisplayName(row);
+      button.append(face, label);
+      button.addEventListener('click', () => {
+        closeProfileSwitchMenu();
+        if (profileSwitchMode === 'browser') {
+                  void handleRegularProfileSelection(name);
+                  return;
+                }
+        void openBotProfile(row);
+      });
+      options.append(button);
+    }
+    menu.append(options);
+  }
+
+        function toggleProfileSwitchMenu() {
+    const menu = document.getElementById('profileSwitchMenu');
+    if (!menu) return;
+    if (!menu.hidden) {
+      closeProfileSwitchMenu();
+      return;
+    }
+    renderProfileSwitchMenu();
+    menu.hidden = false;
+    els.activeProfileIndicator?.setAttribute('aria-expanded', 'true');
+  }
+
+  function renderBotChatIntro(row = null) {
   renderActiveProfileIndicator();
   if (!els.botChatIntro) return;
   // A group room owns the transcript: the individual bot hero must never
@@ -10932,6 +11296,70 @@ let botSheetSaving = false;
 // Deterministic blobatar variants: the canonical name face plus one face per
 // vendored blobatar shape (seed "${name}::${shape}" keeps each face stable).
 const BLOBATAR_SHAPES = ['round', 'organic', 'boxy', 'capsule', 'nub', 'cloud', 'droplet', 'hexagon', 'sun', 'triangle'];
+const CLASSIC_AVATAR_SHAPES = ['circle', 'blob', 'squircle', 'pill', 'triangle', 'hexagon', 'cloud', 'drop'];
+let botSheetFaceMode = 'blob';
+let botSheetClassicShape = 'squircle';
+let botSheetClassicColor = null; // null = Match the name (desktop ColorSwatches behavior)
+// Same 12 swatches as the desktop picker (PROFILE_SWATCHES: hsl(index*30 68% 58%)).
+const CLASSIC_AVATAR_SWATCHES = Array.from({ length: 12 }, (_, index) => `hsl(${index * 30} 68% 58%)`);
+
+function fillBotCreateModelSelects() {
+  const providerSelect = document.getElementById('botModeSheetProvider');
+  const modelSelect = document.getElementById('botModeSheetModel');
+  if (!providerSelect || !modelSelect) return;
+  const providers = [...new Set((availableModels || []).map((model) => String(model.provider || model.owner || '').trim()).filter(Boolean))];
+  providerSelect.replaceChildren();
+  const inherited = document.createElement('option');
+  inherited.value = '';
+  inherited.textContent = 'Inherited';
+  providerSelect.append(inherited);
+  for (const provider of providers) {
+    const option = document.createElement('option');
+    option.value = provider;
+    option.textContent = provider;
+    providerSelect.append(option);
+  }
+  const paintModels = () => {
+    const provider = providerSelect.value;
+    modelSelect.replaceChildren();
+    const blank = document.createElement('option');
+    blank.value = '';
+    blank.textContent = provider ? 'Select a model' : 'Inherited';
+    modelSelect.append(blank);
+    for (const model of availableModels || []) {
+      const modelProvider = String(model.provider || model.owner || '').trim();
+      if (provider && modelProvider !== provider) continue;
+      const option = document.createElement('option');
+      option.value = model.rawModelId || model.model || model.id;
+      option.textContent = model.name || model.id;
+      modelSelect.append(option);
+    }
+    mountBrandedSelect(modelSelect);
+  };
+  providerSelect.onchange = paintModels;
+  paintModels();
+  mountBrandedSelect(providerSelect);
+}
+
+function switchBotAdvancedPane(tab = 'general') {
+  const named = botSheetMode === 'edit' || Boolean(String(document.getElementById('botModeSheetNameInput')?.value || '').trim());
+  for (const button of document.querySelectorAll('[data-advanced-tab]')) {
+    const on = button.dataset.advancedTab === tab;
+    button.classList.toggle('on', on);
+    button.setAttribute('aria-pressed', String(on));
+  }
+  for (const pane of document.querySelectorAll('[data-advanced-pane]')) {
+    pane.hidden = pane.dataset.advancedPane !== tab;
+  }
+  const gate = document.getElementById('botModeCapsGate');
+  const lists = document.getElementById('botModeCapsLists');
+  if (gate) gate.hidden = named || tab !== 'capabilities';
+  if (lists) lists.hidden = tab === 'capabilities' && !named;
+  if (tab === 'capabilities' && named) {
+    renderBotModeSheetTools();
+    renderBotModeSheetMcp();
+  }
+}
 
 function botSheetRosterRow(profileName = botSheetProfileName) {
   return botModeRoster.find((entry) => entry.profileName === profileName) || null;
@@ -10952,6 +11380,164 @@ function refreshBotModeSheetDirtyState() {
   if (els.botModeSheetSaveButton) els.botModeSheetSaveButton.disabled = botSheetSaving;
 }
 
+function nameAvatarColor(name = '') {
+  let hash = 0;
+  for (const ch of String(name || 'agent')) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  return `hsl(${hash % 360} 68% 58%)`;
+}
+
+// Desktop parity (hermes-bots avatar.tsx shapeNode + math face): same body
+// geometry and the same two eyes, so a classic shape reads identically in the
+// extension and the desktop picker.
+function classicShapeIsDark(color = '') {
+  const value = String(color || '').trim();
+  if (!value.startsWith('#')) return false;
+  try {
+    const n = parseInt(value.slice(1), 16);
+    const r = (n >> 16) & 255;
+    const g = (n >> 8) & 255;
+    const b = n & 255;
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b < 110;
+  } catch {
+    return false;
+  }
+}
+
+function classicShapeSvg(shape = 'squircle', color = 'hsl(180 68% 58%)') {
+  const body = {
+    circle: `<circle cx="20" cy="20" r="17.5" fill="${color}"/>`,
+    blob: `<path d="M20 4.5 C11 4.5 4.2 10 4.6 18 C5 26.5 11 35.5 20 35.5 C29 35.5 35.8 29 35.4 20 C35 11 29.5 4.5 20 4.5 Z" fill="${color}"/>`,
+    squircle: `<rect x="3" y="3" width="34" height="34" rx="11" fill="${color}"/>`,
+    pill: `<rect x="2" y="7" width="36" height="26" rx="13" fill="${color}"/>`,
+    triangle: `<path d="M20 5.5 L36 33.5 L4 33.5 Z" fill="${color}" stroke="${color}" stroke-width="7" stroke-linejoin="round"/>`,
+    hexagon: `<path d="M20 3.5 L34.5 11.75 L34.5 28.25 L20 36.5 L5.5 28.25 L5.5 11.75 Z" fill="${color}" stroke="${color}" stroke-width="7" stroke-linejoin="round"/>`,
+    cloud: `<path d="M11 32 a7.5 7.5 0 0 1 -1 -14.9 A9.5 9.5 0 0 1 29 12.5 A7 7 0 0 1 30 32 Z" fill="${color}"/>`,
+    drop: `<path d="M20 3 C20 3 6 20 6 27 a14 13.5 0 0 0 28 0 C34 20 20 3 20 3 Z" fill="${color}"/>`,
+  }[shape] || `<rect x="3" y="3" width="34" height="34" rx="11" fill="${color}"/>`;
+  const eyeY = shape === 'cloud' ? 22 : 17.2;
+  const dark = classicShapeIsDark(color);
+  const eyeFill = dark ? 'rgba(232,220,195,0.95)' : 'rgba(0,0,0,0.85)';
+  const highlightFill = dark ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.85)';
+  return `<svg viewBox="0 0 40 40" width="40" height="40" aria-hidden="true">${body}<g><ellipse cx="15.4" cy="${eyeY}" rx="2.2" ry="2.3" fill="${eyeFill}"/><ellipse cx="24.6" cy="${eyeY}" rx="2.2" ry="2.3" fill="${eyeFill}"/><circle cx="14.8" cy="${eyeY - 0.7}" r="0.65" fill="${highlightFill}"/><circle cx="24" cy="${eyeY - 0.7}" r="0.65" fill="${highlightFill}"/></g></svg>`;
+}
+
+function classicShapeDataUrl(shape, color) {
+  return `data:image/svg+xml,${encodeURIComponent(classicShapeSvg(shape, color))}`;
+}
+
+function botSheetClassicColorValue() {
+  return botSheetClassicColor || nameAvatarColor(botSheetBaseName());
+}
+
+function setBotSheetClassicColor(color) {
+  botSheetClassicColor = color || null;
+  if (botSheetAvatarChoice?.kind === 'classic') {
+    const next = botSheetClassicColorValue();
+    botSheetAvatarChoice = { ...botSheetAvatarChoice, color: next, icon: classicShapeDataUrl(botSheetAvatarChoice.shape, next) };
+  }
+  const hint = document.getElementById('botModeSheetFaceHint');
+  if (hint && botSheetFaceMode === 'classic') {
+    hint.textContent = botSheetClassicColor ? t('bot_mode.face_classic_picked_color') : t('bot_mode.face_classic_follows_name');
+  }
+  renderClassicShapeGrid();
+  renderBotModeSheetAvatarPreview();
+}
+
+function renderClassicShapeColors() {
+  const swatches = document.getElementById('botModeClassicSwatches');
+  if (swatches) {
+    swatches.replaceChildren();
+    for (const swatch of CLASSIC_AVATAR_SWATCHES) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'bot-mode-swatch';
+            chip.style.background = swatch;
+            // currentColor drives the pressed ring, mirroring the desktop swatch grid.
+            chip.style.color = swatch;
+            chip.title = swatch;
+      chip.setAttribute('aria-pressed', String(botSheetClassicColor === swatch));
+      chip.addEventListener('click', () => setBotSheetClassicColor(swatch));
+      swatches.append(chip);
+    }
+  }
+  const nameChip = document.getElementById('botModeClassicNameColor');
+    if (nameChip) {
+      // Bound once: the chip lives in the markup and rerenders reuse it.
+      if (nameChip.dataset.bound !== '1') {
+        nameChip.dataset.bound = '1';
+        nameChip.addEventListener('click', () => setBotSheetClassicColor(null));
+      }
+      nameChip.setAttribute('aria-pressed', String(botSheetClassicColor === null));
+    }
+  }
+
+function syncBotSheetFaceSwitch() {
+  const showingClassic = botSheetFaceMode === 'classic';
+  const classicGrid = document.getElementById('botModeClassicShapeGrid');
+  const blobGrid = els.botModeSheetFaceGrid;
+  if (classicGrid) classicGrid.hidden = !showingClassic;
+    if (blobGrid) blobGrid.hidden = showingClassic;
+    const colorRow = document.getElementById('botModeClassicColorRow');
+    if (colorRow) colorRow.hidden = !showingClassic;
+  const blobButton = document.getElementById('botModeBlobFacesButton');
+  const classicButton = document.getElementById('botModeClassicShapesButton');
+  blobButton?.classList.toggle('on', !showingClassic);
+  classicButton?.classList.toggle('on', showingClassic);
+  blobButton?.setAttribute('aria-pressed', String(!showingClassic));
+  classicButton?.setAttribute('aria-pressed', String(showingClassic));
+  const hint = document.getElementById('botModeSheetFaceHint');
+      if (hint) {
+        hint.textContent = showingClassic
+          ? (botSheetClassicColor ? t('bot_mode.face_classic_picked_color') : t('bot_mode.face_classic_follows_name'))
+          : t('bot_mode.face_follows_name');
+      }
+      const label = document.getElementById('botModeSheetFaceLabel');
+      if (label) label.textContent = showingClassic ? t('bot_mode.face_classic_label') : t('bot_mode.blobatar_title');
+    if (showingClassic) renderClassicShapeColors();
+  }
+
+function setBotSheetFaceMode(mode = 'blob') {
+  const next = mode === 'classic' ? 'classic' : 'blob';
+  if (botSheetFaceMode === next) return;
+  botSheetFaceMode = next;
+  if (next === 'classic') {
+      const color = botSheetClassicColorValue();
+      botSheetAvatarChoice = { kind: 'classic', shape: botSheetClassicShape, color, icon: classicShapeDataUrl(botSheetClassicShape, color) };
+      renderClassicShapeGrid();
+      renderClassicShapeColors();
+    } else if (botSheetAvatarChoice?.kind === 'classic') {
+    botSheetAvatarChoice = null;
+    renderBotModeFaceGrid();
+  }
+  syncBotSheetFaceSwitch();
+    renderBotModeSheetAvatarPreview();
+  }
+
+  function renderClassicShapeGrid() {
+      const grid = document.getElementById('botModeClassicShapeGrid');
+    if (!grid) return;
+    const color = botSheetClassicColorValue();
+    grid.replaceChildren();
+    for (const shape of CLASSIC_AVATAR_SHAPES) {
+      const tile = document.createElement('button');
+      tile.type = 'button';
+      tile.className = 'bot-mode-face-tile bot-mode-classic-tile';
+      tile.title = shape;
+      tile.setAttribute('aria-selected', String(botSheetAvatarChoice?.kind === 'classic' && botSheetAvatarChoice.shape === shape));
+      tile.innerHTML = classicShapeSvg(shape, color);
+      tile.addEventListener('click', () => {
+        botSheetClassicShape = shape;
+        botSheetAvatarChoice = { kind: 'classic', shape, color, icon: classicShapeDataUrl(shape, color) };
+        const hint = document.getElementById('botModeSheetFaceHint');
+        if (hint) hint.textContent = botSheetClassicColor ? t('bot_mode.face_classic_picked_color') : t('bot_mode.face_classic_follows_name');
+        renderClassicShapeGrid();
+        renderBotModeSheetAvatarPreview();
+      });
+      grid.append(tile);
+    }
+    renderClassicShapeColors();
+  }
+
 function botSheetBaseName() {
   if (botSheetMode === 'create') return String(els.botModeSheetNameInput?.value || '').trim() || 'agent';
   return botSheetProfileName || 'agent';
@@ -10961,6 +11547,10 @@ function renderBotModeSheetAvatarPreview() {
   const host = els.botModeSheetAvatarPreview;
   if (!host) return;
   const choice = botSheetAvatarChoice;
+  if (choice?.kind === 'classic') {
+      host.innerHTML = classicShapeSvg(choice.shape, choice.color || botSheetClassicColorValue());
+      return;
+    }
   const icon = choice?.kind === 'image' || choice?.kind === 'pet' ? choice.icon : '';
   if (icon) {
     const img = document.createElement('img');
@@ -10996,7 +11586,10 @@ function renderBotModeSheetAvatarPreview() {
   }
   // No pending avatar choice: show what the roster renders today.
   appendBotModeAvatar(host, botProfileDisplayName(row) || botSheetBaseName(), botSheetProfileName, row?.avatar);
-}
+    if (!choice && row && !host.querySelector('img, .bot-mode-pet-live')) {
+      void hydrateBotModeRemoteAvatar(row, host);
+    }
+  }
 
 function botSheetCurrentBlobatarSeed() {
   const choice = botSheetAvatarChoice;
@@ -11105,7 +11698,12 @@ function renderBotModeSheetSkills() {
 function renderBotModeSheetTools() {
   const container = document.getElementById('botModeSheetToolsList');
   if (!container) return;
+  const search = document.getElementById('botModeSheetToolsSearch');
+  const count = document.getElementById('botModeSheetToolsCount');
   const toolsets = Array.isArray(botSheetProfileDescribe?.toolsets) ? botSheetProfileDescribe.toolsets : [];
+  const needle = String(search?.value || '').trim().toLowerCase();
+  const matches = toolsets.filter((toolset) => !needle || `${toolset?.name || ''} ${toolset?.label || ''} ${toolset?.description || ''}`.toLowerCase().includes(needle));
+  if (count) count.textContent = toolsets.length ? (needle ? `${matches.length}/${toolsets.length}` : String(toolsets.length)) : '';
   container.replaceChildren();
   if (!botSheetProfileDescribe) {
     const empty = document.createElement('p');
@@ -11115,13 +11713,20 @@ function renderBotModeSheetTools() {
     return;
   }
   if (!toolsets.length) {
-    const empty = document.createElement('p');
-    empty.className = 'hint';
-    empty.textContent = 'Toolset configuration is not advertised by this Hermes connection.';
-    container.append(empty);
-    return;
-  }
-  for (const toolset of toolsets) {
+      const empty = document.createElement('p');
+      empty.className = 'hint';
+      empty.textContent = 'Toolset configuration is not advertised by this Hermes connection.';
+      container.append(empty);
+      return;
+    }
+    if (!matches.length) {
+      const empty = document.createElement('p');
+      empty.className = 'hint';
+      empty.textContent = 'No tools match this search.';
+      container.append(empty);
+      return;
+    }
+    for (const toolset of matches) {
     const name = String(toolset?.name || '').trim();
     if (!name) continue;
     const label = document.createElement('label');
@@ -11145,7 +11750,12 @@ function renderBotModeSheetTools() {
 function renderBotModeSheetMcp() {
   const container = document.getElementById('botModeSheetMcpList');
   if (!container) return;
+  const search = document.getElementById('botModeSheetMcpSearch');
+  const count = document.getElementById('botModeSheetMcpCount');
   const servers = Array.isArray(botSheetProfileDescribe?.mcp_servers) ? botSheetProfileDescribe.mcp_servers : [];
+  const needle = String(search?.value || '').trim().toLowerCase();
+  const matches = servers.filter((server) => !needle || `${server?.name || ''} ${server?.transport || ''}`.toLowerCase().includes(needle));
+  if (count) count.textContent = servers.length ? (needle ? `${matches.length}/${servers.length}` : String(servers.length)) : '';
   container.replaceChildren();
   if (!botSheetProfileDescribe) {
     const empty = document.createElement('p');
@@ -11155,13 +11765,20 @@ function renderBotModeSheetMcp() {
     return;
   }
   if (!servers.length) {
-    const empty = document.createElement('p');
-    empty.className = 'hint';
-    empty.textContent = 'MCP configuration is not advertised by this Hermes connection.';
-    container.append(empty);
-    return;
-  }
-  for (const server of servers) {
+      const empty = document.createElement('p');
+      empty.className = 'hint';
+      empty.textContent = 'MCP configuration is not advertised by this Hermes connection.';
+      container.append(empty);
+      return;
+    }
+    if (!matches.length) {
+      const empty = document.createElement('p');
+      empty.className = 'hint';
+      empty.textContent = 'No MCP servers match this search.';
+      container.append(empty);
+      return;
+    }
+    for (const server of matches) {
     const name = String(server?.name || '').trim();
     if (!name) continue;
     const label = document.createElement('label');
@@ -11190,14 +11807,15 @@ function switchBotModeSheetTab(tab = 'avatar') {
     pane.hidden = pane.dataset.sheetPane !== tab;
   }
   if (tab === 'avatar') {
-    void ensurePetGallery();
-    renderBotModeFaceGrid();
+      renderBotModeFaceGrid();
     // Render immediately on open/tab-switch so the preview mirrors the agent's
     // equipped avatar before any new face is clicked.
     renderBotModeSheetAvatarPreview();
   } else if (tab === 'skills') {
-    renderBotModeSheetSkills();
-  } else if (tab === 'tools') {
+      renderBotModeSheetSkills();
+      renderBotModeSheetTools();
+      renderBotModeSheetMcp();
+    } else if (tab === 'tools') {
     renderBotModeSheetTools();
   } else if (tab === 'mcp') {
     renderBotModeSheetMcp();
@@ -11258,7 +11876,7 @@ function openBotProfileSheet({ mode = 'edit', profileName = '' } = {}) {
   petSelection = null;
   botSheetSaving = false;
   if (els.botModeSheetTitle) {
-    els.botModeSheetTitle.textContent = mode === 'create' ? translateUiText('New Agent') : translateUiText('Edit profile');
+    els.botModeSheetTitle.textContent = mode === 'create' ? translateUiText('New Bot') : translateUiText('Edit profile');
   }
   if (els.botModeSheetMeta) {
     if (mode === 'create') {
@@ -11271,6 +11889,38 @@ function openBotProfileSheet({ mode = 'edit', profileName = '' } = {}) {
     }
   }
   if (els.botModeSheetNameField) els.botModeSheetNameField.hidden = mode === 'edit';
+  const advanced = document.getElementById('botModeCreateAdvanced');
+    if (advanced) advanced.hidden = false;
+    const modelFields = document.getElementById('botModeModelFields');
+    const createFlags = document.getElementById('botModeCreateFlags');
+    if (modelFields) modelFields.hidden = mode !== 'create';
+    if (createFlags) createFlags.hidden = mode !== 'create';
+    switchBotAdvancedPane('general');
+  if (mode === 'create') fillBotCreateModelSelects();
+  botSheetFaceMode = 'blob';
+  const classicGrid = document.getElementById('botModeClassicShapeGrid');
+  if (classicGrid) classicGrid.hidden = true;
+  if (els.botModeSheetFaceGrid) els.botModeSheetFaceGrid.hidden = false;
+  const cloneField = document.getElementById('botModeCloneField');
+  const cloneSelect = document.getElementById('botModeSheetCloneFrom');
+  if (cloneField) cloneField.hidden = mode !== 'create';
+  if (cloneSelect && mode === 'create') {
+    cloneSelect.replaceChildren();
+    const fresh = document.createElement('option');
+    fresh.value = '';
+    fresh.textContent = 'Fresh profile';
+    cloneSelect.append(fresh);
+    for (const row of botModeRoster || []) {
+      const name = String(row?.profileName || '').trim();
+      if (!name) continue;
+      const option = document.createElement('option');
+      option.value = name;
+      option.textContent = botProfileDisplayName(row);
+      cloneSelect.append(option);
+    }
+    cloneSelect.value = '';
+        mountBrandedSelect(cloneSelect);
+      }
   if (els.botModeSheetNameInput) els.botModeSheetNameInput.value = mode === 'create' ? '' : profileName;
   if (els.botModeSheetTitleInput) {
     els.botModeSheetTitleInput.value = mode === 'edit'
@@ -11287,9 +11937,32 @@ function openBotProfileSheet({ mode = 'edit', profileName = '' } = {}) {
   clearBotModeSheetWarning();
   refreshBotModeSheetDirtyState();
   els.botModeSheet.hidden = false;
-  switchBotModeSheetTab(mode === 'create' ? 'general' : 'avatar');
+    switchBotModeSheetTab('avatar');
+        botSheetFaceMode = 'blob';
+        botSheetClassicShape = 'squircle';
+        botSheetClassicColor = null;
+        // Classic shape selections survive round trips: the local override first,
+        // then the profile ui_meta the desktop picker writes (shape/color).
+        const classicEntry = mode === 'edit' ? botProfileOverrideFor(profileName) : null;
+        const classicRow = mode === 'edit' ? botSheetRosterRow(profileName) : null;
+        const shapeHint = String(classicEntry?.classicShape || classicRow?.shape || '').trim();
+        if (CLASSIC_AVATAR_SHAPES.includes(shapeHint)) {
+          botSheetFaceMode = 'classic';
+          botSheetClassicShape = shapeHint;
+          const colorHint = String(classicEntry?.classicColor || classicRow?.color || '').trim();
+          botSheetClassicColor = colorHint || null;
+        }
+        syncBotSheetFaceSwitch();
+    els.botModeSheet.querySelector('.bot-mode-sheet-body')?.scrollTo(0, 0);
   syncPetPickerState();
-  if (mode === 'edit') void loadBotProfileDescribe(profileName);
+  if (mode === 'edit') {
+    void refreshPetAvatarCache().then(() => {
+      if (botSheetMode === 'edit' && botSheetProfileName === profileName && !botSheetAvatarChoice) {
+        renderBotModeSheetAvatarPreview();
+      }
+    });
+    void loadBotProfileDescribe(profileName);
+  }
   if (mode === 'create') els.botModeSheetNameInput?.focus();
   return true;
 }
@@ -11391,7 +12064,13 @@ function botSheetEntryForSave(profileName, title, description) {
     entry.petSlug = choice.petSlug;
     entry.icon = choice.icon;
     entry.custom = false;
-  } else if (choice?.kind === 'blobatar') {
+  } else if (choice?.kind === 'classic') {
+      const classicColor = choice.color || botSheetClassicColorValue();
+      entry.icon = classicShapeDataUrl(choice.shape, classicColor);
+      entry.custom = true;
+      entry.classicShape = choice.shape;
+      if (botSheetClassicColor) entry.classicColor = botSheetClassicColor;
+    } else if (choice?.kind === 'blobatar') {
     entry.blobatarSeed = choice.seed;
   } else {
     if (previous.icon) {
@@ -11423,10 +12102,16 @@ async function writeBotProfileToServer({
     await client.request(WS_METHODS.profilesCreate, {
       name: profileName,
       description,
-      clone_from: '',
-      clone_all: false,
-      no_skills: false,
-      mirror_credentials: false,
+      clone_from: String(document.getElementById('botModeSheetCloneFrom')?.value || '').trim(),
+            clone_all: false,
+            no_skills: document.getElementById('botModeSheetNoSkills')?.checked === true,
+                        mirror_credentials: document.getElementById('botModeSheetShareKeys')?.checked === true,
+            ...(document.getElementById('botModeSheetProvider')?.value && document.getElementById('botModeSheetModel')?.value
+              ? {
+                provider: document.getElementById('botModeSheetProvider').value,
+                model: document.getElementById('botModeSheetModel').value,
+              }
+              : {}),
     });
   }
   const listed = await client.request(WS_METHODS.profilesList, { include_sessions: false });
@@ -11450,6 +12135,12 @@ async function writeBotProfileToServer({
       'hermes-bots': {
         ...currentBotMeta,
         title: title || null,
+        ...(choice?.kind === 'pet' ? { pet: choice.petSlug || null, imageKind: 'photo' } : {}),
+                ...(choice?.kind === 'image' ? { pet: null, imageKind: 'photo' } : {}),
+                ...(choice?.kind === 'clear' || choice?.kind === 'blobatar' ? { pet: null, imageKind: 'shape' } : {}),
+                ...(choice?.kind === 'classic'
+                  ? { pet: null, imageKind: 'shape', shape: choice.shape || null, color: botSheetClassicColor || null }
+                  : {}),
       },
     },
     ui_meta_expected_revisions: { 'hermes-bots': expectedRevision },
@@ -11538,13 +12229,16 @@ async function saveBotProfileSheet() {
     refreshBotModeSheetDirtyState();
     try {
       await writeBotProfileToServer({
-        profileName,
-        title,
-        description,
-        entry: botSheetEntryForSave(profileName, title, description),
-        choice: botSheetAvatarChoice,
-        create: true,
-      });
+              profileName,
+              title,
+              description,
+              entry: botSheetEntryForSave(profileName, title, description),
+              choice: botSheetAvatarChoice,
+              create: true,
+                            soul: String(document.getElementById('botModeSheetSoulInput')?.value || '').trim()
+                              ? String(document.getElementById('botModeSheetSoulInput')?.value || '')
+                              : undefined,
+            });
       closeBotModeSheet();
       setStatus('ok', 'Agent created', `${profileName} was created; refreshing the roster.`);
       await loadProfiles();
@@ -11578,8 +12272,14 @@ async function saveBotProfileSheet() {
       soul: botSheetProfileDescribe ? String(document.getElementById('botModeSheetSoulInput')?.value || '') : undefined,
     });
     await writeBotProfileOverride(profileName, null);
-    petAvatarsByProfile.delete(profileName);
-    void writePetAvatar(profileName, null);
+        if (choice?.kind === 'pet' && choice.spritesheetUrl) {
+          const petEntry = { slug: choice.petSlug, displayName: choice.petDisplayName, icon: entry.icon, spritesheetUrl: choice.spritesheetUrl };
+          petAvatarsByProfile.set(profileName, petEntry);
+          void writePetAvatar(profileName, petEntry);
+        } else {
+          petAvatarsByProfile.delete(profileName);
+          void writePetAvatar(profileName, null);
+        }
     botModeRemoteAvatarCache.delete(botModeAvatarCacheKey(profileName));
   } catch {
     showBotModeSheetWarning(translateUiText('Hermes could not save this profile. Reload the profile and try again.'));
@@ -11603,23 +12303,142 @@ let petGalleryLoading = false;
 let petGalleryLoaded = false;
 let petSelection = null; // { slug, displayName, spritesheetUrl, icon }
 let petIconJobs = new Map();
+let petThumbObserver = null;
 
-async function petIconFor(spriteUrl) {
-  if (!petIconJobs.has(spriteUrl)) {
-    petIconJobs.set(spriteUrl, petFrameIcon(spriteUrl));
+// One gateway thumb per pet, cached per slug. The RPC can stall on a cold
+// server-side crop (the desktop caps it at 15s for the same reason), so this
+// races a timeout and never caches a failure: a stalled request must not wedge
+// the tile, the picker, or the avatar apply that awaits it.
+const PET_THUMB_TIMEOUT_MS = 12_000;
+async function petIconFor(spriteUrl, slug = '') {
+  const key = slug || spriteUrl;
+  if (!key) return null;
+  const cached = petIconJobs.get(key);
+  if (cached) {
+    const icon = await cached;
+    if (icon) return icon;
+    petIconJobs.delete(key);
   }
-  return petIconJobs.get(spriteUrl);
+  const job = Promise.race([
+    requestPetGateway('pet.thumb', { slug, url: spriteUrl || '' })
+      .then((result) => (result?.ok && result.dataUri ? result.dataUri : null))
+      .catch(() => null),
+    new Promise((resolve) => setTimeout(() => resolve(null), PET_THUMB_TIMEOUT_MS)),
+  ]);
+  petIconJobs.set(key, job);
+  const icon = await job;
+  if (!icon) petIconJobs.delete(key);
+  return icon;
+}
+
+const petSheetBlobJobs = new Map();
+
+async function petSheetBlob(spriteUrl) {
+  if (!spriteUrl) return null;
+  const cached = petSheetBlobJobs.get(spriteUrl);
+  if (cached) {
+    const url = await cached;
+    if (url) return url;
+    petSheetBlobJobs.delete(spriteUrl);
+  }
+  const job = (async () => {
+    try {
+      const response = await fetch(spriteUrl, { signal: AbortSignal.timeout(20000) });
+      if (!response.ok) return null;
+      return URL.createObjectURL(await response.blob());
+    } catch {
+      return null;
+    }
+  })();
+  petSheetBlobJobs.set(spriteUrl, job);
+  const url = await job;
+  if (!url) petSheetBlobJobs.delete(spriteUrl);
+  return url;
+}
+
+function paintPetThumb(thumb, pet, { eager = false } = {}) {
+  const slug = pet?.slug || '';
+  const spriteUrl = pet?.spritesheetUrl || '';
+  if (!thumb || !slug) return;
+  thumb.dataset.sprite = spriteUrl;
+  thumb.dataset.slug = slug;
+  // The first screenful paints immediately: the picker lives inside a details
+  // element that is closed at render time, and a lazy observer alone leaves the
+  // gallery blank until it happens to fire. Everything below the fold still
+  // rides the observer so a 4800-pet catalog stays cheap.
+  if (eager) {
+    enqueuePetThumb(thumb, spriteUrl, slug);
+    return;
+  }
+  if (!petThumbObserver) {
+    petThumbObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        petThumbObserver.unobserve(entry.target);
+        enqueuePetThumb(entry.target, entry.target.dataset.sprite, entry.target.dataset.slug);
+      }
+    }, { root: null, rootMargin: '240px' });
+  }
+  petThumbObserver.observe(thumb);
+}
+
+// Paint whatever the open picker shows but never got a thumb for (observer
+// missed it, or the panel was resized after render).
+function primePetThumbs(limit = 12) {
+  const grid = els.botModePetGrid;
+  if (!grid) return;
+  let queued = 0;
+  for (const thumb of grid.querySelectorAll('.bot-mode-pet-thumb')) {
+    if (queued >= limit) break;
+    if (thumb.querySelector('img')) continue;
+    const slug = thumb.dataset.slug || '';
+    if (!slug || petIconJobs.has(slug)) continue;
+    enqueuePetThumb(thumb, thumb.dataset.sprite || '', slug);
+    queued += 1;
+  }
+}
+
+const petDecodeQueue = [];
+let petDecodeActive = 0;
+
+function enqueuePetThumb(thumb, spriteUrl, slug = '') {
+  const run = () => {
+    petDecodeActive += 1;
+    petIconFor(spriteUrl, slug).then((icon) => {
+      if (!icon || !thumb.isConnected) return;
+      const img = document.createElement('img');
+      img.src = icon;
+      img.alt = '';
+      img.width = 52;
+      img.height = 56;
+      thumb.replaceChildren(img);
+    }).finally(() => {
+      petDecodeActive -= 1;
+      const next = petDecodeQueue.shift();
+      if (next) next();
+    });
+  };
+  if (petDecodeActive < 3) run();
+  else petDecodeQueue.push(run);
 }
 
 async function renderPetGrid() {
   const grid = els.botModePetGrid;
   if (!grid) return;
+  petThumbObserver?.disconnect();
+  petDecodeQueue.length = 0;
   const needle = String(els.botModePetSearch?.value || '').trim().toLowerCase();
-  const pets = petGalleryCache
-    .filter((pet) => !needle || `${pet.slug} ${pet.displayName}`.toLowerCase().includes(needle))
-    .slice(0, 60);
+  const seen = new Set();
+  const pets = [];
+  for (const pet of petGalleryCache) {
+    if (!pet?.slug || seen.has(pet.slug)) continue;
+    if (needle && !`${pet.slug} ${pet.displayName}`.toLowerCase().includes(needle)) continue;
+    seen.add(pet.slug);
+    pets.push(pet);
+  }
+  const visible = pets.slice(0, petGridLimit);
   grid.replaceChildren();
-  for (const pet of pets) {
+  for (const [index, pet] of visible.entries()) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'bot-mode-pet-tile';
@@ -11633,57 +12452,118 @@ async function renderPetGrid() {
     label.className = 'bot-mode-pet-name';
     label.textContent = pet.displayName;
     button.append(label);
+    paintPetThumb(thumb, pet, { eager: index < 12 });
     button.addEventListener('click', async () => {
       petSelection = { ...pet };
       grid.querySelectorAll('[aria-selected]').forEach((el) => el.setAttribute('aria-selected', 'false'));
       button.setAttribute('aria-selected', 'true');
-      if (els.botModePetApply) els.botModePetApply.disabled = !botSheetProfileName;
-      if (!pet.icon) {
-        pet.icon = await petIconFor(pet.spritesheetUrl);
-        const icon = pet.icon ? document.createElement('img') : null;
-        if (icon) {
-          icon.src = pet.icon;
-          icon.alt = '';
-          icon.className = 'bot-mode-avatar-pet';
-          thumb.replaceChildren(icon);
-        }
-      } else {
-        const icon = document.createElement('img');
-        icon.src = pet.icon;
-        icon.alt = '';
-        icon.className = 'bot-mode-avatar-pet';
-        thumb.replaceChildren(icon);
-      }
+      if (!pet.icon) pet.icon = await petIconFor(pet.spritesheetUrl, pet.slug);
+      petSelection = { ...pet, icon: pet.icon };
+      void applyPetSelection();
     });
     grid.append(button);
-    void petIconFor(pet.spritesheetUrl).then((icon) => {
-      if (!icon) return;
-      const img = document.createElement('img');
-      img.src = icon;
-      img.alt = '';
-      img.className = 'bot-mode-avatar-pet';
-      img.loading = 'lazy';
-      thumb.replaceChildren(img);
-    });
   }
   if (!pets.length && petGalleryLoaded) {
     const empty = document.createElement('p');
     empty.className = 'hint';
-    empty.textContent = needle ? 'No pets match this search.' : 'Petdex gallery is unavailable right now.';
+    empty.textContent = needle
+          ? t('bot_mode.pet_no_match')
+          : (petGalleryFailed ? t('bot_mode.pet_gallery_failed') : t('bot_mode.pet_gallery_empty'));
     grid.append(empty);
   }
+  if (pets.length > visible.length) {
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'bot-mode-action';
+    more.textContent = `Show more (${pets.length - visible.length} left)`;
+    more.addEventListener('click', () => {
+      petGridLimit += 48;
+      renderPetGrid();
+    });
+    grid.append(more);
+  }
 }
+
+async function requestPetGateway(method, params = {}) {
+  const connection = await ensureActiveDashboardWsConnection();
+  return connection.client.request(method, params);
+}
+
+function normalizePetGallery(payload) {
+  const pets = Array.isArray(payload?.pets) ? payload.pets : [];
+  const seen = new Set();
+  const normalized = [];
+  for (const pet of pets) {
+    if (!pet?.slug || seen.has(pet.slug)) continue;
+    seen.add(pet.slug);
+    normalized.push({
+      slug: String(pet.slug),
+      displayName: String(pet.displayName || pet.slug),
+      spritesheetUrl: String(pet.spritesheetUrl || ''),
+      curated: pet.curated === true,
+      installed: pet.installed === true,
+    });
+  }
+  normalized.sort((left, right) => {
+    const rank = (pet) => (pet.installed ? 0 : pet.curated ? 1 : 2);
+    return rank(left) - rank(right) || left.displayName.localeCompare(right.displayName);
+  });
+  return normalized;
+}
+
+async function loadPetGalleryFromGateway() {
+  const local = await requestPetGateway('pet.gallery', { localOnly: true });
+  return normalizePetGallery(local);
+}
+
+let petGalleryFullLoading = false;
+let petGalleryFullLoaded = false;
+let petGridLimit = 48;
+
+async function loadFullPetGallery() {
+  if (petGalleryFullLoading || petGalleryFullLoaded) return;
+  petGalleryFullLoading = true;
+  if (els.botModePetHint) els.botModePetHint.textContent = t('bot_mode.pet_loading_rest');
+  try {
+    const full = await requestPetGateway('pet.gallery', {});
+    const pets = normalizePetGallery(full);
+    if (pets.length) {
+          petGalleryCache = pets;
+          petGalleryFailed = false;
+          petGalleryFullLoaded = true;
+          renderPetGrid();
+        }
+  } catch {
+    /* Keep the installed pets if the full catalog is slow. */
+  } finally {
+    petGalleryFullLoading = false;
+    if (els.botModePetHint && !petGalleryFailed) els.botModePetHint.textContent = '';
+  }
+}
+
+let petGalleryFailed = false;
 
 async function ensurePetGallery() {
   if (settings.botModeEnabled !== true) return;
   if (petGalleryLoading) return;
-  if (petGalleryLoaded && petGalleryCache.length) return renderPetGrid();
+  if (petGalleryLoaded && petGalleryCache.length) {
+    renderPetGrid();
+    void loadFullPetGallery();
+    return;
+  }
   petGalleryLoading = true;
+  if (els.botModePetGrid && !petGalleryLoaded) {
+      if (els.botModePetHint) els.botModePetHint.textContent = t('bot_mode.pet_loading_installed');
+    }
   try {
-    petGalleryCache = await fetchPetGallery();
-    petGalleryLoaded = true;
+    petGalleryCache = await loadPetGalleryFromGateway();
+        petGalleryFailed = false;
+        petGalleryLoaded = true;
+        renderPetGrid();
+        void loadFullPetGallery();
   } catch {
     petGalleryCache = [];
+    petGalleryFailed = true;
     petGalleryLoaded = true;
   } finally {
     petGalleryLoading = false;
@@ -11696,26 +12576,35 @@ function syncPetPickerState() {
   const pet = profile ? petAvatarsByProfile.get(profile) : null;
   const override = botProfileOverrideFor(profile);
   if (els.botModePetClear) els.botModePetClear.hidden = !pet && !override?.icon;
-  if (els.botModePetHint) {
-    els.botModePetHint.textContent = pet
-      ? `${profile} uses the ${pet.displayName || pet.slug} pet.`
-      : profile
-        ? 'Pick a petdex mascot as this agent\u2019s profile picture.'
-        : 'Open the profile sheet for an agent, then pick a petdex mascot.';
-  }
+  const summary = document.getElementById('botModePetSummaryValue');
+    if (summary) {
+      summary.textContent = (botSheetAvatarChoice?.kind === 'pet' && botSheetAvatarChoice.petDisplayName)
+      || pet?.displayName
+      || override?.petDisplayName
+      || (override?.icon ? t('bot_mode.custom_image') : t('bot_mode.pet_none'));
+    }
+    if (els.botModePetHint) {
+      els.botModePetHint.textContent = petGalleryFullLoading ? t('bot_mode.pet_loading_rest') : '';
+    }
   if (els.botModePetApply) els.botModePetApply.disabled = !(profile && petSelection);
 }
 
 async function applyPetSelection() {
-  const profile = botSheetProfileName;
-  if (!profile || !petSelection) return;
-  const icon = petSelection.icon || await petIconFor(petSelection.spritesheetUrl);
+  // No profile name required: a brand-new bot has none until it is created, and
+  // the pet is staged in botSheetAvatarChoice exactly like a classic face is.
+  if (!petSelection) return;
+  const icon = petSelection.icon || await petIconFor(petSelection.spritesheetUrl, petSelection.slug);
   if (!icon) {
+    // Never leave a phantom selection: the tile reads as picked while the
+    // avatar never changes. Reset it and say why.
+    petSelection = null;
+    els.botModePetGrid?.querySelectorAll('[aria-selected="true"]').forEach((el) => el.setAttribute('aria-selected', 'false'));
+    syncPetPickerState();
     showBotModeSheetWarning(translateUiText('Pet unavailable'));
     return;
   }
   // Stage the pet as this agent's avatar; Save commits it to the override store.
-  botSheetAvatarChoice = { kind: 'pet', petSlug: petSelection.slug, petDisplayName: petSelection.displayName, icon };
+  botSheetAvatarChoice = { kind: 'pet', petSlug: petSelection.slug, petDisplayName: petSelection.displayName, icon, spritesheetUrl: petSelection.spritesheetUrl || '' };
   petSelection = null;
   if (els.botModePetApply) els.botModePetApply.disabled = true;
   renderBotModeSheetAvatarPreview();
@@ -11724,7 +12613,7 @@ async function applyPetSelection() {
 }
 
 async function clearPetSelection() {
-  if (!botSheetProfileName) return;
+  if (!botSheetAvatarChoice && !petSelection && !botSheetProfileName) return;
   // Same as "Clear avatar": revert to the deterministic blobatar face on Save.
   botSheetAvatarChoice = { kind: 'clear' };
   petSelection = null;
@@ -12896,6 +13785,7 @@ function preferredModelOptionsForNewSession() {
 
 async function createHermesBrowserSession({ title = makeBrowserSessionTitle(), focus = true, hidden = false, transport = '', source = '', scopeRevisionId = scopeRevision.current() } = {}) {
   if (!scopeRevision.isCurrent(scopeRevisionId)) return false;
+  activeGroupGeneration += 1;
   activeGroupAbortController?.abort?.();
   activeGroupAbortController = null;
   activeGroupProjection = null;
@@ -13087,6 +13977,7 @@ async function openHermesSession(selectedSession) {
     setStatus('warn', 'Hermes is working…', 'Stop the active run before switching sessions.');
     return false;
   }
+  activeGroupGeneration += 1;
   activeGroupAbortController?.abort?.();
   activeGroupAbortController = null;
   activeGroupProjection = null;
@@ -14414,7 +15305,7 @@ function assistantMessageRoleLabel() {
   return botProfileDisplayName(row).toUpperCase();
 }
 
-function addMessage(role, content, { persist = true, roleLabel = '', contextReceipt = null, attachments = null } = {}) {
+function addMessage(role, content, { persist = true, roleLabel = '', contextReceipt = null, attachments = null, scroll = true } = {}) {
   if (!messages.length) els.messages.innerHTML = '';
   const node = els.template.content.firstElementChild.cloneNode(true);
   node.classList.add(role);
@@ -14427,7 +15318,7 @@ function addMessage(role, content, { persist = true, roleLabel = '', contextRece
     });
   }
   els.messages.appendChild(node);
-  scrollMessageStreamToBottom({ force: true });
+    if (scroll) scrollMessageStreamToBottom({ force: true });
   // The "What Hermes saw" receipt rides on the stored row so history replays
   // (post-turn reconcile, session reload) keep it attached — never lose it.
   const record = { role, content: content || '', ts: Date.now() };
@@ -14661,6 +15552,9 @@ async function loadSettings({ restoreMessages = false } = {}) {
 }
 
 function renderMessagesFromStorage() {
+  const scroller = els.appScroll;
+  const stickToBottom = !scroller || isMessageStreamNearBottom();
+  const previousTop = scroller?.scrollTop || 0;
   els.messages.innerHTML = '';
   // Thread-filtered view: when a group thread is expanded, match threadId strictly or by prefix/content
   let visibleMessages = messages;
@@ -14683,18 +15577,21 @@ function renderMessagesFromStorage() {
   for (const message of browserDisplayMessages(visibleMessages)) {
     if (isDelegationCompletionMarkerMessage(message)) continue;
     addMessage(message.role, message.content, {
-      persist: false,
-      roleLabel: message.roleLabel || '',
-      contextReceipt: message.contextReceipt || null,
-      attachments: message.attachments || null,
-    });
+          persist: false,
+          scroll: false,
+          roleLabel: message.roleLabel || '',
+          contextReceipt: message.contextReceipt || null,
+          attachments: message.attachments || null,
+        });
   }
   renderEmptyState();
   renderActiveProfileIndicator();
   renderSteerNotice();
   renderCompletionPendingRow();
   renderSideQuestionCard();
-  const alreadyHydrated = messages.some((message) => (message.attachments || []).some((item) => item.dataUrl && item.pathRef));
+    if (stickToBottom) scrollMessageStreamToBottom({ force: true });
+    else if (scroller) requestAnimationFrame(() => { scroller.scrollTop = previousTop; });
+    const alreadyHydrated = messages.some((message) => (message.attachments || []).some((item) => item.dataUrl && item.pathRef));
   void (async () => {
     await hydrateSessionMedia(messages);
     const nowHydrated = messages.some((message) => (message.attachments || []).some((item) => item.dataUrl && item.pathRef));
@@ -14712,6 +15609,7 @@ function syncSettingsForm() {
   renderProfiles();
   if (els.botModeEnabledInput) els.botModeEnabledInput.checked = settings.botModeEnabled === true;
   if (els.botModeDisplayDensity) els.botModeDisplayDensity.value = settings.botModeDisplayDensity === 'compact' ? 'compact' : 'comfortable';
+  if (els.botModeAnimateAvatars) els.botModeAnimateAvatars.value = settings.botModeAnimateAvatars === true ? 'on' : 'off';
   renderBotModeRoster(els.botModeSearch?.value);
   renderModelOptions(availableModels);
   if (els.connectionModeInput) els.connectionModeInput.value = normalizeConnectionMode(settings.connectionMode);
@@ -14812,6 +15710,7 @@ async function saveSettingsFromForm() {
     activeProfile: settings.activeProfile || DEFAULT_SETTINGS.activeProfile,
     botModeEnabled: els.botModeEnabledInput ? els.botModeEnabledInput.checked : settings.botModeEnabled === true,
     botModeDisplayDensity: els.botModeDisplayDensity?.value === 'compact' ? 'compact' : 'comfortable',
+    botModeAnimateAvatars: els.botModeAnimateAvatars?.value === 'on',
     contextDepth: els.contextDepthInput.value,
     includeTabs: els.includeTabsInput.checked,
     includePageText: els.includePageTextInput.checked,
@@ -18353,9 +19252,13 @@ function portalDockFloatingPanels() {
 function observeDockFloatingAnchor() {
   updateDockFloatingAnchor();
   globalThis.addEventListener?.('resize', () => {
-    updateDockFloatingAnchor();
-    if (!els.modelMenu?.hidden && modelSelectionTarget === 'assist') positionAssistModelMenu();
-  });
+      updateDockFloatingAnchor();
+      if (!els.modelMenu?.hidden && modelSelectionTarget === 'assist') positionAssistModelMenu();
+      if (activeGroupProjection) {
+        renderActiveProfileIndicator();
+        syncBotModeThreadsButton();
+      }
+    });
   if (!bottomDockResizeObserver && typeof globalThis.ResizeObserver === 'function' && els.bottomDock) {
     bottomDockResizeObserver = new globalThis.ResizeObserver(updateDockFloatingAnchor);
     bottomDockResizeObserver.observe(els.bottomDock);
@@ -18464,25 +19367,24 @@ function bindEvents() {
     updateNewGroupIconPreview();
   });
   els.newGroupIconGenerate?.addEventListener('click', () => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 128;
-    canvas.height = 128;
-    const ctx = canvas.getContext('2d');
-    const grad = ctx.createLinearGradient(0, 0, 128, 128);
-    grad.addColorStop(0, '#0505e8');
-    grad.addColorStop(1, '#25e6a2');
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(64, 64, 64, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.font = 'bold 54px monospace';
-    ctx.fillStyle = '#ffffff';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('⚡', 64, 66);
-    newGroupPendingImage = canvas.toDataURL('image/png');
-    updateNewGroupIconPreview();
-  });
+      const name = String(els.newGroupNameInput?.value || 'a bot team').trim();
+      const members = [...newGroupSelection];
+      els.newGroupIconGenerate.disabled = true;
+    els.newGroupIconGenerate.textContent = 'Generating';
+    els.newGroupIconGenerate.classList.add('is-generating');
+      void generateGroupRoomPicture(name, members).then((image) => {
+        newGroupPendingImage = image;
+        updateNewGroupIconPreview();
+      }).catch((error) => {
+        setStatus('warn', 'Room picture failed', error?.message || 'Hermes image generation is not available on this connection.');
+      }).finally(() => {
+        if (els.newGroupIconGenerate) {
+        els.newGroupIconGenerate.disabled = false;
+        els.newGroupIconGenerate.textContent = 'Generate';
+        els.newGroupIconGenerate.classList.remove('is-generating');
+      }
+      });
+    });
   els.groupSettingsCloseButton?.addEventListener('click', closeGroupSettingsModal);
   els.groupSettingsCancelButton?.addEventListener('click', closeGroupSettingsModal);
   els.groupSettingsSaveButton?.addEventListener('click', () => { void saveGroupSettings(); });
@@ -18504,62 +19406,120 @@ function bindEvents() {
     updateGroupSettingsAvatarDisplay();
   });
   els.groupSettingsGenerateButton?.addEventListener('click', () => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 128;
-    canvas.height = 128;
-    const ctx = canvas.getContext('2d');
-    const grad = ctx.createLinearGradient(0, 0, 128, 128);
-    grad.addColorStop(0, '#0505e8');
-    grad.addColorStop(1, '#7c3aed');
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(64, 64, 64, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.font = 'bold 54px monospace';
-    ctx.fillStyle = '#ffffff';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('🛡️', 64, 66);
-    groupSettingsPendingImage = canvas.toDataURL('image/png');
-    updateGroupSettingsAvatarDisplay();
-  });
+      const name = String(els.groupSettingsNameInput?.value || 'a bot team').trim();
+      els.groupSettingsGenerateButton.disabled = true;
+      void generateGroupRoomPicture(name, []).then((image) => {
+        groupSettingsPendingImage = image;
+        updateGroupSettingsAvatarDisplay();
+      }).catch((error) => {
+        setStatus('warn', 'Room picture failed', error?.message || 'Hermes image generation is not available on this connection.');
+      }).finally(() => {
+        if (els.groupSettingsGenerateButton) els.groupSettingsGenerateButton.disabled = false;
+      });
+    });
   els.botModeSheetCloseButton?.addEventListener('click', () => closeBotModeSheet());
   els.botModeSheetTabs?.addEventListener('click', (event) => {
     const tab = event.target?.closest?.('[data-sheet-tab]')?.dataset.sheetTab;
     if (tab) switchBotModeSheetTab(tab);
   });
-  els.botModeSheetImageInput?.addEventListener('change', async () => {
-    const file = els.botModeSheetImageInput?.files?.[0];
-    if (!file) return;
-    try {
-      const icon = await normalizeAvatarImageFile(file);
-      botSheetAvatarChoice = { kind: 'image', icon };
-      if (els.botModeSheetUploadText) els.botModeSheetUploadText.textContent = file.name;
-      els.botModeSheetUploadText?.closest('.bot-mode-upload-card')?.classList.add('has-file');
-      renderBotModeSheetAvatarPreview();
-      syncPetPickerState();
-    } catch {
-      showBotModeSheetWarning(translateUiText('Could not read that image. Try another file.'));
-    } finally {
-      if (els.botModeSheetImageInput) els.botModeSheetImageInput.value = '';
-    }
-  });
+  async function applyBotSheetImageFile(file) {
+    const icon = await normalizeAvatarImageFile(file);
+    botSheetAvatarChoice = { kind: 'image', icon };
+    if (els.botModeSheetUploadText) els.botModeSheetUploadText.textContent = file.name;
+    document.getElementById('botModeSheetImageButton')?.classList.add('has-file');
+    renderBotModeSheetAvatarPreview();
+    syncPetPickerState();
+  }
+
+  function openBotSheetImagePicker() {
+    const input = els.botModeSheetImageInput;
+    if (!input) return;
+    input.value = '';
+    input.addEventListener('cancel', () => input.blur(), { once: true });
+    input.click();
+  }
+
+  els.botModeSheetImageButton?.addEventListener('click', openBotSheetImagePicker);
+    els.botModeSheetImageInput?.addEventListener('change', async () => {
+      const file = els.botModeSheetImageInput?.files?.[0];
+      if (!file) return;
+      try {
+        await applyBotSheetImageFile(file);
+      } catch {
+        showBotModeSheetWarning(translateUiText('Could not read that image. Try another file.'));
+      } finally {
+        if (els.botModeSheetImageInput) els.botModeSheetImageInput.value = '';
+      }
+    });
   els.botModeSheetAvatarClear?.addEventListener('click', () => {
     botSheetAvatarChoice = { kind: 'clear' };
     renderBotModeSheetAvatarPreview();
     renderBotModeFaceGrid();
     syncPetPickerState();
   });
-  els.botModeSheetNameInput?.addEventListener('input', () => {
-    if (botSheetMode === 'create') renderBotModeFaceGrid();
+  document.getElementById('botModeAdvancedSwitch')?.addEventListener('click', (event) => {
+    const tab = event.target?.closest?.('[data-advanced-tab]')?.dataset.advancedTab;
+    if (tab) switchBotAdvancedPane(tab);
   });
+  document.getElementById('botModeBlobFacesButton')?.addEventListener('click', () => setBotSheetFaceMode('blob'));
+    document.getElementById('botModeClassicShapesButton')?.addEventListener('click', () => setBotSheetFaceMode('classic'));
+    els.botModeSheetNameInput?.addEventListener('input', () => {
+      if (els.botModeSheetNameInput) els.botModeSheetNameInput.title = els.botModeSheetNameInput.value;
+            const capsOpen = document.querySelector('[data-advanced-tab="capabilities"]')?.classList.contains('on');
+            if (capsOpen) switchBotAdvancedPane('capabilities');
+            if (botSheetMode !== 'create') return;
+      if (botSheetAvatarChoice?.kind === 'classic') {
+              const classicColor = botSheetClassicColorValue();
+              botSheetAvatarChoice = {
+                ...botSheetAvatarChoice,
+                color: classicColor,
+                icon: classicShapeDataUrl(botSheetAvatarChoice.shape, classicColor),
+              };
+              renderClassicShapeGrid();
+            }
+      renderBotModeFaceGrid();
+      renderBotModeSheetAvatarPreview();
+    });
   els.botModeSheetSkillsSearch?.addEventListener('input', () => renderBotModeSheetSkills());
+  document.getElementById('botModeSheetToolsSearch')?.addEventListener('input', () => renderBotModeSheetTools());
+  document.getElementById('botModeSheetMcpSearch')?.addEventListener('input', () => renderBotModeSheetMcp());
+  els.activeProfileIndicator?.addEventListener('click', (event) => {
+      if (activeGroupProjection) {
+        event.preventDefault();
+        event.stopPropagation();
+        closeProfileSwitchMenu();
+        return;
+      }
+      event.stopPropagation();
+      toggleProfileSwitchMenu();
+    });
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('#profileSwitchMenu, #activeProfileIndicator')) closeProfileSwitchMenu();
+  });
   els.botModeSheetSaveButton?.addEventListener('click', () => { void saveBotProfileSheet(); });
   els.scanAgentRosterButton?.addEventListener('click', () => { void loadProfiles(); });
   els.botModePetSearch?.addEventListener('input', () => renderPetGrid());
+  document.getElementById('botModePetPicker')?.addEventListener('toggle', (event) => {
+    if (event.currentTarget.open) {
+      void ensurePetGallery();
+      // Thumbs are painted eagerly on render, but a gallery rendered while the
+      // picker was closed can predate the open: top it up on toggle.
+      primePetThumbs();
+    }
+  });
   els.botModePetApply?.addEventListener('click', () => { void applyPetSelection(); });
   els.botModePetClear?.addEventListener('click', () => { void clearPetSelection(); });
   els.botModePetSearch?.addEventListener('focus', () => { void ensurePetGallery(); });
+  // Observer-independent top-up: whatever the picker shows but has no thumb yet
+  // is painted on scroll, so a closed-then-opened grid never stays blank.
+  let petPrimeTimer = 0;
+  els.botModePetGrid?.addEventListener('scroll', () => {
+    if (petPrimeTimer) return;
+    petPrimeTimer = setTimeout(() => {
+      petPrimeTimer = 0;
+      primePetThumbs(6);
+    }, 250);
+  }, { passive: true });
   els.botModeEnabledInput?.addEventListener('change', () => {
     // The switch must act immediately: persist, refresh the status line and
     // the deck button visibility, and start the roster fetch when enabling.
@@ -18571,12 +19531,20 @@ function bindEvents() {
     });
   });
   els.botModeDisplayDensity?.addEventListener('change', () => {
-    const density = els.botModeDisplayDensity?.value === 'compact' ? 'compact' : 'comfortable';
-    settings = { ...settings, botModeDisplayDensity: density };
-    void browserApi.storage.local.set({ hermesBrowserSettings: settings }).then(() => {
-      renderBotModeRoster(els.botModeSearch?.value);
+      const density = els.botModeDisplayDensity?.value === 'compact' ? 'compact' : 'comfortable';
+      settings = { ...settings, botModeDisplayDensity: density };
+      void browserApi.storage.local.set({ hermesBrowserSettings: settings }).then(() => {
+        renderBotModeRoster(els.botModeSearch?.value);
+      });
     });
-  });
+    els.botModeAnimateAvatars?.addEventListener('change', () => {
+      settings = { ...settings, botModeAnimateAvatars: els.botModeAnimateAvatars.value === 'on' };
+          void browserApi.storage.local.set({ hermesBrowserSettings: settings }).then(async () => {
+            if (settings.botModeAnimateAvatars) await ensurePetGallery().catch(() => undefined);
+            renderBotModeRoster(els.botModeSearch?.value);
+            renderActiveProfileIndicator();
+          });
+    });
   els.botModeCronRefreshButton?.addEventListener('click', () => {
     els.botModeCronRefreshButton.classList.add('is-refreshing');
     setTimeout(() => els.botModeCronRefreshButton?.classList.remove('is-refreshing'), 600);
@@ -18597,7 +19565,14 @@ function bindEvents() {
     renderSubagentStack();
   });
   els.openFullViewButton?.addEventListener('click', () => {
-    openFullView().catch((error) => setStatus('warn', 'Could not open full view', error?.message || String(error), { translateDetail: false }));
+    showWebDeprecationNotice();
+  });
+  document.getElementById('webDeprecationClose')?.addEventListener('click', hideWebDeprecationNotice);
+  document.getElementById('webDeprecationDialog')?.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      hideWebDeprecationNotice();
+    }
   });
   els.manualSettingsButton.addEventListener('click', openSettingsDialog);
   [els.modelMenu, els.sessionMenu, els.botModePanel, els.contextPopover, els.attachMenu, els.skillMenu].filter(Boolean).forEach((panel) => {
@@ -18661,7 +19636,8 @@ function bindEvents() {
   els.sessionSearchInput.addEventListener('input', () => renderSessionMenu(els.sessionSearchInput.value));
   els.closeSettingsButton.addEventListener('click', closeSettingsDialog);
   els.messages.addEventListener('click', (event) => {
-    const image = event.target?.closest?.('.generated-image-inspectable')?.querySelector?.('img[data-slot="aui_generated-image"]')
+      if (interceptChatLinkClick(event, { tabsApi: browserApi?.tabs, windowOpen: window.open.bind(window) })) return;
+      const image = event.target?.closest?.('.generated-image-inspectable')?.querySelector?.('img[data-slot="aui_generated-image"]')
       || event.target?.closest?.('img[data-slot="aui_generated-image"]');
     if (!image) return;
     openGeneratedImageLightbox(image);
@@ -18934,11 +19910,27 @@ function bindEvents() {
     if (event.target === els.botModeLeaveDialog) closeBotModeLeaveDialog();
   });
   els.botModeLeaveDialog?.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      closeBotModeLeaveDialog();
-    }
-  });
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeBotModeLeaveDialog();
+      }
+    });
+    els.modelSwitchConfirmButton?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const pending = pendingModelSwitch;
+      closeModelSwitchDialog();
+      if (pending?.model) applySelectedModel(pending.model.id, { keepOpen: true });
+    });
+    els.modelSwitchCancelButton?.addEventListener('click', closeModelSwitchDialog);
+    els.modelSwitchDialog?.addEventListener('click', (event) => {
+      if (event.target === els.modelSwitchDialog) closeModelSwitchDialog();
+    });
+    els.modelSwitchDialog?.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeModelSwitchDialog();
+      }
+    });
 
   els.refreshAgentsButton?.addEventListener('click', () => loadAgents());
   els.addCustomAgentButton?.addEventListener('click', () => {
@@ -19260,6 +20252,11 @@ function bindEvents() {
     void setAppearanceOption('textZoomPercent', stepTextZoomPercent(current, 'up'));
   });
   els.fontProfileSelect?.addEventListener('change', () => {
+    const theme = normalizedPanelThemeId(settings.appearanceTheme);
+    if (themeOwnsFont(theme)) {
+      themeFontPinned = true;
+      themeFontPinnedFor = theme;
+    }
     void setAppearanceOption('fontProfile', els.fontProfileSelect.value);
   });
   els.customFontFamilyInput?.addEventListener('change', () => {
@@ -19286,6 +20283,8 @@ function bindEvents() {
     const card = event.target.closest('[data-theme]');
     if (!card) return;
     customThemeDeleteArmedId = '';
+    themeFontPinned = false;
+    themeFontPinnedFor = '';
     void setAppearanceOption('appearanceTheme', card.dataset.theme);
   });
   els.customThemeImportTextarea?.addEventListener('input', () => {
@@ -19717,15 +20716,7 @@ async function runPanelConnectionReadiness({ restoreSettings = false } = {}) {
           ? { status: 'ready', detail: `${availableSkills.length} skills available.` }
           : { status: 'skipped', detail: 'Skills route unavailable on this runtime.' };
       },
-      loadProfiles: async () => {
-        await loadProfiles({ quiet: true });
-        const count = botModeRoster.length || availableProfiles.length;
-        // Startup diagnostic contract: exact count only, no name/role listing.
-        return {
-          status: 'ready',
-          detail: count === 1 ? '1 PROFILE LOADED.' : `${count} PROFILES LOADED.`,
-        };
-      },
+      loadProfiles: async () => loadProfiles({ quiet: true }),
       loadSessions: async () => {
         const outcome = await loadSessions({ quiet: true });
         return outcome?.ok && sessionRoutesAvailable !== false
