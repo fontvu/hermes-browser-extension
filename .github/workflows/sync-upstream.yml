@@ -33,7 +33,11 @@ jobs:
 
       - name: Push clean merge
         if: steps.merge.outputs.clean == 'true'
-        run: git push origin HEAD:main
+        env:
+          SYNC_PAT: ${{ secrets.SYNC_PAT }}
+        run: |
+          git remote set-url origin "https://x-access-token:${SYNC_PAT}@github.com/${GITHUB_REPOSITORY}.git"
+          git push origin HEAD:main
 
       - name: Open PR on conflict
         if: steps.merge.outputs.clean == 'false'
