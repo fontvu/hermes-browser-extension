@@ -122,9 +122,9 @@ test('projected group messages preserve author labels for the shared bubble rend
   });
 
   assert.deepEqual(messages, [
-    { role: 'user', content: 'Ship it', ts: NOW - 2, roleLabel: 'Jon', thread: '' },
-    { role: 'assistant', content: 'On it', ts: NOW - 1, roleLabel: 'Default', thread: '' },
-  ]);
+      { role: 'user', content: 'Ship it', ts: NOW - 2, roleLabel: 'Jon', thread: '' },
+      { role: 'assistant', content: 'On it', ts: NOW - 1, roleLabel: 'Default', thread: '', speaker: 'default' },
+    ]);
 });
 
 test('group thread menu entries retain room identity, previews, counts, and stable ids', () => {
@@ -358,6 +358,14 @@ test('group runtime discovers existing hidden Desktop member sessions by room ti
   });
   assert.equal(prepared.ok, true);
   assert.equal(prepared.sessions.length, 2);
+  // prepare resolves AND caches each member's hidden Desktop session, so the
+  // later send reuses the cache instead of re-resolving (B2.2/B3.2).
+  assert.deepEqual(calls.map(({ method, params }) => [method, params.profile]), [
+    ['session.list', 'alpha'],
+    ['session.resume', 'alpha'],
+    ['session.list', 'beta'],
+    ['session.resume', 'beta'],
+  ]);
   calls.length = 0;
 
   const result = await runtime.send({
@@ -371,11 +379,7 @@ test('group runtime discovers existing hidden Desktop member sessions by room ti
   assert.equal(result.ok, true);
   assert.equal(result.failures.length, 0);
   assert.deepEqual(calls.map(({ method, params }) => [method, params.profile]), [
-    ['session.list', 'alpha'],
-    ['session.resume', 'alpha'],
     ['prompt.submit', undefined],
-    ['session.list', 'beta'],
-    ['session.resume', 'beta'],
     ['prompt.submit', undefined],
   ]);
   assert.deepEqual(visible.map((message) => [message.role, message.roleLabel]), [

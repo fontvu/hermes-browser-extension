@@ -119,6 +119,10 @@
     "message": "Hermes Legacy",
     "description": "Runtime interface message appearance.font_collapse"
   },
+  "runtime_appearance_font_fallback_note": {
+    "message": "Phông chữ chữ ký có bản quyền chưa được cài đặt — đang hiển thị phông dự phòng đi kèm.",
+    "description": "Runtime interface message appearance.font_fallback_note"
+  },
   "runtime_appearance_font_family": {
     "message": "Họ phông chữ",
     "description": "Runtime interface message appearance.font_family"
@@ -254,6 +258,26 @@
   "runtime_assist_routing_fallback_short": {
     "message": "Quay trở lại mặc định cổng khi không có định tuyến chính xác",
     "description": "Runtime interface message assist.routing.fallback_short"
+  },
+  "runtime_attachments_attachment_too_large": {
+    "message": "Có thể đính kèm tệp tối đa 25 MiB.",
+    "description": "Runtime interface message attachments.attachment_too_large"
+  },
+  "runtime_attachments_download_to_open": {
+    "message": "Tải tệp này xuống để mở bằng ứng dụng tương thích.",
+    "description": "Runtime interface message attachments.download_to_open"
+  },
+  "runtime_attachments_file_unavailable": {
+    "message": "Không có tệp gốc. Hãy đính kèm lại để khôi phục quyền truy cập.",
+    "description": "Runtime interface message attachments.file_unavailable"
+  },
+  "runtime_attachments_preview_limited": {
+    "message": "Bản xem trước bị giới hạn. Tải xuống tệp đầy đủ.",
+    "description": "Runtime interface message attachments.preview_limited"
+  },
+  "runtime_attachments_upload_unavailable": {
+    "message": "Chưa xác nhận tải lên toàn bộ tệp. Kiểm tra kết nối hoặc dùng kết nối WebSocket của bảng điều khiển rồi thử lại.",
+    "description": "Runtime interface message attachments.upload_unavailable"
   },
   "runtime_bot_mode_active_now": {
     "message": "Active now",
@@ -832,7 +856,7 @@
     "description": "Runtime interface message browser_control.detached_detail"
   },
   "runtime_browser_control_detached_toast": {
-    "message": "Đã tách Hermes Control",
+    "message": "Điều khiển Hermes đã tắt",
     "description": "Runtime interface message browser_control.detached_toast"
   },
   "runtime_browser_control_enable": {
@@ -850,6 +874,50 @@
   "runtime_browser_control_follow": {
     "message": "Theo dõi Hermes",
     "description": "Runtime interface message browser_control.follow"
+  },
+  "runtime_browser_control_help_attach": {
+    "message": "Cho phép Hermes điều khiển thẻ này, thay cho thẻ đã kết nối trước đó.",
+    "description": "Runtime interface message browser_control.help_attach"
+  },
+  "runtime_browser_control_help_close": {
+    "message": "Đóng bảng này mà không tạm dừng hay tắt điều khiển.",
+    "description": "Runtime interface message browser_control.help_close"
+  },
+  "runtime_browser_control_help_follow": {
+    "message": "Hiển thị thẻ đã kết nối mà Hermes đang dùng, không đưa cửa sổ trình duyệt lên trước.",
+    "description": "Runtime interface message browser_control.help_follow"
+  },
+  "runtime_browser_control_help_off": {
+    "message": "Tắt điều khiển trình duyệt và đóng bảng này. Bật lại trong Cài đặt.",
+    "description": "Runtime interface message browser_control.help_off"
+  },
+  "runtime_browser_control_help_pause": {
+    "message": "Tạm dừng điều khiển trình duyệt mà không tắt. Các thẻ đã kết nối vẫn được giữ lại.",
+    "description": "Runtime interface message browser_control.help_pause"
+  },
+  "runtime_browser_control_help_resume": {
+    "message": "Tiếp tục điều khiển trình duyệt trên các thẻ vẫn đang kết nối.",
+    "description": "Runtime interface message browser_control.help_resume"
+  },
+  "runtime_browser_control_help_scope_selected_tabs": {
+    "message": "Chỉ điều khiển các tab bạn chọn bên dưới. Mỗi tab được chọn riêng; các tab còn lại nằm ngoài phạm vi.",
+    "description": "Runtime interface message browser_control.help_scope_selected_tabs"
+  },
+  "runtime_browser_control_help_scope_task_set": {
+    "message": "Chỉ điều khiển các tab bạn chọn bên dưới như một tác vụ trình duyệt chung. Khác với Tab đã chọn, các tab này dùng chung định danh tác vụ; không bao gồm mọi tab đang mở.",
+    "description": "Runtime interface message browser_control.help_scope_task_set"
+  },
+  "runtime_browser_control_help_scope_this_tab": {
+    "message": "Chỉ điều khiển tab hiện tại. Không bao gồm các tab khác.",
+    "description": "Runtime interface message browser_control.help_scope_this_tab"
+  },
+  "runtime_browser_control_help_stay": {
+    "message": "Giữ nguyên thẻ của bạn trong khi Hermes làm việc trên các thẻ đã kết nối ở nền.",
+    "description": "Runtime interface message browser_control.help_stay"
+  },
+  "runtime_browser_control_help_stop": {
+    "message": "Dừng các thao tác trình duyệt hiện tại và đang chờ mà không tắt điều khiển.",
+    "description": "Runtime interface message browser_control.help_stop"
   },
   "runtime_browser_control_kicker": {
     "message": "ĐIỀU KHIỂN HERMES",
@@ -874,6 +942,30 @@
   "runtime_browser_control_scope": {
     "message": "Phạm vi điều khiển",
     "description": "Runtime interface message browser_control.scope"
+  },
+  "runtime_browser_control_scope_busy": {
+    "message": "Chờ điều khiển kết nối và hoàn tất mọi thao tác hoặc phê duyệt.",
+    "description": "Runtime interface message browser_control.scope_busy"
+  },
+  "runtime_browser_control_scope_failed": {
+    "message": "Không thể xác nhận phạm vi này. Kiểm tra các tab và thử lại.",
+    "description": "Runtime interface message browser_control.scope_failed"
+  },
+  "runtime_browser_control_scope_locked": {
+    "message": "Chọn phạm vi tại đây rồi áp dụng. Bạn phải chọn rõ từng tab khi dùng nhiều tab.",
+    "description": "Runtime interface message browser_control.scope_locked"
+  },
+  "runtime_browser_control_scope_selection_required": {
+    "message": "Chọn ít nhất một tab bên dưới. Có thể gắn tối đa 32 tab.",
+    "description": "Runtime interface message browser_control.scope_selection_required"
+  },
+  "runtime_browser_control_scope_tabs": {
+    "message": "Tab trong phạm vi này",
+    "description": "Runtime interface message browser_control.scope_tabs"
+  },
+  "runtime_browser_control_scope_updated": {
+    "message": "Đã cập nhật phạm vi điều khiển.",
+    "description": "Runtime interface message browser_control.scope_updated"
   },
   "runtime_browser_control_selected_tabs": {
     "message": "Các tab đã chọn",
@@ -914,6 +1006,10 @@
   "runtime_browser_control_title": {
     "message": "Điều khiển các tab đang cho thuê",
     "description": "Runtime interface message browser_control.title"
+  },
+  "runtime_browser_control_turn_off": {
+    "message": "Tắt",
+    "description": "Runtime interface message browser_control.turn_off"
   },
   "runtime_browser_control_waiting": {
     "message": "Đang chờ Hermes.",
@@ -2663,6 +2759,10 @@
     "message": "Sao chép không thành công",
     "description": "Runtime interface message ui.copy.failed"
   },
+  "runtime_ui_copy_message": {
+    "message": "Sao chép tin nhắn",
+    "description": "Runtime interface message ui.copy.message"
+  },
   "runtime_ui_copy_redacted_diagnostics": {
     "message": "Sao chép chẩn đoán đã được biên tập lại",
     "description": "Runtime interface message ui.copy.redacted.diagnostics"
@@ -2935,6 +3035,14 @@
     "message": "Chỉnh sửa",
     "description": "Runtime interface message ui.edit"
   },
+  "runtime_ui_edit_failed": {
+    "message": "Chỉnh sửa thất bại. Cuộc trò chuyện của bạn không thay đổi.",
+    "description": "Runtime interface message ui.edit.failed"
+  },
+  "runtime_ui_edit_message": {
+    "message": "Chỉnh sửa tin nhắn",
+    "description": "Runtime interface message ui.edit.message"
+  },
   "runtime_ui_edit_models": {
     "message": "⚙ Chỉnh sửa mô hình...",
     "description": "Runtime interface message ui.edit.models"
@@ -3178,6 +3286,38 @@
   "runtime_ui_group": {
     "message": "Nhóm",
     "description": "Runtime interface message ui.group"
+  },
+  "runtime_ui_group_presence_all_replied": {
+    "message": "Tất cả đã trả lời",
+    "description": "Runtime interface message ui.group.presence.all.replied"
+  },
+  "runtime_ui_group_presence_done_failed": {
+    "message": "Xong · {count} không thể trả lời",
+    "description": "Runtime interface message ui.group.presence.done.failed"
+  },
+  "runtime_ui_group_presence_done_passed": {
+    "message": "Xong · {count} đã bỏ qua",
+    "description": "Runtime interface message ui.group.presence.done.passed"
+  },
+  "runtime_ui_group_presence_reply_fail": {
+    "message": "{replied} đã trả lời, {failed} không thể",
+    "description": "Runtime interface message ui.group.presence.reply.fail"
+  },
+  "runtime_ui_group_presence_replying": {
+    "message": "{name} đang trả lời",
+    "description": "Runtime interface message ui.group.presence.replying"
+  },
+  "runtime_ui_group_presence_typing": {
+    "message": "{name} đang nhập",
+    "description": "Runtime interface message ui.group.presence.typing"
+  },
+  "runtime_ui_group_presence_using": {
+    "message": "{name} đang dùng {tool}",
+    "description": "Runtime interface message ui.group.presence.using"
+  },
+  "runtime_ui_group_presence_waiting": {
+    "message": "{count} đang chờ",
+    "description": "Runtime interface message ui.group.presence.waiting"
   },
   "runtime_ui_handing_update_to_hermes": {
     "message": "Đang chuyển bản cập nhật cho Hermes",
@@ -3754,6 +3894,10 @@
   "runtime_ui_message_queued": {
     "message": "Đã xếp hàng tin nhắn",
     "description": "Runtime interface message ui.message.queued"
+  },
+  "runtime_ui_message_unmatched": {
+    "message": "Không thể khớp tin nhắn này với cuộc trò chuyện đã lưu, nên nó đã được gửi như một tin nhắn mới.",
+    "description": "Runtime interface message ui.message.unmatched"
   },
   "runtime_ui_messages": {
     "message": "Tin nhắn",
@@ -4567,6 +4711,10 @@
     "message": "trả lời",
     "description": "Runtime interface message ui.reply"
   },
+  "runtime_ui_reply_to_member": {
+    "message": "Trả lời @{name}",
+    "description": "Runtime interface message ui.reply.to.member"
+  },
   "runtime_ui_request": {
     "message": "Yêu cầu",
     "description": "Runtime interface message ui.request"
@@ -4579,6 +4727,14 @@
     "message": "Cần thiết cho Cloud Preview và các bản dựng Hermes cũ hơn. Nó từ chối nhận dạng giọng nói trên đám mây.",
     "description": "Runtime interface message ui.required.for.cloud.preview.and.older.hermes.builds.it.refuses.c.f0bdad5b"
   },
+  "runtime_ui_rerun": {
+    "message": "Chạy lại",
+    "description": "Runtime interface message ui.rerun"
+  },
+  "runtime_ui_rerun_from_here": {
+    "message": "Chạy lại từ đây? Các tin nhắn sau sẽ bị xóa.",
+    "description": "Runtime interface message ui.rerun.from.here"
+  },
   "runtime_ui_reset": {
     "message": "Đặt lại",
     "description": "Runtime interface message ui.reset"
@@ -4590,6 +4746,10 @@
   "runtime_ui_response": {
     "message": "phản hồi",
     "description": "Runtime interface message ui.response"
+  },
+  "runtime_ui_restore_checkpoint": {
+    "message": "Khôi phục điểm kiểm tra: chạy lại từ tin nhắn này",
+    "description": "Runtime interface message ui.restore.checkpoint"
   },
   "runtime_ui_restricted_page": {
     "message": "Trang bị hạn chế",
@@ -4630,6 +4790,82 @@
   "runtime_ui_right_click_task_failed": {
     "message": "Tác vụ nhấp chuột phải không thành công",
     "description": "Runtime interface message ui.right.click.task.failed"
+  },
+  "runtime_ui_room_bots_title": {
+    "message": "Bot trong phòng này",
+    "description": "Runtime interface message ui.room.bots.title"
+  },
+  "runtime_ui_room_busy": {
+    "message": "Đang bận trả lời",
+    "description": "Runtime interface message ui.room.busy"
+  },
+  "runtime_ui_room_checking": {
+    "message": "Đang kiểm tra…",
+    "description": "Runtime interface message ui.room.checking"
+  },
+  "runtime_ui_room_fail_reason_generic": {
+    "message": "Đã xảy ra lỗi",
+    "description": "Runtime interface message ui.room.fail.reason.generic"
+  },
+  "runtime_ui_room_fail_reason_usage": {
+    "message": "Đã đạt giới hạn sử dụng, thử lại sau",
+    "description": "Runtime interface message ui.room.fail.reason.usage"
+  },
+  "runtime_ui_room_failed": {
+    "message": "thất bại",
+    "description": "Runtime interface message ui.room.failed"
+  },
+  "runtime_ui_room_member_default_restored": {
+    "message": "{name} đã trở về mặc định hồ sơ",
+    "description": "Runtime interface message ui.room.member.default.restored"
+  },
+  "runtime_ui_room_member_failed": {
+    "message": "{name} không thể trả lời: {reason}",
+    "description": "Runtime interface message ui.room.member.failed"
+  },
+  "runtime_ui_room_member_failed_short": {
+    "message": "{name} không thể trả lời",
+    "description": "Runtime interface message ui.room.member.failed.short"
+  },
+  "runtime_ui_room_member_now_uses": {
+    "message": "{name} giờ dùng {model} trong phòng này",
+    "description": "Runtime interface message ui.room.member.now.uses"
+  },
+  "runtime_ui_room_member_passed": {
+    "message": "{name} đã bỏ qua",
+    "description": "Runtime interface message ui.room.member.passed"
+  },
+  "runtime_ui_room_member_retry": {
+    "message": "Thử lại",
+    "description": "Runtime interface message ui.room.member.retry"
+  },
+  "runtime_ui_room_member_retry_aria": {
+    "message": "Thử lại cho {name}",
+    "description": "Runtime interface message ui.room.member.retry.aria"
+  },
+  "runtime_ui_room_model_note": {
+    "message": "Thay đổi mô hình chỉ áp dụng cho phòng này.",
+    "description": "Runtime interface message ui.room.model.note"
+  },
+  "runtime_ui_room_next": {
+    "message": "tiếp theo",
+    "description": "Runtime interface message ui.room.next"
+  },
+  "runtime_ui_room_passed": {
+    "message": "đã bỏ qua",
+    "description": "Runtime interface message ui.room.passed"
+  },
+  "runtime_ui_room_profile_default": {
+    "message": "Mặc định hồ sơ",
+    "description": "Runtime interface message ui.room.profile.default"
+  },
+  "runtime_ui_room_reset_default": {
+    "message": "Đặt lại về mặc định hồ sơ",
+    "description": "Runtime interface message ui.room.reset.default"
+  },
+  "runtime_ui_room_unknown": {
+    "message": "Không rõ",
+    "description": "Runtime interface message ui.room.unknown"
   },
   "runtime_ui_row": {
     "message": "Hàng",
@@ -4907,6 +5143,18 @@
     "message": "Hiển thị Hermes Assist trong trường viết",
     "description": "Runtime interface message ui.show.hermes.assist.in.writing.fields"
   },
+  "runtime_ui_show_message_times": {
+    "message": "Hiện thời gian tin nhắn",
+    "description": "Runtime interface message ui.show.message.times"
+  },
+  "runtime_ui_show_message_times_hint": {
+    "message": "Hiện thời gian trên tin nhắn của bạn khi di chuột hoặc chạm vào.",
+    "description": "Runtime interface message ui.show.message.times.hint"
+  },
+  "runtime_ui_show_or_hide_status": {
+    "message": "Hiện hoặc ẩn trạng thái",
+    "description": "Runtime interface message ui.show.or.hide.status"
+  },
   "runtime_ui_side_panel": {
     "message": "Bảng điều khiển bên",
     "description": "Runtime interface message ui.side.panel"
@@ -5046,6 +5294,10 @@
   "runtime_ui_steer_the_current_run": {
     "message": "Chỉ đạo hoạt động hiện tại",
     "description": "Runtime interface message ui.steer.the.current.run"
+  },
+  "runtime_ui_steered_label": {
+    "message": "Đã điều hướng",
+    "description": "Runtime interface message ui.steered.label"
   },
   "runtime_ui_stop": {
     "message": "Dừng lại",
@@ -5270,6 +5522,10 @@
   "runtime_ui_title": {
     "message": "Tiêu đề",
     "description": "Runtime interface message ui.title"
+  },
+  "runtime_ui_today": {
+    "message": "Hôm nay",
+    "description": "Runtime interface message ui.today"
   },
   "runtime_ui_toggle_hey_hermes": {
     "message": "Chuyển đổi Xin chào Hermes",
@@ -5634,6 +5890,10 @@
   "runtime_ui_xl": {
     "message": "XL",
     "description": "Runtime interface message ui.xl"
+  },
+  "runtime_ui_yesterday": {
+    "message": "Hôm qua",
+    "description": "Runtime interface message ui.yesterday"
   },
   "runtime_ui_you": {
     "message": "bạn",

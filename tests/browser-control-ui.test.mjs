@@ -258,7 +258,7 @@ test('reconnecting state explains the last controller failure with actionable re
 
 test('browser control strip typography scales with the Hermes text zoom setting', () => {
   const css = readFileSync('extension/sidepanel.css', 'utf8');
-  assert.match(css, /\.browser-control-strip-copy strong \{ font: 500 calc\(13px \* var\(--hermes-text-zoom, 1\)\)\/1\.15/);
-  assert.match(css, /\.browser-control-strip-copy span \{ margin-top: 3px; color: var\(--hermes-muted\); font: calc\(10px \* var\(--hermes-text-zoom, 1\)\)\/1\.35/);
+  assert.match(css, /\.browser-control-strip-copy strong \{\s*font: 650 calc\(13\.5px \* var\(--hermes-text-zoom, 1\)\)\/1\.25 var\(--hermes-font-ui\)/);
+  assert.match(css, /\.browser-control-strip-copy span \{[^}]*font: 400 calc\(12px \* var\(--hermes-text-zoom, 1\)\)\/1\.4 var\(--hermes-font-ui\)/);
   assert.match(css, /font: 650 calc\(13px \* var\(--hermes-text-zoom, 1\)\)\/1\.25 var\(--hermes-font-ui\)/);
 });

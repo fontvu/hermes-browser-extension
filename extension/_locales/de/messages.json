@@ -119,6 +119,10 @@
     "message": "Hermes Legacy",
     "description": "Runtime interface message appearance.font_collapse"
   },
+  "runtime_appearance_font_fallback_note": {
+    "message": "Die lizenzierte Signaturschrift ist nicht installiert – die mitgelieferte Ersatzschrift wird verwendet.",
+    "description": "Runtime interface message appearance.font_fallback_note"
+  },
   "runtime_appearance_font_family": {
     "message": "Schriftfamilie",
     "description": "Runtime interface message appearance.font_family"
@@ -254,6 +258,26 @@
   "runtime_assist_routing_fallback_short": {
     "message": "Fällt auf die Gateway-Standardeinstellung zurück, wenn kein genaues Routing verfügbar ist",
     "description": "Runtime interface message assist.routing.fallback_short"
+  },
+  "runtime_attachments_attachment_too_large": {
+    "message": "Dateien bis zu 25 MiB können angehängt werden.",
+    "description": "Runtime interface message attachments.attachment_too_large"
+  },
+  "runtime_attachments_download_to_open": {
+    "message": "Lade die Datei herunter, um sie in einer passenden App zu öffnen.",
+    "description": "Runtime interface message attachments.download_to_open"
+  },
+  "runtime_attachments_file_unavailable": {
+    "message": "Originaldatei nicht verfügbar. Hänge sie erneut an.",
+    "description": "Runtime interface message attachments.file_unavailable"
+  },
+  "runtime_attachments_preview_limited": {
+    "message": "Vorschau begrenzt. Lade die vollständige Datei herunter.",
+    "description": "Runtime interface message attachments.preview_limited"
+  },
+  "runtime_attachments_upload_unavailable": {
+    "message": "Der vollständige Datei-Upload wurde nicht bestätigt. Prüfe die Verbindung oder nutze eine Dashboard-WebSocket-Verbindung und versuche es erneut.",
+    "description": "Runtime interface message attachments.upload_unavailable"
   },
   "runtime_bot_mode_active_now": {
     "message": "Active now",
@@ -832,7 +856,7 @@
     "description": "Runtime interface message browser_control.detached_detail"
   },
   "runtime_browser_control_detached_toast": {
-    "message": "Hermes-Steuerung abgelöst",
+    "message": "Hermes-Steuerung ist aus",
     "description": "Runtime interface message browser_control.detached_toast"
   },
   "runtime_browser_control_enable": {
@@ -850,6 +874,50 @@
   "runtime_browser_control_follow": {
     "message": "Hermes folgen",
     "description": "Runtime interface message browser_control.follow"
+  },
+  "runtime_browser_control_help_attach": {
+    "message": "Lass Hermes diesen Tab steuern. Er ersetzt den zuvor verbundenen Tab.",
+    "description": "Runtime interface message browser_control.help_attach"
+  },
+  "runtime_browser_control_help_close": {
+    "message": "Schließe dieses Fenster, ohne die Steuerung zu pausieren oder auszuschalten.",
+    "description": "Runtime interface message browser_control.help_close"
+  },
+  "runtime_browser_control_help_follow": {
+    "message": "Zeige den verbundenen Tab, den Hermes verwendet, ohne das Browserfenster in den Vordergrund zu holen.",
+    "description": "Runtime interface message browser_control.help_follow"
+  },
+  "runtime_browser_control_help_off": {
+    "message": "Schalte die Browsersteuerung aus und schließe dieses Fenster. Aktiviere sie wieder in den Einstellungen.",
+    "description": "Runtime interface message browser_control.help_off"
+  },
+  "runtime_browser_control_help_pause": {
+    "message": "Pausiere die Browsersteuerung, ohne sie auszuschalten. Verbundene Tabs bleiben erhalten.",
+    "description": "Runtime interface message browser_control.help_pause"
+  },
+  "runtime_browser_control_help_resume": {
+    "message": "Setze die Browsersteuerung auf den weiterhin verbundenen Tabs fort.",
+    "description": "Runtime interface message browser_control.help_resume"
+  },
+  "runtime_browser_control_help_scope_selected_tabs": {
+    "message": "Nur die unten ausgewählten Tabs steuern. Jeder Tab wird einzeln ausgewählt; alle anderen Tabs bleiben außerhalb des Bereichs.",
+    "description": "Runtime interface message browser_control.help_scope_selected_tabs"
+  },
+  "runtime_browser_control_help_scope_task_set": {
+    "message": "Nur die unten ausgewählten Tabs als eine gemeinsame Browseraufgabe steuern. Anders als bei Ausgewählte Tabs teilen sie eine Aufgabenidentität; nicht alle offenen Tabs sind eingeschlossen.",
+    "description": "Runtime interface message browser_control.help_scope_task_set"
+  },
+  "runtime_browser_control_help_scope_this_tab": {
+    "message": "Nur den aktuellen Tab steuern. Andere Tabs sind nicht eingeschlossen.",
+    "description": "Runtime interface message browser_control.help_scope_this_tab"
+  },
+  "runtime_browser_control_help_stay": {
+    "message": "Bleib auf deinem Tab, während Hermes im Hintergrund auf verbundenen Tabs arbeitet.",
+    "description": "Runtime interface message browser_control.help_stay"
+  },
+  "runtime_browser_control_help_stop": {
+    "message": "Stoppe laufende und wartende Browseraktionen, ohne die Steuerung auszuschalten.",
+    "description": "Runtime interface message browser_control.help_stop"
   },
   "runtime_browser_control_kicker": {
     "message": "HERMES CONTROL",
@@ -874,6 +942,30 @@
   "runtime_browser_control_scope": {
     "message": "Steuerungsumfang",
     "description": "Runtime interface message browser_control.scope"
+  },
+  "runtime_browser_control_scope_busy": {
+    "message": "Warte, bis die Steuerung verbunden ist und Aktionen oder Freigaben abgeschlossen sind.",
+    "description": "Runtime interface message browser_control.scope_busy"
+  },
+  "runtime_browser_control_scope_failed": {
+    "message": "Dieser Umfang konnte nicht bestätigt werden. Prüfe die Tabs und versuche es erneut.",
+    "description": "Runtime interface message browser_control.scope_failed"
+  },
+  "runtime_browser_control_scope_locked": {
+    "message": "Wähle hier den Umfang und wende ihn an. Mehrere Tabs müssen ausdrücklich ausgewählt werden.",
+    "description": "Runtime interface message browser_control.scope_locked"
+  },
+  "runtime_browser_control_scope_selection_required": {
+    "message": "Wähle unten mindestens einen Tab. Bis zu 32 Tabs können verbunden werden.",
+    "description": "Runtime interface message browser_control.scope_selection_required"
+  },
+  "runtime_browser_control_scope_tabs": {
+    "message": "Tabs in diesem Umfang",
+    "description": "Runtime interface message browser_control.scope_tabs"
+  },
+  "runtime_browser_control_scope_updated": {
+    "message": "Steuerungsumfang aktualisiert.",
+    "description": "Runtime interface message browser_control.scope_updated"
   },
   "runtime_browser_control_selected_tabs": {
     "message": "Ausgewählte Tabs",
@@ -914,6 +1006,10 @@
   "runtime_browser_control_title": {
     "message": "Gemietete Tabs bedienen",
     "description": "Runtime interface message browser_control.title"
+  },
+  "runtime_browser_control_turn_off": {
+    "message": "Ausschalten",
+    "description": "Runtime interface message browser_control.turn_off"
   },
   "runtime_browser_control_waiting": {
     "message": "Warte auf Hermes.",
@@ -2663,6 +2759,10 @@
     "message": "Das Kopieren ist fehlgeschlagen",
     "description": "Runtime interface message ui.copy.failed"
   },
+  "runtime_ui_copy_message": {
+    "message": "Nachricht kopieren",
+    "description": "Runtime interface message ui.copy.message"
+  },
   "runtime_ui_copy_redacted_diagnostics": {
     "message": "Kopieren Sie die geschwärzten Diagnosen",
     "description": "Runtime interface message ui.copy.redacted.diagnostics"
@@ -2935,6 +3035,14 @@
     "message": "Bearbeiten",
     "description": "Runtime interface message ui.edit"
   },
+  "runtime_ui_edit_failed": {
+    "message": "Bearbeiten fehlgeschlagen. Deine Unterhaltung wurde nicht geändert.",
+    "description": "Runtime interface message ui.edit.failed"
+  },
+  "runtime_ui_edit_message": {
+    "message": "Nachricht bearbeiten",
+    "description": "Runtime interface message ui.edit.message"
+  },
   "runtime_ui_edit_models": {
     "message": "⚙ Modelle bearbeiten...",
     "description": "Runtime interface message ui.edit.models"
@@ -3178,6 +3286,38 @@
   "runtime_ui_group": {
     "message": "Gruppe",
     "description": "Runtime interface message ui.group"
+  },
+  "runtime_ui_group_presence_all_replied": {
+    "message": "Alle haben geantwortet",
+    "description": "Runtime interface message ui.group.presence.all.replied"
+  },
+  "runtime_ui_group_presence_done_failed": {
+    "message": "Fertig · {count} konnten nicht antworten",
+    "description": "Runtime interface message ui.group.presence.done.failed"
+  },
+  "runtime_ui_group_presence_done_passed": {
+    "message": "Fertig · {count} haben gepasst",
+    "description": "Runtime interface message ui.group.presence.done.passed"
+  },
+  "runtime_ui_group_presence_reply_fail": {
+    "message": "{replied} haben geantwortet, {failed} nicht",
+    "description": "Runtime interface message ui.group.presence.reply.fail"
+  },
+  "runtime_ui_group_presence_replying": {
+    "message": "{name} antwortet",
+    "description": "Runtime interface message ui.group.presence.replying"
+  },
+  "runtime_ui_group_presence_typing": {
+    "message": "{name} schreibt",
+    "description": "Runtime interface message ui.group.presence.typing"
+  },
+  "runtime_ui_group_presence_using": {
+    "message": "{name} verwendet {tool}",
+    "description": "Runtime interface message ui.group.presence.using"
+  },
+  "runtime_ui_group_presence_waiting": {
+    "message": "{count} warten",
+    "description": "Runtime interface message ui.group.presence.waiting"
   },
   "runtime_ui_handing_update_to_hermes": {
     "message": "Übergabe des Updates an Hermes",
@@ -3754,6 +3894,10 @@
   "runtime_ui_message_queued": {
     "message": "Nachricht in der Warteschlange",
     "description": "Runtime interface message ui.message.queued"
+  },
+  "runtime_ui_message_unmatched": {
+    "message": "Diese Nachricht konnte nicht der gespeicherten Unterhaltung zugeordnet werden und wurde daher als neue Nachricht gesendet.",
+    "description": "Runtime interface message ui.message.unmatched"
   },
   "runtime_ui_messages": {
     "message": "Nachrichten",
@@ -4567,6 +4711,10 @@
     "message": "Antwort",
     "description": "Runtime interface message ui.reply"
   },
+  "runtime_ui_reply_to_member": {
+    "message": "Antwort an @{name}",
+    "description": "Runtime interface message ui.reply.to.member"
+  },
   "runtime_ui_request": {
     "message": "Anfrage",
     "description": "Runtime interface message ui.request"
@@ -4579,6 +4727,14 @@
     "message": "Erforderlich für Cloud Preview und ältere Hermes-Builds. Es lehnt die Cloud-Spracherkennung ab.",
     "description": "Runtime interface message ui.required.for.cloud.preview.and.older.hermes.builds.it.refuses.c.f0bdad5b"
   },
+  "runtime_ui_rerun": {
+    "message": "Neu ausführen",
+    "description": "Runtime interface message ui.rerun"
+  },
+  "runtime_ui_rerun_from_here": {
+    "message": "Von hier neu ausführen? Nachfolgende Nachrichten werden entfernt.",
+    "description": "Runtime interface message ui.rerun.from.here"
+  },
   "runtime_ui_reset": {
     "message": "Zurücksetzen",
     "description": "Runtime interface message ui.reset"
@@ -4590,6 +4746,10 @@
   "runtime_ui_response": {
     "message": "Antwort",
     "description": "Runtime interface message ui.response"
+  },
+  "runtime_ui_restore_checkpoint": {
+    "message": "Kontrollpunkt wiederherstellen: ab dieser Nachricht neu ausführen",
+    "description": "Runtime interface message ui.restore.checkpoint"
   },
   "runtime_ui_restricted_page": {
     "message": "Eingeschränkte Seite",
@@ -4630,6 +4790,82 @@
   "runtime_ui_right_click_task_failed": {
     "message": "Die Aufgabe mit der rechten Maustaste ist fehlgeschlagen",
     "description": "Runtime interface message ui.right.click.task.failed"
+  },
+  "runtime_ui_room_bots_title": {
+    "message": "Bots in diesem Raum",
+    "description": "Runtime interface message ui.room.bots.title"
+  },
+  "runtime_ui_room_busy": {
+    "message": "Beschäftigt mit Antworten",
+    "description": "Runtime interface message ui.room.busy"
+  },
+  "runtime_ui_room_checking": {
+    "message": "Wird geprüft…",
+    "description": "Runtime interface message ui.room.checking"
+  },
+  "runtime_ui_room_fail_reason_generic": {
+    "message": "Etwas ist schiefgelaufen",
+    "description": "Runtime interface message ui.room.fail.reason.generic"
+  },
+  "runtime_ui_room_fail_reason_usage": {
+    "message": "Nutzungslimit erreicht, später erneut versuchen",
+    "description": "Runtime interface message ui.room.fail.reason.usage"
+  },
+  "runtime_ui_room_failed": {
+    "message": "fehlgeschlagen",
+    "description": "Runtime interface message ui.room.failed"
+  },
+  "runtime_ui_room_member_default_restored": {
+    "message": "{name} ist zurück auf dem Profilstandard",
+    "description": "Runtime interface message ui.room.member.default.restored"
+  },
+  "runtime_ui_room_member_failed": {
+    "message": "{name} konnte nicht antworten: {reason}",
+    "description": "Runtime interface message ui.room.member.failed"
+  },
+  "runtime_ui_room_member_failed_short": {
+    "message": "{name} konnte nicht antworten",
+    "description": "Runtime interface message ui.room.member.failed.short"
+  },
+  "runtime_ui_room_member_now_uses": {
+    "message": "{name} verwendet jetzt {model} in diesem Raum",
+    "description": "Runtime interface message ui.room.member.now.uses"
+  },
+  "runtime_ui_room_member_passed": {
+    "message": "{name} hat gepasst",
+    "description": "Runtime interface message ui.room.member.passed"
+  },
+  "runtime_ui_room_member_retry": {
+    "message": "Erneut versuchen",
+    "description": "Runtime interface message ui.room.member.retry"
+  },
+  "runtime_ui_room_member_retry_aria": {
+    "message": "Erneut für {name} versuchen",
+    "description": "Runtime interface message ui.room.member.retry.aria"
+  },
+  "runtime_ui_room_model_note": {
+    "message": "Modelländerungen gelten nur für diesen Raum.",
+    "description": "Runtime interface message ui.room.model.note"
+  },
+  "runtime_ui_room_next": {
+    "message": "weiter",
+    "description": "Runtime interface message ui.room.next"
+  },
+  "runtime_ui_room_passed": {
+    "message": "gepasst",
+    "description": "Runtime interface message ui.room.passed"
+  },
+  "runtime_ui_room_profile_default": {
+    "message": "Profilstandard",
+    "description": "Runtime interface message ui.room.profile.default"
+  },
+  "runtime_ui_room_reset_default": {
+    "message": "Auf Profilstandard zurücksetzen",
+    "description": "Runtime interface message ui.room.reset.default"
+  },
+  "runtime_ui_room_unknown": {
+    "message": "Unbekannt",
+    "description": "Runtime interface message ui.room.unknown"
   },
   "runtime_ui_row": {
     "message": "Zeile",
@@ -4907,6 +5143,18 @@
     "message": "Zeigen Sie Hermes Assist in Schreibfeldern an",
     "description": "Runtime interface message ui.show.hermes.assist.in.writing.fields"
   },
+  "runtime_ui_show_message_times": {
+    "message": "Nachrichtenzeit anzeigen",
+    "description": "Runtime interface message ui.show.message.times"
+  },
+  "runtime_ui_show_message_times_hint": {
+    "message": "Zeigt die Uhrzeit deiner Nachrichten beim Überfahren oder Antippen.",
+    "description": "Runtime interface message ui.show.message.times.hint"
+  },
+  "runtime_ui_show_or_hide_status": {
+    "message": "Status ein- oder ausblenden",
+    "description": "Runtime interface message ui.show.or.hide.status"
+  },
   "runtime_ui_side_panel": {
     "message": "Seitenteil",
     "description": "Runtime interface message ui.side.panel"
@@ -5046,6 +5294,10 @@
   "runtime_ui_steer_the_current_run": {
     "message": "Steuern Sie den aktuellen Lauf",
     "description": "Runtime interface message ui.steer.the.current.run"
+  },
+  "runtime_ui_steered_label": {
+    "message": "Gelenkt",
+    "description": "Runtime interface message ui.steered.label"
   },
   "runtime_ui_stop": {
     "message": "Stoppen",
@@ -5270,6 +5522,10 @@
   "runtime_ui_title": {
     "message": "Titel",
     "description": "Runtime interface message ui.title"
+  },
+  "runtime_ui_today": {
+    "message": "Heute",
+    "description": "Runtime interface message ui.today"
   },
   "runtime_ui_toggle_hey_hermes": {
     "message": "Toggle Hallo Hermes",
@@ -5634,6 +5890,10 @@
   "runtime_ui_xl": {
     "message": "XL",
     "description": "Runtime interface message ui.xl"
+  },
+  "runtime_ui_yesterday": {
+    "message": "Gestern",
+    "description": "Runtime interface message ui.yesterday"
   },
   "runtime_ui_you": {
     "message": "Du",

@@ -229,8 +229,10 @@ test('side panel keeps Browser onboarding, refresh feedback, updates, and messag
   const checkUpdates = js.match(/async function checkForUpdates\([^)]*\)[\s\S]*?\n\}/)?.[0] || '';
   const renderEmpty = js.match(/function renderEmptyState\(\)[\s\S]*?\n\}/)?.[0] || '';
 
-  assert.match(css, /\.message\.user\s*\{[^}]*color-mix\([^}]*var\(--hermes-paper\)\s+36%,\s*transparent/s);
-  assert.match(css, /\.message\.assistant\s*\{[^}]*color-mix\([^}]*var\(--hermes-paper\)\s+42%,\s*transparent/s);
+  assert.match(css, /\.message\.user\s*\{[^}]*color-mix\([^}]*var\(--hermes-bubble-user-alpha\),\s*transparent/s);
+  assert.match(css, /\.message\.assistant\s*\{[^}]*color-mix\([^}]*var\(--hermes-bubble-assistant-alpha\),\s*transparent/s);
+  assert.match(css, /--hermes-bubble-user-alpha:\s*100%/);
+  assert.match(css, /--hermes-bubble-assistant-alpha:\s*100%/);
   assert.match(css, /backdrop-filter:\s*blur\(/);
   assert.match(html, /class="release-sidecar"/);
   assert.match(html, /LOCAL SIDECAR \/ CHROME PANEL/);
@@ -248,7 +250,7 @@ test('side panel keeps Browser onboarding, refresh feedback, updates, and messag
   assert.match(css, /\.release-sidecar\s*\{[^}]*background-blend-mode:\s*normal,\s*luminosity,\s*normal/s);
   assert.doesNotMatch(css, /\.release-sidecar::before/);
   assert.match(css, /\.operation-toast\s*\{(?=[^}]*left:\s*50%)(?=[^}]*right:\s*auto)(?=[^}]*transform:\s*translateX\(-50%\))[^}]*\}/s);
-  assert.match(css, /@keyframes operationToastIn\s*\{[\s\S]*translate\(-50%,\s*10px\)[\s\S]*translate\(-50%,\s*0\)/);
+  assert.match(css, /@keyframes operationToastIn\s*\{[\s\S]*translate\(-50%,\s*-10px\)[\s\S]*translate\(-50%,\s*0\)/);
   assert.match(css, /#refreshSessionsButton\.is-refreshing\s+\.session-refresh-icon\s*\{[^}]*animation:/s);
   assert.match(refreshModels, /showOperationToast\(/);
   assert.match(refreshSessions, /showOperationToast\(/);
@@ -269,7 +271,7 @@ test('side panel keeps Browser onboarding, refresh feedback, updates, and messag
   assert.match(js, /review\.emptyMessage/);
   assert.match(js, /maybeLaterButton\.textContent\s*=\s*translateUiText\(review\.available/);
   assert.match(refreshSessions, /sessionsRefreshing\s*=\s*true/);
-  assert.match(js, /function positionOperationToast\(\)[\s\S]*?getBoundingClientRect\(\)/);
+  assert.doesNotMatch(js, /positionOperationToast/);
   assert.match(js, /HERMES_BROWSER_INTRO_SEEN_STORAGE_KEY/);
   assert.match(renderEmpty, /shouldShowBrowserIntro\(/);
   assert.match(js, /await persistBrowserIntroSeen\(\)/);

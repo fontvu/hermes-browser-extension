@@ -699,14 +699,16 @@ test('pairingFailureMessage explains a missing pairing route instead of a bare 4
   assert.equal(pairingFailureMessage(503, {}), 'Pairing failed (503)');
 });
 
-test('gateway diagnostics classify upstream runtime, auth, CORS, and missing route failures', () => {
+test('gateway diagnostics classify server runtime, auth, CORS, and missing route failures', () => {
   const upstream = classifyGatewayError(new Error("int() argument must be a string, a bytes-like object or a real number, not 'NoneType'"));
-  assert.equal(upstream.kind, 'upstream-runtime');
+  assert.equal(upstream.kind, 'server-runtime');
   assert.equal(upstream.probeStatus, 'degraded');
-  assert.match(upstream.title, /runtime exception/i);
-  assert.match(upstream.detail, /upstream Hermes Agent/i);
-  assert.match(upstream.detail, /computer_use/i);
-  assert.match(upstream.userMessage, /gateway traceback/i);
+  assert.equal(upstream.serverReachable, true);
+  assert.match(upstream.title, /runtime failure/i);
+  assert.match(upstream.detail, /gateway is running/i);
+  assert.match(upstream.detail, /gateway log/i);
+  assert.doesNotMatch(upstream.detail, /computer_use|cua-driver/i);
+  assert.doesNotMatch(upstream.userMessage, /traceback|NoneType/i);
   assert.doesNotMatch(upstream.userMessage, /api\/model\/options/i);
 
   const auth = classifyGatewayError('401: Unauthorized');
@@ -765,8 +767,17 @@ test('connection diagnostics can represent connected-but-degraded optional failu
     state: 'degraded',
     probeDetail: "int() argument must be a string, a bytes-like object or a real number, not 'NoneType'",
   });
-  assert.match(copy, /Hermes API server is reachable/i);
-  assert.match(copy, /upstream Hermes Agent/i);
+  assert.match(copy, /gateway is running/i);
+  assert.match(copy, /gateway log/i);
+  assert.doesNotMatch(copy, /NoneType|Traceback|aiohttp/i);
+
+  const genericCopy = gatewayConnectionTroubleshooting({
+    gatewayMode: 'local-api',
+    gatewayUrl: 'http://127.0.0.1:8642',
+    state: 'degraded',
+    probeDetail: 'provider validation failure',
+  });
+  assert.match(genericCopy, /Hermes API server is reachable/i);
 });
 
 test('clampText preserves short text and clearly marks truncation', () => {
@@ -1210,11 +1221,11 @@ test('shouldSubmitComposerKey sends on Enter while preserving Shift+Enter for ne
   assert.equal(shouldSubmitComposerKey({ key: 'Enter', shiftKey: false, isComposing: true }), false);
 });
 
-test('composer renders the readable context scope control across from Ask Hermes', () => {
+test('composer status row puts the DOM chip left of the scope control, behind a collapse toggle', () => {
   const html = readFileSync(new URL('../extension/sidepanel.html', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../extension/sidepanel.css', import.meta.url), 'utf8');
   const headerIndex = html.indexOf('class="composer-header"');
-  const labelIndex = html.indexOf('class="composer-label"');
+  const labelIndex = html.indexOf('class="composer-label sr-only"');
   const scopeIndex = html.indexOf('id="contextScopeButton"');
   const chipIndex = html.indexOf('id="contextChip"');
   assert.notEqual(headerIndex, -1);
@@ -1222,8 +1233,9 @@ test('composer renders the readable context scope control across from Ask Hermes
   assert.notEqual(scopeIndex, -1);
   assert.notEqual(chipIndex, -1);
   assert.ok(labelIndex > headerIndex, 'Ask Hermes label should be inside the composer header');
-  assert.ok(scopeIndex > labelIndex, 'context scope control should sit across from the Ask Hermes label');
-  assert.ok(scopeIndex < chipIndex, 'context scope control should render above the DOM chip, not below it');
+  assert.ok(chipIndex > labelIndex && chipIndex < scopeIndex, 'DOM chip sits left of the scope control');
+  assert.ok(html.indexOf('id="statusStackToggle"') < headerIndex, 'collapse toggle sits above the status row');
+  assert.match(css, /\.composer\.status-stack-collapsed #composerStatusStack/);
   assert.match(css, /\.context-scope-button\s*\{[^}]*background:\s*rgba\(var\(--hermes-ink-rgb\),0\.12\);[^}]*color:\s*var\(--hermes-ink\);/s);
 });
 
@@ -1830,11 +1842,11 @@ test('normalizeHermesModels pairs Claude, Grok, and Nous rows with Hermes window
   assert.equal(models.find((model) => model.rawModelId === 'claude-opus-5.5')?.contextTokens, 1_000_000);
   assert.equal(models.find((model) => model.rawModelId === 'claude-sonnet-5')?.contextTokens, 1_000_000);
   assert.equal(models.find((model) => model.rawModelId === 'grok-4.7')?.contextTokens, 500_000);
-  assert.equal(models.find((model) => model.rawModelId === 'grok-4.6')?.contextTokens, 500_000);
+  assert.equal(models.find((model) => model.rawModelId === 'grok-4.6')?.contextTokens, 256_000);
   assert.equal(models.find((model) => model.rawModelId === 'mimo-v2.6-pro')?.contextTokens, 1_048_576);
   assert.equal(models.find((model) => model.rawModelId === 'mimo-v2.6-flash')?.contextTokens, 1_048_576);
   assert.equal(models.find((model) => model.rawModelId === 'gpt-6-sol')?.contextTokens, 272_000);
-  assert.equal(models.find((model) => model.rawModelId === 'gpt-6-sol-900k')?.contextTokens, 872_000);
+  assert.equal(models.find((model) => model.rawModelId === 'gpt-6-sol-900k')?.contextTokens, 900_000);
 });
 
 test('normalizeHermesModels gives Grok 4.6 a 500k window instead of the grok-4 256k catch-all', () => {
@@ -1842,7 +1854,7 @@ test('normalizeHermesModels gives Grok 4.6 a 500k window instead of the grok-4 2
   assert.equal(omitted[0].contextTokens, 500_000);
 
   const stale = normalizeHermesModels({ data: [{ id: 'grok-4.6', rawModelId: 'grok-4.6', provider: 'xai', context_length: 256_000 }] }, 'grok-4.6');
-  assert.equal(stale[0].contextTokens, 500_000);
+  assert.equal(stale[0].contextTokens, 256_000, 'an explicit provider limit wins over a Browser fallback');
 
   const older = normalizeHermesModels({ data: [{ id: 'grok-4', rawModelId: 'grok-4', provider: 'xai', context_length: 0 }] }, 'grok-4');
   assert.equal(older[0].contextTokens, 256_000);
@@ -1851,17 +1863,17 @@ test('normalizeHermesModels gives Grok 4.6 a 500k window instead of the grok-4 2
 test('normalizeHermesModels applies 1M context fallback for Qwen Token Plan models', () => {
   for (const model of ['qwen3.8-max-preview', 'qwen3.7-max', 'qwen3.7-plus', 'qwen3.6-flash']) {
     const qwenModels = normalizeHermesModels({ data: [{ id: model, rawModelId: model, provider: 'qwen-token-plan', context_length: 0 }] }, model);
-    assert.equal(qwenModels[0].contextTokens, 1_000_000, `${model} should fall back to 1M context`);
+    assert.equal(qwenModels[0].contextTokens, model === 'qwen3.7-plus' ? 1_048_576 : 1_000_000, `${model} should follow the Agent table, retaining display aliases only for missing keys`);
   }
 
   const unknownQwen = normalizeHermesModels({ data: [{ id: 'qwen-unknown-model', context_length: 0 }] }, 'qwen-unknown-model');
   assert.equal(unknownQwen[0].contextTokens, 131_072, 'unrecognized qwen models should keep the generic 131072 catch-all');
 });
 
-test('normalizeHermesModels overrides a stale 131072 runtime with curated 1M for Qwen Token Plan models', () => {
+test('normalizeHermesModels trusts explicit Qwen limits instead of overriding them with Browser guesses', () => {
   for (const model of ['qwen3.8-max-preview', 'qwen3.7-max', 'qwen3.7-plus', 'qwen3.6-flash']) {
     const stale = normalizeHermesModels({ data: [{ id: model, rawModelId: model, provider: 'qwen-token-plan', context_length: 131072 }] }, model);
-    assert.equal(stale[0].contextTokens, 1_000_000, `${model} should prefer curated 1M over a stale 131072 runtime`);
+    assert.equal(stale[0].contextTokens, 131_072, `${model} must keep the explicit provider limit`);
   }
 
   const customRuntime = normalizeHermesModels({ data: [{ id: 'qwen3.8-max-preview', rawModelId: 'qwen3.8-max-preview', provider: 'qwen-token-plan', context_length: 262144 }] }, 'qwen3.8-max-preview');
@@ -1886,7 +1898,7 @@ test('normalizeHermesModels maps tiered Codex GPT-5.6 context variants by explic
 
     const largeVariant = `${model}-900k`;
     const largeCodexModels = normalizeHermesModels({ data: [{ id: `openai-codex::${largeVariant}`, rawModelId: largeVariant, provider: 'openai-codex', context_length: 0 }] }, `openai-codex::${largeVariant}`);
-    assert.equal(largeCodexModels[0].contextTokens, 872_000, `${largeVariant} should use the 872K Codex catalog cap`);
+    assert.equal(largeCodexModels[0].contextTokens, 900_000, `${largeVariant} follows Agent fallback without inventing a live cap`);
 
     const directModels = normalizeHermesModels({ data: [{ id: `openai::${model}`, rawModelId: model, provider: 'openai', context_length: 0 }] }, `openai::${model}`);
     assert.equal(directModels[0].contextTokens, 1_050_000, `${model} should use the direct OpenAI limit`);
@@ -1899,10 +1911,10 @@ test('normalizeHermesModels maps tiered Codex GPT-5.6 context variants by explic
     provider: 'openai-codex',
     context_length: 0,
   }] }, 'openai-codex::gpt-5.6-luna');
-  assert.equal(labeledVariant[0].contextTokens, 872_000, 'a visible 900K model label should select the capped Codex window');
+  assert.equal(labeledVariant[0].contextTokens, 272_000, 'a display label cannot opt a base model into another runtime window');
 
   const codexGpt54 = normalizeHermesModels({ data: [{ id: 'openai-codex::gpt-5.4', rawModelId: 'gpt-5.4', provider: 'openai-codex', context_length: 0 }] }, 'openai-codex::gpt-5.4');
-  assert.equal(codexGpt54[0].contextTokens, 872_000, 'exact gpt-5.4 should use the capped Codex catalog window');
+  assert.equal(codexGpt54[0].contextTokens, 272_000, 'the base model follows the Agent base limit');
 });
 
 test('normalizeHermesModels maps Codex ChatGPT 6 Astra context to 272k and 900k', () => {
@@ -1912,7 +1924,7 @@ test('normalizeHermesModels maps Codex ChatGPT 6 Astra context to 272k and 900k'
 
     const largeVariant = `${model}-900k`;
     const large = normalizeHermesModels({ data: [{ id: `openai-codex::${largeVariant}`, rawModelId: largeVariant, provider: 'openai-codex', context_length: 0 }] }, `openai-codex::${largeVariant}`);
-    assert.equal(large[0].contextTokens, 872_000, `${largeVariant} should use the 872K Codex catalog cap`);
+    assert.equal(large[0].contextTokens, 900_000, `${largeVariant} follows the Agent opt-in fallback`);
   }
 
   const labeled = normalizeHermesModels({ data: [{
@@ -1931,7 +1943,7 @@ test('normalizeHermesModels maps Codex ChatGPT 6 Astra context to 272k and 900k'
     provider: 'openai-codex',
     context_length: 272_000,
   }] }, 'openai-codex::gpt-6-astra');
-  assert.equal(labeled900k[0].contextTokens, 872_000, 'a visible 900K Astra label should repair the stale 272K advertisement');
+  assert.equal(labeled900k[0].contextTokens, 272_000, 'a label cannot override reported metadata');
 
   const alias = normalizeHermesModels({ data: [{
     id: 'codex::gpt-6-astra',
@@ -1987,7 +1999,7 @@ test('normalizeHermesModels never invents a GPT-5.6 limit without a provider and
   assert.equal(authoritativeRuntime[0].contextTokens, 300_000);
 });
 
-test('normalizeHermesModels repairs only the known-stale Codex context advertisement', () => {
+test('normalizeHermesModels preserves reported Codex context instead of forcing a fixed catalog cap', () => {
   const baseCodex = normalizeHermesModels({
     data: [{
       id: 'openai-codex::gpt-5.6-luna',
@@ -2006,7 +2018,7 @@ test('normalizeHermesModels repairs only the known-stale Codex context advertise
       context_length: 272_000,
     }],
   }, 'openai-codex::gpt-5.6-luna-900k');
-  assert.equal(largeCodex[0].contextTokens, 872_000, 'the 900K Luna row must repair the stale 272K advertisement');
+  assert.equal(largeCodex[0].contextTokens, 272_000, 'the reported effective limit is authoritative');
 
   const codexGpt54 = normalizeHermesModels({
     data: [{
@@ -2016,7 +2028,7 @@ test('normalizeHermesModels repairs only the known-stale Codex context advertise
       context_length: 272_000,
     }],
   }, 'openai-codex::gpt-5.4');
-  assert.equal(codexGpt54[0].contextTokens, 872_000, 'exact gpt-5.4 keeps the capped Codex catalog window');
+  assert.equal(codexGpt54[0].contextTokens, 272_000, 'the reported effective limit is authoritative');
 
   const unrelated = normalizeHermesModels({
     data: [{ id: 'custom::gpt-5', rawModelId: 'gpt-5', provider: 'custom', context_length: 272_000 }],
@@ -2842,19 +2854,28 @@ test('connectionStateForGateway uses live reachability instead of config presenc
   );
 });
 
-test('gatewayConnectionTroubleshooting explains local v0.18 API server dependency failures', () => {
+test('gatewayConnectionTroubleshooting never invents a cause for an ambiguous local probe', () => {
   const message = gatewayConnectionTroubleshooting({
     gatewayMode: 'local-api',
     gatewayUrl: 'http://127.0.0.1:8642',
     state: 'unreachable',
     probeDetail: 'http://127.0.0.1:8642 · Failed to fetch',
   });
-  assert.match(message, /API server is not listening/i);
   assert.match(message, /127\.0\.0\.1:8642/);
-  assert.match(message, /Hermes Agent v0\.18/i);
-  assert.match(message, /aiohttp/i);
-  assert.match(message, /restart Hermes Gateway/i);
+  assert.match(message, /cannot tell/i);
+  assert.match(message, /check connection/i);
+  assert.doesNotMatch(message, /API server is not listening/i);
+  assert.doesNotMatch(message, /aiohttp|Hermes Agent v0\.18/i);
   assert.doesNotMatch(message, /API_SERVER_KEY|Bearer|token/i);
+
+  const refused = gatewayConnectionTroubleshooting({
+    gatewayMode: 'local-api',
+    gatewayUrl: 'http://127.0.0.1:8642',
+    state: 'unreachable',
+    probeDetail: 'net::ERR_CONNECTION_REFUSED',
+  });
+  assert.match(refused, /refused/i);
+  assert.doesNotMatch(refused, /aiohttp/i);
 
   const remote = gatewayConnectionTroubleshooting({
     gatewayMode: 'remote-api',
@@ -2862,7 +2883,7 @@ test('gatewayConnectionTroubleshooting explains local v0.18 API server dependenc
     state: 'unreachable',
     probeDetail: 'timeout',
   });
-  assert.match(remote, /Remote Hermes API is not reachable/i);
+  assert.match(remote, /timed out/i);
   assert.doesNotMatch(remote, /aiohttp|v0\.18/i);
 });
 
@@ -2958,7 +2979,7 @@ test('refresh page context button animates while refreshContext is running', () 
   const html = readFileSync(new URL('../extension/sidepanel.html', import.meta.url), 'utf8');
   const source = readFileSync(new URL('../extension/sidepanel.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../extension/sidepanel.css', import.meta.url), 'utf8');
-  assert.match(html, /id="refreshButton"[\s\S]*?<span class="refresh-glyph" aria-hidden="true">↻<\/span>/);
+  assert.match(html, /id="refreshButton"[\s\S]*?<svg class="refresh-glyph"[^>]*viewBox="0 0 24 24"/);
   assert.match(css, /@keyframes hermesRefreshSpin/);
   assert.match(css, /\.icon-refresh\.is-refreshing/);
   assert.match(css, /\.icon-refresh\.is-refreshing\s+\.refresh-glyph\s*\{[^}]*animation:\s*hermesRefreshSpin/s);
@@ -3029,7 +3050,7 @@ test('context accounting falls back to local prompt estimate when runtime prompt
   assert.equal(result.source, 'local-estimate');
 });
 
-test('context accounting reconciles the stale Codex advertisement even when catalog metadata is also stale', () => {
+test('context accounting respects live Codex limits even when catalog estimates disagree', () => {
   for (const model of ['gpt-5.6-luna-900k', 'gpt-5.4']) {
     const result = contextAccountingSnapshot({
       localPromptTokens: 800,
@@ -3043,14 +3064,14 @@ test('context accounting reconciles the stale Codex advertisement even when cata
     });
 
     assert.equal(result.liveContextTokens, 7_000);
-    assert.equal(result.contextLimitTokens, 872_000);
+    assert.equal(result.contextLimitTokens, 272_000);
   }
 
   const alias = contextAccountingSnapshot({
     runtime: { provider: 'codex', model: 'gpt-5.6-sol-900k', context_length: 272_000 },
     modelContextTokens: 272_000,
   });
-  assert.equal(alias.contextLimitTokens, 872_000);
+  assert.equal(alias.contextLimitTokens, 272_000);
 
   const authoritative = contextAccountingSnapshot({
     runtime: { provider: 'openai-codex', model: 'gpt-5.6-sol', context_length: 300_000 },
@@ -3379,7 +3400,7 @@ test('discoverModelsFromRegistry flattens /api/model/options provider inventory'
   const normalized = normalizeHermesModels(result.models, 'openai-codex::gpt-5.6-sol');
   assert.equal(normalized.find((model) => model.rawModelId === 'gpt-5.5')?.contextTokens, 272_000);
   assert.equal(normalized.find((model) => model.rawModelId === 'gpt-5.6-sol')?.contextTokens, 272_000);
-  assert.equal(normalized.find((model) => model.rawModelId === 'gpt-5.6-sol-900k')?.contextTokens, 872_000);
+  assert.equal(normalized.find((model) => model.rawModelId === 'gpt-5.6-sol-900k')?.contextTokens, 900_000);
   assert.equal(normalized.find((model) => model.rawModelId === 'gpt-5.6-terra')?.contextTokens, 272_000);
   assert.equal(normalized.find((model) => model.rawModelId === 'gpt-5.6-luna')?.contextTokens, 272_000);
   assert.equal(result.models.at(-1).contextTokens, 1_000_000);
@@ -3426,7 +3447,7 @@ test('Cloud Preview applies model picks to the live session and refreshes contex
   assert.match(sidepanel, /WS_METHODS\.sessionStatus/);
   assert.match(sidepanel, /runtimeModelFromSessionStatus\(statusPayload\)/);
   assert.match(sidepanel, /source:\s*'Cloud model switch'/);
-  assert.match(sidepanel, /runtime\.context_length\s*=\s*selected\?\.contextTokens/);
+  assert.match(sidepanel, /runtime\.context_length\s*=\s*runtimeContextTokens\(statusPayload\.runtime \|\| statusPayload\) \|\| selected\?\.contextTokens/);
   assert.match(sidepanel, /Cloud model switch failed/);
 });
 

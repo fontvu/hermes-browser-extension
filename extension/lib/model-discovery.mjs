@@ -188,6 +188,7 @@ export function modelsFromModelOptionsPayload(payload = {}) {
         providerLabel,
         description: provider?.warning || provider?.source || '',
         contextTokens: entryContext || capsContext || 0,
+        hermesContextTokens: entryContext || capsContext || 0,
         fast: typeof modelCaps.fast === 'boolean' ? modelCaps.fast : undefined,
         reasoning: typeof modelCaps.reasoning === 'boolean' ? modelCaps.reasoning : undefined,
         authenticated: provider?.authenticated !== false,

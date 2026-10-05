@@ -287,14 +287,12 @@ const OUTLINED_INVERTED_SELECTORS = [
   '.settings-close-icon:hover',
   '.settings-close-icon:focus-visible',
   '.hero-dismiss:hover',
-  '.browser-control-dismiss:hover',
   '.settings-connection-test:hover',
   '#saveSettingsTopButton:hover',
   '.bot-mode-head-action:hover',
   '.marketplace-theme-search button:hover',
   '.marketplace-theme-card button:hover',
   '#textZoomPresetGrid [data-text-zoom-percent]:hover',
-  '.operation-toast button:hover',
   '.side-question-close:hover',
 ];
 

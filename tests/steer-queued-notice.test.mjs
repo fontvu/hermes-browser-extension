@@ -59,7 +59,7 @@ test('queued steer renders as a dashed user row pinned at the end of the transcr
 
   const row = harness.messages.querySelector('.steer-pending-row');
   assert.ok(row, 'a .steer-pending-row must appear while a steer is queued');
-  assert.ok(row.classList.contains('user'));
+  assert.ok((row.querySelector('.message') || row).classList.contains('user'), 'the bubble carries the user + dashed styling');
   assert.equal(row.querySelector('.message-role').textContent, 'Steer queued · arrives after the next tool call');
   assert.equal(row.querySelector('.message-content').textContent, 'tighten the second paragraph');
   assert.equal(harness.messages.lastElementChild, row, 'the queued row stays directly under the live turn');

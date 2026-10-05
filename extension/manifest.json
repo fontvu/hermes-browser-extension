@@ -3,7 +3,7 @@
   "default_locale": "en",
   "name": "__MSG_extensionName__",
   "short_name": "__MSG_extensionShortName__",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "__MSG_extensionDescription__",
   "minimum_chrome_version": "116",
   "icons": {
@@ -23,6 +23,7 @@
     "scripting",
     "sidePanel",
     "storage",
+    "unlimitedStorage",
     "tabs"
   ],
   "host_permissions": [

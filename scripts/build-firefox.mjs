@@ -15,6 +15,7 @@ import path from 'node:path';
 import { writeContentExtractorRuntime } from './build-content-runtime.mjs';
 import { MANIFEST_TARGETS, manifestAssumptionsFor } from './manifest-profiles.mjs';
 import { checkSelfContained } from './check-self-contained.mjs';
+import { syncHermesContextWindows } from './sync-hermes-context-windows.mjs';
 
 const root = process.cwd();
 const src = path.join(root, 'extension');
@@ -24,6 +25,7 @@ const FIREFOX_ADDON_ID = 'hermes-browser-extension@abundantbeing.github.io';
 const firefoxProfile = manifestAssumptionsFor(MANIFEST_TARGETS.FIREFOX);
 
 await writeContentExtractorRuntime({ rootDir: root });
+await syncHermesContextWindows({ root });
 checkSelfContained(src);
 
 function copyDir(from, to) {

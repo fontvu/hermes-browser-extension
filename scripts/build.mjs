@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { writeContentExtractorRuntime } from './build-content-runtime.mjs';
 import { checkSelfContained } from './check-self-contained.mjs';
+import { syncHermesContextWindows } from './sync-hermes-context-windows.mjs';
 
 const root = process.cwd();
 const src = path.join(root, 'extension');
@@ -11,6 +12,7 @@ const dest = path.join(root, 'dist');
 const buildInfoFileName = 'build-info.json';
 
 await writeContentExtractorRuntime({ rootDir: root });
+await syncHermesContextWindows({ root });
 checkSelfContained(src);
 
 function copyDir(from, to) {

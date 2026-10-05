@@ -119,6 +119,10 @@
     "message": "Hermes Legacy",
     "description": "Runtime interface message appearance.font_collapse"
   },
+  "runtime_appearance_font_fallback_note": {
+    "message": "Het gelicentieerde signatuurlettertype is niet geïnstalleerd — het meegeleverde reservelettertype wordt getoond.",
+    "description": "Runtime interface message appearance.font_fallback_note"
+  },
   "runtime_appearance_font_family": {
     "message": "Lettertypefamilie",
     "description": "Runtime interface message appearance.font_family"
@@ -254,6 +258,26 @@
   "runtime_assist_routing_fallback_short": {
     "message": "Valt terug naar de gatewaystandaard wanneer exacte routering niet beschikbaar is",
     "description": "Runtime interface message assist.routing.fallback_short"
+  },
+  "runtime_attachments_attachment_too_large": {
+    "message": "Je kunt bestanden tot 25 MiB bijvoegen.",
+    "description": "Runtime interface message attachments.attachment_too_large"
+  },
+  "runtime_attachments_download_to_open": {
+    "message": "Download dit bestand om het in een geschikte app te openen.",
+    "description": "Runtime interface message attachments.download_to_open"
+  },
+  "runtime_attachments_file_unavailable": {
+    "message": "Het oorspronkelijke bestand is niet beschikbaar. Voeg het opnieuw toe.",
+    "description": "Runtime interface message attachments.file_unavailable"
+  },
+  "runtime_attachments_preview_limited": {
+    "message": "Beperkt voorbeeld. Download het volledige bestand.",
+    "description": "Runtime interface message attachments.preview_limited"
+  },
+  "runtime_attachments_upload_unavailable": {
+    "message": "De upload van het volledige bestand is niet bevestigd. Controleer de verbinding of gebruik een dashboard-WebSocket-verbinding en probeer opnieuw.",
+    "description": "Runtime interface message attachments.upload_unavailable"
   },
   "runtime_bot_mode_active_now": {
     "message": "Active now",
@@ -832,7 +856,7 @@
     "description": "Runtime interface message browser_control.detached_detail"
   },
   "runtime_browser_control_detached_toast": {
-    "message": "Hermes-bediening losgekoppeld",
+    "message": "Hermes-besturing is uitgeschakeld",
     "description": "Runtime interface message browser_control.detached_toast"
   },
   "runtime_browser_control_enable": {
@@ -850,6 +874,50 @@
   "runtime_browser_control_follow": {
     "message": "Volg Hermes",
     "description": "Runtime interface message browser_control.follow"
+  },
+  "runtime_browser_control_help_attach": {
+    "message": "Laat Hermes dit tabblad besturen in plaats van het eerder gekoppelde tabblad.",
+    "description": "Runtime interface message browser_control.help_attach"
+  },
+  "runtime_browser_control_help_close": {
+    "message": "Sluit dit paneel zonder de besturing te pauzeren of uit te schakelen.",
+    "description": "Runtime interface message browser_control.help_close"
+  },
+  "runtime_browser_control_help_follow": {
+    "message": "Toon het gekoppelde tabblad dat Hermes gebruikt zonder het browservenster naar voren te halen.",
+    "description": "Runtime interface message browser_control.help_follow"
+  },
+  "runtime_browser_control_help_off": {
+    "message": "Schakel browserbesturing uit en sluit dit paneel. Schakel deze weer in via Instellingen.",
+    "description": "Runtime interface message browser_control.help_off"
+  },
+  "runtime_browser_control_help_pause": {
+    "message": "Pauzeer browserbesturing zonder deze uit te schakelen. Gekoppelde tabbladen blijven behouden.",
+    "description": "Runtime interface message browser_control.help_pause"
+  },
+  "runtime_browser_control_help_resume": {
+    "message": "Hervat browserbesturing op de tabbladen die nog gekoppeld zijn.",
+    "description": "Runtime interface message browser_control.help_resume"
+  },
+  "runtime_browser_control_help_scope_selected_tabs": {
+    "message": "Bestuur alleen de tabbladen die je hieronder kiest. Elk tabblad wordt afzonderlijk gekozen; alle andere vallen buiten het bereik.",
+    "description": "Runtime interface message browser_control.help_scope_selected_tabs"
+  },
+  "runtime_browser_control_help_scope_task_set": {
+    "message": "Bestuur alleen de tabbladen die je hieronder kiest als één gedeelde browsertaak. Anders dan bij Geselecteerde tabbladen delen ze een taakidentiteit; niet alle geopende tabbladen zijn inbegrepen.",
+    "description": "Runtime interface message browser_control.help_scope_task_set"
+  },
+  "runtime_browser_control_help_scope_this_tab": {
+    "message": "Bestuur alleen het huidige tabblad. Andere tabbladen zijn niet inbegrepen.",
+    "description": "Runtime interface message browser_control.help_scope_this_tab"
+  },
+  "runtime_browser_control_help_stay": {
+    "message": "Blijf op je tabblad terwijl Hermes op de achtergrond op gekoppelde tabbladen werkt.",
+    "description": "Runtime interface message browser_control.help_stay"
+  },
+  "runtime_browser_control_help_stop": {
+    "message": "Stop lopende en wachtende browseracties zonder de besturing uit te schakelen.",
+    "description": "Runtime interface message browser_control.help_stop"
   },
   "runtime_browser_control_kicker": {
     "message": "HERMES-BEDIENING",
@@ -874,6 +942,30 @@
   "runtime_browser_control_scope": {
     "message": "Bedieningsbereik",
     "description": "Runtime interface message browser_control.scope"
+  },
+  "runtime_browser_control_scope_busy": {
+    "message": "Wacht tot de besturing verbonden is en acties of goedkeuringen zijn afgerond.",
+    "description": "Runtime interface message browser_control.scope_busy"
+  },
+  "runtime_browser_control_scope_failed": {
+    "message": "Dit bereik kon niet worden bevestigd. Controleer de tabbladen en probeer opnieuw.",
+    "description": "Runtime interface message browser_control.scope_failed"
+  },
+  "runtime_browser_control_scope_locked": {
+    "message": "Kies hier het bereik en pas het toe. Meerdere tabbladen moeten expliciet worden geselecteerd.",
+    "description": "Runtime interface message browser_control.scope_locked"
+  },
+  "runtime_browser_control_scope_selection_required": {
+    "message": "Kies hieronder minstens één tabblad. Je kunt maximaal 32 tabbladen koppelen.",
+    "description": "Runtime interface message browser_control.scope_selection_required"
+  },
+  "runtime_browser_control_scope_tabs": {
+    "message": "Tabbladen in dit bereik",
+    "description": "Runtime interface message browser_control.scope_tabs"
+  },
+  "runtime_browser_control_scope_updated": {
+    "message": "Besturingsbereik bijgewerkt.",
+    "description": "Runtime interface message browser_control.scope_updated"
   },
   "runtime_browser_control_selected_tabs": {
     "message": "Geselecteerde tabbladen",
@@ -914,6 +1006,10 @@
   "runtime_browser_control_title": {
     "message": "Bedien geleasde tabbladen",
     "description": "Runtime interface message browser_control.title"
+  },
+  "runtime_browser_control_turn_off": {
+    "message": "Uitschakelen",
+    "description": "Runtime interface message browser_control.turn_off"
   },
   "runtime_browser_control_waiting": {
     "message": "Wachten op Hermes.",
@@ -2663,6 +2759,10 @@
     "message": "Kopiëren mislukt",
     "description": "Runtime interface message ui.copy.failed"
   },
+  "runtime_ui_copy_message": {
+    "message": "Bericht kopiëren",
+    "description": "Runtime interface message ui.copy.message"
+  },
   "runtime_ui_copy_redacted_diagnostics": {
     "message": "Kopieer geredigeerde diagnostische gegevens",
     "description": "Runtime interface message ui.copy.redacted.diagnostics"
@@ -2935,6 +3035,14 @@
     "message": "Bewerken",
     "description": "Runtime interface message ui.edit"
   },
+  "runtime_ui_edit_failed": {
+    "message": "Bewerken mislukt. Je gesprek is niet gewijzigd.",
+    "description": "Runtime interface message ui.edit.failed"
+  },
+  "runtime_ui_edit_message": {
+    "message": "Bericht bewerken",
+    "description": "Runtime interface message ui.edit.message"
+  },
   "runtime_ui_edit_models": {
     "message": "⚙ Modellen bewerken...",
     "description": "Runtime interface message ui.edit.models"
@@ -3178,6 +3286,38 @@
   "runtime_ui_group": {
     "message": "Groep",
     "description": "Runtime interface message ui.group"
+  },
+  "runtime_ui_group_presence_all_replied": {
+    "message": "Iedereen heeft geantwoord",
+    "description": "Runtime interface message ui.group.presence.all.replied"
+  },
+  "runtime_ui_group_presence_done_failed": {
+    "message": "Klaar · {count} konden niet antwoorden",
+    "description": "Runtime interface message ui.group.presence.done.failed"
+  },
+  "runtime_ui_group_presence_done_passed": {
+    "message": "Klaar · {count} hebben gepast",
+    "description": "Runtime interface message ui.group.presence.done.passed"
+  },
+  "runtime_ui_group_presence_reply_fail": {
+    "message": "{replied} hebben geantwoord, {failed} niet",
+    "description": "Runtime interface message ui.group.presence.reply.fail"
+  },
+  "runtime_ui_group_presence_replying": {
+    "message": "{name} antwoordt",
+    "description": "Runtime interface message ui.group.presence.replying"
+  },
+  "runtime_ui_group_presence_typing": {
+    "message": "{name} typt",
+    "description": "Runtime interface message ui.group.presence.typing"
+  },
+  "runtime_ui_group_presence_using": {
+    "message": "{name} gebruikt {tool}",
+    "description": "Runtime interface message ui.group.presence.using"
+  },
+  "runtime_ui_group_presence_waiting": {
+    "message": "{count} in wachtrij",
+    "description": "Runtime interface message ui.group.presence.waiting"
   },
   "runtime_ui_handing_update_to_hermes": {
     "message": "Update overhandigen aan Hermes",
@@ -3754,6 +3894,10 @@
   "runtime_ui_message_queued": {
     "message": "Bericht in wachtrij geplaatst",
     "description": "Runtime interface message ui.message.queued"
+  },
+  "runtime_ui_message_unmatched": {
+    "message": "Dit bericht kon niet aan het opgeslagen gesprek worden gekoppeld en is daarom als nieuw bericht verzonden.",
+    "description": "Runtime interface message ui.message.unmatched"
   },
   "runtime_ui_messages": {
     "message": "Berichten",
@@ -4567,6 +4711,10 @@
     "message": "Antwoord",
     "description": "Runtime interface message ui.reply"
   },
+  "runtime_ui_reply_to_member": {
+    "message": "Antwoord aan @{name}",
+    "description": "Runtime interface message ui.reply.to.member"
+  },
   "runtime_ui_request": {
     "message": "Verzoek",
     "description": "Runtime interface message ui.request"
@@ -4579,6 +4727,14 @@
     "message": "Vereist voor Cloud Preview en oudere Hermes-builds. Het weigert cloud-spraakherkenning.",
     "description": "Runtime interface message ui.required.for.cloud.preview.and.older.hermes.builds.it.refuses.c.f0bdad5b"
   },
+  "runtime_ui_rerun": {
+    "message": "Opnieuw uitvoeren",
+    "description": "Runtime interface message ui.rerun"
+  },
+  "runtime_ui_rerun_from_here": {
+    "message": "Vanaf hier opnieuw uitvoeren? Berichten hierna worden verwijderd.",
+    "description": "Runtime interface message ui.rerun.from.here"
+  },
   "runtime_ui_reset": {
     "message": "Opnieuw instellen",
     "description": "Runtime interface message ui.reset"
@@ -4590,6 +4746,10 @@
   "runtime_ui_response": {
     "message": "Reactie",
     "description": "Runtime interface message ui.response"
+  },
+  "runtime_ui_restore_checkpoint": {
+    "message": "Controlepunt herstellen: opnieuw uitvoeren vanaf dit bericht",
+    "description": "Runtime interface message ui.restore.checkpoint"
   },
   "runtime_ui_restricted_page": {
     "message": "Beperkte pagina",
@@ -4630,6 +4790,82 @@
   "runtime_ui_right_click_task_failed": {
     "message": "Taak met de rechtermuisknop is mislukt",
     "description": "Runtime interface message ui.right.click.task.failed"
+  },
+  "runtime_ui_room_bots_title": {
+    "message": "Bots in deze ruimte",
+    "description": "Runtime interface message ui.room.bots.title"
+  },
+  "runtime_ui_room_busy": {
+    "message": "Bezig met antwoorden",
+    "description": "Runtime interface message ui.room.busy"
+  },
+  "runtime_ui_room_checking": {
+    "message": "Controleren…",
+    "description": "Runtime interface message ui.room.checking"
+  },
+  "runtime_ui_room_fail_reason_generic": {
+    "message": "Er is iets misgegaan",
+    "description": "Runtime interface message ui.room.fail.reason.generic"
+  },
+  "runtime_ui_room_fail_reason_usage": {
+    "message": "Gebruikslimiet bereikt, probeer het later opnieuw",
+    "description": "Runtime interface message ui.room.fail.reason.usage"
+  },
+  "runtime_ui_room_failed": {
+    "message": "mislukt",
+    "description": "Runtime interface message ui.room.failed"
+  },
+  "runtime_ui_room_member_default_restored": {
+    "message": "{name} is terug op de profielstandaard",
+    "description": "Runtime interface message ui.room.member.default.restored"
+  },
+  "runtime_ui_room_member_failed": {
+    "message": "{name} kon niet antwoorden: {reason}",
+    "description": "Runtime interface message ui.room.member.failed"
+  },
+  "runtime_ui_room_member_failed_short": {
+    "message": "{name} kon niet antwoorden",
+    "description": "Runtime interface message ui.room.member.failed.short"
+  },
+  "runtime_ui_room_member_now_uses": {
+    "message": "{name} gebruikt nu {model} in deze ruimte",
+    "description": "Runtime interface message ui.room.member.now.uses"
+  },
+  "runtime_ui_room_member_passed": {
+    "message": "{name} heeft gepast",
+    "description": "Runtime interface message ui.room.member.passed"
+  },
+  "runtime_ui_room_member_retry": {
+    "message": "Opnieuw proberen",
+    "description": "Runtime interface message ui.room.member.retry"
+  },
+  "runtime_ui_room_member_retry_aria": {
+    "message": "Opnieuw proberen voor {name}",
+    "description": "Runtime interface message ui.room.member.retry.aria"
+  },
+  "runtime_ui_room_model_note": {
+    "message": "Modelwijzigingen gelden alleen voor deze ruimte.",
+    "description": "Runtime interface message ui.room.model.note"
+  },
+  "runtime_ui_room_next": {
+    "message": "volgende",
+    "description": "Runtime interface message ui.room.next"
+  },
+  "runtime_ui_room_passed": {
+    "message": "gepast",
+    "description": "Runtime interface message ui.room.passed"
+  },
+  "runtime_ui_room_profile_default": {
+    "message": "Profielstandaard",
+    "description": "Runtime interface message ui.room.profile.default"
+  },
+  "runtime_ui_room_reset_default": {
+    "message": "Terugzetten naar profielstandaard",
+    "description": "Runtime interface message ui.room.reset.default"
+  },
+  "runtime_ui_room_unknown": {
+    "message": "Onbekend",
+    "description": "Runtime interface message ui.room.unknown"
   },
   "runtime_ui_row": {
     "message": "Rij",
@@ -4907,6 +5143,18 @@
     "message": "Hermes weergeven Assisteren bij het schrijven van velden",
     "description": "Runtime interface message ui.show.hermes.assist.in.writing.fields"
   },
+  "runtime_ui_show_message_times": {
+    "message": "Berichttijden tonen",
+    "description": "Runtime interface message ui.show.message.times"
+  },
+  "runtime_ui_show_message_times_hint": {
+    "message": "Toont de tijd op je berichten wanneer je eroverheen gaat of erop tikt.",
+    "description": "Runtime interface message ui.show.message.times.hint"
+  },
+  "runtime_ui_show_or_hide_status": {
+    "message": "Status tonen of verbergen",
+    "description": "Runtime interface message ui.show.or.hide.status"
+  },
   "runtime_ui_side_panel": {
     "message": "Zijpaneel",
     "description": "Runtime interface message ui.side.panel"
@@ -5046,6 +5294,10 @@
   "runtime_ui_steer_the_current_run": {
     "message": "Stuur de huidige run",
     "description": "Runtime interface message ui.steer.the.current.run"
+  },
+  "runtime_ui_steered_label": {
+    "message": "Bijgestuurd",
+    "description": "Runtime interface message ui.steered.label"
   },
   "runtime_ui_stop": {
     "message": "Stop",
@@ -5270,6 +5522,10 @@
   "runtime_ui_title": {
     "message": "Titel",
     "description": "Runtime interface message ui.title"
+  },
+  "runtime_ui_today": {
+    "message": "Vandaag",
+    "description": "Runtime interface message ui.today"
   },
   "runtime_ui_toggle_hey_hermes": {
     "message": "Schakel Hey Hermes in",
@@ -5634,6 +5890,10 @@
   "runtime_ui_xl": {
     "message": "XL",
     "description": "Runtime interface message ui.xl"
+  },
+  "runtime_ui_yesterday": {
+    "message": "Gisteren",
+    "description": "Runtime interface message ui.yesterday"
   },
   "runtime_ui_you": {
     "message": "Jij",

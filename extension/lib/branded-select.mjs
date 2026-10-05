@@ -41,6 +41,13 @@ export function mountBrandedSelect(select, { previewFont, language = false } = {
     button.textContent = text;
     const accessible = select.getAttribute('aria-label') || text;
     if (accessible) button.setAttribute('aria-label', accessible);
+    button.disabled = select.disabled;
+    if (select.disabled) close();
+    for (const attribute of ['aria-labelledby', 'aria-describedby']) {
+      const value = select.getAttribute(attribute);
+      if (value) button.setAttribute(attribute, value);
+      else button.removeAttribute(attribute);
+    }
   }
 
   function open() {
@@ -53,6 +60,12 @@ export function mountBrandedSelect(select, { previewFont, language = false } = {
       item.setAttribute('role', 'option');
       item.dataset.value = option.value;
       item.textContent = option.textContent.trim();
+      // Opt-in help belongs to the visible option, not the clipped native select.
+      if (option.dataset.controlHelp) {
+        item.dataset.controlHelp = option.dataset.controlHelp;
+        item.dataset.help = option.title;
+        item.setAttribute('aria-description', option.title);
+      }
       const selected = option.value === select.value;
       item.setAttribute('aria-selected', String(selected));
       if (typeof previewFont === 'function') {
@@ -84,7 +97,10 @@ export function mountBrandedSelect(select, { previewFont, language = false } = {
   });
   select.addEventListener('change', sync);
   const observer = new MutationObserver(sync);
-  observer.observe(select, { childList: true, subtree: true, characterData: true });
+  observer.observe(select, {
+    childList: true, subtree: true, characterData: true,
+    attributes: true, attributeFilter: ['disabled', 'aria-label', 'aria-labelledby', 'aria-describedby'],
+  });
 
   const api = { sync, close };
   select.brandedSelect = api;

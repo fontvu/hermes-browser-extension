@@ -69,6 +69,17 @@ test('provider option rejection keeps gateway health separate and preserves the 
   });
 });
 
+test('stale gateway import errors after an update ask for a restart instead of "request rejected"', () => {
+  const state = turnRequestFailureState(hermesRequestError({
+    status: 400,
+    body: JSON.stringify({ error: "cannot import name 'AwakeIdleMeter' from 'agent.session_activity' (C:\\Users\\x\\.hermes\\hermes-agent\\agent\\session_activity.py)" }),
+  }));
+
+  assert.equal(state.kind, 'hermes-update-restart');
+  assert.equal(state.title, 'Hermes was updated — restart it');
+  assert.equal(state.preserveDraft, true);
+});
+
 test('authentication rejection stays on the existing gateway-auth diagnostic path', () => {
   const error = hermesRequestError({ status: 401, body: '{"error":"Unauthorized"}' });
 
@@ -204,7 +215,7 @@ test('terminal error paths dispose the diffusion placeholder on both surfaces', 
   // Side panel: the streaming updater owns an explicit dispose and the turn
   // catch calls it everywhere the stream ends without a final flush.
   assert.match(sidepanelSource, /function dispose\(\) \{[\s\S]*?setToolActivity\(node, null\);/);
-  assert.match(sidepanelSource, /return \{\s*update: updateText,\s*updateText,\s*updateTool,\s*flush,\s*dispose,\s*\};/);
+  assert.match(sidepanelSource, /return \{\s*node,\s*update: updateText,\s*updateText,\s*updateTool,\s*flush,\s*dispose,\s*\};/);
   assert.match(sidepanelSource, /if \(error\?\.requestAccepted !== true\) \{\s*\n\s*streamPacer\?\.flush\?\.\(\);\s*\n\s*streamView\?\.dispose\?\.\(\);\s*\n\s*\}/);
   assert.match(sidepanelSource, /if \(contextRecovery\) \{[\s\S]*?streamView\?\.dispose\?\.\(\);/);
   // Hermes Web: the live-run diffusion card is cleared on the rejected-request
@@ -294,7 +305,7 @@ test('Hermes Web recovers accepted local stream turns without replaying and pres
 test('both Browser surfaces preserve provider-rejected drafts without marking Hermes unreachable', () => {
   assert.match(sidepanelSource, /hermesRequestError\(\{[\s\S]{0,180}status:\s*response\.status[\s\S]{0,180}body:\s*text/);
   const sidepanelRejectionStart = sidepanelSource.lastIndexOf('const requestFailure = turnRequestFailureState(error)');
-  const sidepanelRejectionBranch = sidepanelSource.slice(sidepanelRejectionStart, sidepanelSource.indexOf('const diagnostic = classifyGatewayError(error)', sidepanelRejectionStart));
+  const sidepanelRejectionBranch = sidepanelSource.slice(sidepanelRejectionStart, sidepanelSource.indexOf('const diagnostic = classifyGatewayError(error,', sidepanelRejectionStart));
   assert.match(sidepanelRejectionBranch, /Gateway remains connected/);
   assert.match(sidepanelRejectionBranch, /streamView\.update/);
   assert.doesNotMatch(sidepanelRejectionBranch, /addMessage\('system'/);
@@ -337,4 +348,13 @@ test('fallback REST and dashboard WS transports retain typed provider failures',
     recoveryIndex >= 0 && dashboardBranchIndex > recoveryIndex,
     'request rejection classification must run before dashboard-transport fallback suppression',
   );
+});
+
+test('display_text rejection from a strict-contract core is recognised and retried without the field', () => {
+  const rejected = new Error('invalid params for prompt.submit: display_text: Extra inputs are not permitted — the client and the Hermes backend are out of sync (different versions); run `hermes update` and restart both');
+  assert.equal(turnRecovery.isDisplayTextRejection(rejected), true);
+  assert.equal(turnRecovery.isDisplayTextRejection(new Error('invalid params for prompt.submit: truncate_before_row_id: Extra inputs')), false);
+  assert.equal(turnRecovery.isDisplayTextRejection(new Error('Dashboard connection closed mid-turn.')), false);
+  const source = readFileSync(new URL('../extension/sidepanel.js', import.meta.url), 'utf8');
+  assert.match(source, /isDisplayTextRejection\(error\)[\s\S]{0,200}displayTextUnsupported = true/);
 });

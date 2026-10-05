@@ -5,6 +5,8 @@ import {
   extractVisionCachePaths,
 } from './media-persistence.mjs';
 
+import { normalizeUserFileAttachments } from './user-file-attachments.mjs';
+
 const RASTER_DATA_URL_RE = /^data:image\/(?:png|jpe?g|gif|webp|bmp);base64,[a-z0-9+/]+={0,2}$/i;
 
 export const IMAGE_ASPECT_RATIOS = Object.freeze({
@@ -302,18 +304,25 @@ export function preserveUserImageAttachments(refreshedMessages = [], localMessag
     .map((message, index) => ({ message, index, key: attachmentMessageKey(message) }))
     .filter(({ message, key }) => String(message?.role || '').toLowerCase() === 'user'
       && key
-      && normalizeUserImageAttachments(message.attachments).length);
+      && (normalizeUserImageAttachments(message.attachments).length || normalizeUserFileAttachments(message.attachments).length));
   const claimed = new Set();
 
   const preserved = [...refreshedMessages];
   for (let index = preserved.length - 1; index >= 0; index -= 1) {
     const message = preserved[index];
-    if (String(message?.role || '').toLowerCase() !== 'user' || normalizeUserImageAttachments(message?.attachments).length) continue;
+    if (String(message?.role || '').toLowerCase() !== 'user') continue;
     const key = attachmentMessageKey(message);
     const candidate = localCandidates.findLast(({ index, key: localKey }) => !claimed.has(index) && matchingUserMessageContent(key, localKey));
     if (!candidate) continue;
     claimed.add(candidate.index);
-    preserved[index] = { ...message, attachments: candidate.message.attachments };
+    const currentImages = normalizeUserImageAttachments(message.attachments);
+    const files = normalizeUserFileAttachments(candidate.message.attachments);
+    if (currentImages.length && !files.length) continue;
+    // Historical export name retained for callers; generic original-file refs
+    // now survive the same immediate reconciliation as image previews.
+    preserved[index] = { ...message, attachments: currentImages.length
+      ? [...message.attachments, ...files.filter(file => !(message.attachments || []).some(item => item.blobId && item.blobId === file.blobId))]
+      : candidate.message.attachments };
   }
   return preserved;
 }

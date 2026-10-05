@@ -27,7 +27,7 @@ import {
   createTabLeaseStore,
 } from './tab-leases.mjs';
 import { CONTROLLER_METHODS } from './controller-protocol.mjs';
-import { createBrowserControlApprovalStore } from './browser-control-safety.mjs';
+import { createBrowserControlApprovalStore, validateBrowserControlUrl } from './browser-control-safety.mjs';
 import { isGatewayAuthRejection, transportUsesDashboardTicket } from './connection-modes.mjs';
 
 export const CONTROLLER_WORKER_VERSION = 1;
@@ -41,6 +41,7 @@ export const CONTROLLER_WORKER_MESSAGES = Object.freeze({
   wake: 'HERMES_CONTROLLER_WAKE',
   leaseAcquire: 'HERMES_CONTROLLER_LEASE_ACQUIRE',
   leaseRelease: 'HERMES_CONTROLLER_LEASE_RELEASE',
+  scopeReplace: 'HERMES_CONTROLLER_SCOPE_REPLACE',
   documentReady: 'HERMES_CONTROLLER_DOCUMENT_READY',
   approvalGrant: 'HERMES_CONTROLLER_APPROVAL_GRANT',
   approvalReject: 'HERMES_CONTROLLER_APPROVAL_REJECT',
@@ -257,9 +258,11 @@ export function createControllerServiceWorker({
     ? approvalStore
     : createBrowserControlApprovalStore({ now });
   let activeAction = null;
+  let scopeChanging = false;
   const browserExecutor = typeof executeBrowserCommand === 'function' ? executeBrowserCommand : null;
 
   async function executeWorkerCommand(frame = {}, context = {}) {
+    if (scopeChanging) return terminalError('controller_busy', 'Control scope is being updated.');
     if (typeof executeCommand === 'function' && !browserExecutor) return executeCommand(frame, context);
     if (frame?.action === 'controller.noop') {
       const args = frame.arguments && typeof frame.arguments === 'object' ? { ...frame.arguments } : {};
@@ -419,8 +422,9 @@ export function createControllerServiceWorker({
     };
   }
 
-  function persist() {
+  function persist({ includeSettings = false } = {}) {
     const values = {
+      ...(includeSettings ? { hermesBrowserSettings: { ...settings } } : {}),
       [CONTROLLER_WORKER_STORAGE_KEY]: workerSnapshot(),
       [CONTROLLER_REGISTRY_STORAGE_KEY]: registry.snapshot(),
       [TAB_LEASE_STORAGE_KEY]: leases.snapshot(),
@@ -442,6 +446,8 @@ export function createControllerServiceWorker({
       browserProfileId,
       generation,
       leasedTabIds: leases.leasedTabIds(),
+      ownedTabIds: ownedControllerLeases().map((lease) => lease.tabId),
+      scopeChanging,
       pausedLeases: { ...pausedLeases },
       pendingCommands: lifecycle.pendingCount(),
       pendingApprovals: approvals.count(),
@@ -992,6 +998,84 @@ export function createControllerServiceWorker({
     return { ok: true, leases: acquired };
   }
 
+  // Stage a complete replacement before changing authority. No partial lease set
+  // or optimistic preference write may survive a rejected selection.
+  async function replaceScopeLeases(message = {}) {
+    if (message.expectedGeneration !== generation || message.expectedSettingsRevision !== settingsRevision) {
+      return { ok: false, error: 'stale_controller' };
+    }
+    const kind = message.kind;
+    const tabIds = message.tabIds;
+    const ownerId = String(message.ownerId || '').trim();
+    const taskSetId = kind === TAB_LEASE_KINDS.TASK_SET ? String(message.taskSetId || '').trim() : null;
+    if (!KNOWN_LEASE_KINDS.has(kind) || !Array.isArray(tabIds) || !tabIds.length
+      || tabIds.length > 32 || tabIds.some((id) => !Number.isInteger(id) || id <= 0)
+      || new Set(tabIds).size !== tabIds.length
+      || (kind === TAB_LEASE_KINDS.THIS_TAB && tabIds.length !== 1)
+      || (kind === TAB_LEASE_KINDS.TASK_SET && (!taskSetId || taskSetId.length > 120))
+      || ownerId !== controllerId) return { ok: false, error: 'invalid_scope_request' };
+    if (!connected || settings.browserControlEnabled !== true || !browserExecutor) {
+      return { ok: false, error: 'controller_unavailable' };
+    }
+    if (scopeChanging || activeAction || lifecycle.pendingCount() || approvals.count()) {
+      return { ok: false, error: 'controller_busy' };
+    }
+    scopeChanging = true;
+    try {
+      const tabs = [];
+      for (const tabId of tabIds) {
+        let tab;
+        try { tab = await getTab?.(tabId); } catch { /* closed tab */ }
+        if (!tab || Number(tab.id) !== tabId) return { ok: false, error: 'tab_unavailable' };
+        const eligible = validateBrowserControlUrl(tab.url, { allowLocalFiles: true });
+        if (!eligible.ok) return { ok: false, error: eligible.error };
+        tabs.push(tab);
+      }
+      if (!connected || ownerId !== controllerId || settings.browserControlEnabled !== true) {
+        return { ok: false, error: 'controller_unavailable' };
+      }
+      if (activeAction || lifecycle.pendingCount() || approvals.count()) return { ok: false, error: 'controller_busy' };
+      const previousLeases = leases;
+      const previousSettings = settings;
+      const previousPausedLeases = pausedLeases;
+      const staged = createTabLeaseStore({ now, supportsTabGroups, generation });
+      const snapshot = leases.snapshot();
+      staged.hydrate(snapshot);
+      for (const lease of snapshot.entries) {
+        if (lease.ownerId === ownerId && lease.ownership === TAB_LEASE_OWNERSHIPS.OWNED) {
+          staged.release({ tabId: lease.tabId, ownerId });
+        }
+      }
+      const at = Math.max(Number(now()), ...snapshot.entries.map((lease) => lease.acquiredAt + 1));
+      for (const tab of tabs) {
+        const result = staged.acquire({ tabId: tab.id, windowId: tab.windowId, kind, ownerId,
+          ownership: TAB_LEASE_OWNERSHIPS.OWNED, taskSetId, at });
+        if (!result.ok) return { ok: false, error: result.error };
+      }
+      leases = staged;
+      settings = { ...settings, browserControlScope: kind };
+      const committedSettings = settings;
+      pausedLeases = Object.fromEntries(Object.entries(pausedLeases).filter(([id]) => !tabIds.includes(Number(id)) && staged.leaseForTab(Number(id))));
+      try {
+        // Preferences and the lease snapshot land in one ordered storage write.
+        await persist({ includeSettings: true });
+      } catch {
+        if (leases === staged && settings === committedSettings) {
+          leases = previousLeases;
+          settings = previousSettings;
+          pausedLeases = previousPausedLeases;
+          // Flush the rollback after any metadata snapshots queued during the
+          // failed write, so none can resurrect the staged attachment set.
+          await persist().catch(() => undefined);
+        }
+        return { ok: false, error: 'scope_persist_failed' };
+      }
+      return { ...status(), scopeChanging: false, scope: kind };
+    } finally {
+      scopeChanging = false;
+    }
+  }
+
   async function releaseLeases(message = {}) {
     const ownerId = String(message.ownerId || '').trim();
     const tabIds = [...new Set((Array.isArray(message.tabIds) ? message.tabIds : [])
@@ -1249,6 +1333,12 @@ export function createControllerServiceWorker({
       const stored = await storageArea.get('hermesBrowserSettings');
       return syncSettings(connectionSettings(stored), { revision });
     }
+    if (type === CONTROLLER_WORKER_MESSAGES.scopeReplace) return runTransition(() => replaceScopeLeases(message));
+    if (scopeChanging && [CONTROLLER_WORKER_MESSAGES.leaseAcquire, CONTROLLER_WORKER_MESSAGES.leaseRelease,
+      CONTROLLER_WORKER_MESSAGES.pause, CONTROLLER_WORKER_MESSAGES.resume,
+      CONTROLLER_WORKER_MESSAGES.approvalGrant, CONTROLLER_WORKER_MESSAGES.approvalReject].includes(type)) {
+      return { ok: false, error: 'controller_busy' };
+    }
     if (type === CONTROLLER_WORKER_MESSAGES.leaseAcquire) return acquireLeases(message);
     if (type === CONTROLLER_WORKER_MESSAGES.leaseRelease) return releaseLeases(message);
     if (type === CONTROLLER_WORKER_MESSAGES.targetResolve) return resolveControlTarget(message);
@@ -1257,7 +1347,7 @@ export function createControllerServiceWorker({
     if (type === CONTROLLER_WORKER_MESSAGES.pause) return setPaused(true);
     if (type === CONTROLLER_WORKER_MESSAGES.resume) return setPaused(false);
     if (type === CONTROLLER_WORKER_MESSAGES.stop) return stopCommands();
-    if (type === CONTROLLER_WORKER_MESSAGES.detach) return detachControl();
+    if (type === CONTROLLER_WORKER_MESSAGES.detach) return runTransition(detachControl);
     return { ok: false, error: 'unknown_message' };
   }
 

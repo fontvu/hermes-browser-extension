@@ -41,6 +41,8 @@ const requiredFiles = [
   'lib/common.mjs',
   'assets/fonts/Sigurd-Variable.woff2',
   'assets/fonts/CourierPrime-Regular.woff2',
+  'assets/fonts/google/SpaceGrotesk-400.woff2',
+  'assets/fonts/google/SpaceGrotesk-600.woff2',
   'assets/img/hermes-badge.webp',
   'assets/img/hermes-browse.webp',
   'assets/img/ray-field.svg',
@@ -52,6 +54,16 @@ const requiredFiles = [
 
 const errors = [];
 
+// F4 (v0.3.4 signature font rider): the update identity must be able to prove
+// a build carries the bundled signature fallback faces. If these are ever
+// absent from the hashed source blobs, the update card could certify a build
+// whose signature floor silently degrades to a system font on a clean install.
+const REQUIRED_SIGNATURE_FALLBACK_BLOBS = [
+  'assets/fonts/Sigurd-Variable.woff2',
+  'assets/fonts/google/SpaceGrotesk-400.woff2',
+  'assets/fonts/google/SpaceGrotesk-600.woff2',
+];
+
 function validateBuildInfo(buildInfo, label) {
   if (!buildInfo) return;
   if (buildInfo.version !== packageJson.version) {
@@ -59,6 +71,13 @@ function validateBuildInfo(buildInfo, label) {
   }
   if (buildInfo.commit && !/^[0-9a-f]{7,40}$/i.test(String(buildInfo.commit))) {
     errors.push(`${label} commit must be a git SHA`);
+  }
+  if (buildInfo.sourceBlobs && typeof buildInfo.sourceBlobs === 'object') {
+    for (const blob of REQUIRED_SIGNATURE_FALLBACK_BLOBS) {
+      if (!buildInfo.sourceBlobs[blob]) {
+        errors.push(`${label} is missing the bundled signature fallback ${blob}; rebuild so the update identity certifies the signature font floor`);
+      }
+    }
   }
 }
 

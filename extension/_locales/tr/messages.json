@@ -119,6 +119,10 @@
     "message": "Hermes Legacy",
     "description": "Runtime interface message appearance.font_collapse"
   },
+  "runtime_appearance_font_fallback_note": {
+    "message": "Lisanslı imza yazı tipi yüklü değil — paketlenmiş yedek yazı tipi gösteriliyor.",
+    "description": "Runtime interface message appearance.font_fallback_note"
+  },
   "runtime_appearance_font_family": {
     "message": "Yazı tipi ailesi",
     "description": "Runtime interface message appearance.font_family"
@@ -254,6 +258,26 @@
   "runtime_assist_routing_fallback_short": {
     "message": "Tam yönlendirme kullanılamadığında ağ geçidi varsayılanına geri döner",
     "description": "Runtime interface message assist.routing.fallback_short"
+  },
+  "runtime_attachments_attachment_too_large": {
+    "message": "25 MiB’a kadar dosya eklenebilir.",
+    "description": "Runtime interface message attachments.attachment_too_large"
+  },
+  "runtime_attachments_download_to_open": {
+    "message": "Bu dosyayı uyumlu bir uygulamada açmak için indirin.",
+    "description": "Runtime interface message attachments.download_to_open"
+  },
+  "runtime_attachments_file_unavailable": {
+    "message": "Orijinal dosya kullanılamıyor. Erişimi geri getirmek için yeniden ekleyin.",
+    "description": "Runtime interface message attachments.file_unavailable"
+  },
+  "runtime_attachments_preview_limited": {
+    "message": "Önizleme sınırlı. Dosyanın tamamını indirin.",
+    "description": "Runtime interface message attachments.preview_limited"
+  },
+  "runtime_attachments_upload_unavailable": {
+    "message": "Dosyanın tamamının yüklenmesi doğrulanmadı. Bağlantıyı kontrol edin veya pano WebSocket bağlantısını kullanıp yeniden deneyin.",
+    "description": "Runtime interface message attachments.upload_unavailable"
   },
   "runtime_bot_mode_active_now": {
     "message": "Active now",
@@ -832,7 +856,7 @@
     "description": "Runtime interface message browser_control.detached_detail"
   },
   "runtime_browser_control_detached_toast": {
-    "message": "Hermes Kontrolü ayrıldı",
+    "message": "Hermes kontrolü kapalı",
     "description": "Runtime interface message browser_control.detached_toast"
   },
   "runtime_browser_control_enable": {
@@ -850,6 +874,50 @@
   "runtime_browser_control_follow": {
     "message": "Hermes'i takip et",
     "description": "Runtime interface message browser_control.follow"
+  },
+  "runtime_browser_control_help_attach": {
+    "message": "Hermes’in önceki bağlı sekme yerine bu sekmeyi kontrol etmesine izin verin.",
+    "description": "Runtime interface message browser_control.help_attach"
+  },
+  "runtime_browser_control_help_close": {
+    "message": "Kontrolü duraklatmadan veya kapatmadan bu paneli kapatın.",
+    "description": "Runtime interface message browser_control.help_close"
+  },
+  "runtime_browser_control_help_follow": {
+    "message": "Tarayıcı penceresini öne getirmeden Hermes’in kullandığı bağlı sekmeyi gösterin.",
+    "description": "Runtime interface message browser_control.help_follow"
+  },
+  "runtime_browser_control_help_off": {
+    "message": "Tarayıcı kontrolünü kapatın ve bu paneli kapatın. Ayarlar’dan yeniden etkinleştirin.",
+    "description": "Runtime interface message browser_control.help_off"
+  },
+  "runtime_browser_control_help_pause": {
+    "message": "Tarayıcı kontrolünü kapatmadan duraklatın. Bağlı sekmeler korunur.",
+    "description": "Runtime interface message browser_control.help_pause"
+  },
+  "runtime_browser_control_help_resume": {
+    "message": "Hâlâ bağlı olan sekmelerde tarayıcı kontrolünü sürdürün.",
+    "description": "Runtime interface message browser_control.help_resume"
+  },
+  "runtime_browser_control_help_scope_selected_tabs": {
+    "message": "Yalnızca aşağıda seçtiğiniz sekmeleri kontrol edin. Her sekme ayrı ayrı seçilir; diğer tüm sekmeler kapsam dışında kalır.",
+    "description": "Runtime interface message browser_control.help_scope_selected_tabs"
+  },
+  "runtime_browser_control_help_scope_task_set": {
+    "message": "Yalnızca aşağıda seçtiğiniz sekmeleri ortak bir tarayıcı görevi olarak kontrol edin. Seçili sekmelerden farklı olarak ortak bir görev kimliği taşırlar; tüm açık sekmeler dahil değildir.",
+    "description": "Runtime interface message browser_control.help_scope_task_set"
+  },
+  "runtime_browser_control_help_scope_this_tab": {
+    "message": "Yalnızca geçerli sekmeyi kontrol edin. Diğer sekmeler dahil değildir.",
+    "description": "Runtime interface message browser_control.help_scope_this_tab"
+  },
+  "runtime_browser_control_help_stay": {
+    "message": "Hermes bağlı sekmelerde arka planda çalışırken kendi sekmenizde kalın.",
+    "description": "Runtime interface message browser_control.help_stay"
+  },
+  "runtime_browser_control_help_stop": {
+    "message": "Kontrolü kapatmadan mevcut ve sıradaki tarayıcı işlemlerini durdurun.",
+    "description": "Runtime interface message browser_control.help_stop"
   },
   "runtime_browser_control_kicker": {
     "message": "HERMES KONTROLÜ",
@@ -874,6 +942,30 @@
   "runtime_browser_control_scope": {
     "message": "Kontrol kapsamı",
     "description": "Runtime interface message browser_control.scope"
+  },
+  "runtime_browser_control_scope_busy": {
+    "message": "Kontrolün bağlanmasını ve işlemlerin veya onayların tamamlanmasını bekleyin.",
+    "description": "Runtime interface message browser_control.scope_busy"
+  },
+  "runtime_browser_control_scope_failed": {
+    "message": "Bu kapsam doğrulanamadı. Sekmeleri kontrol edip tekrar deneyin.",
+    "description": "Runtime interface message browser_control.scope_failed"
+  },
+  "runtime_browser_control_scope_locked": {
+    "message": "Kapsamı burada seçip uygulayın. Birden fazla sekme açıkça seçilmelidir.",
+    "description": "Runtime interface message browser_control.scope_locked"
+  },
+  "runtime_browser_control_scope_selection_required": {
+    "message": "Aşağıdan en az bir sekme seçin. En fazla 32 sekme bağlanabilir.",
+    "description": "Runtime interface message browser_control.scope_selection_required"
+  },
+  "runtime_browser_control_scope_tabs": {
+    "message": "Bu kapsamdaki sekmeler",
+    "description": "Runtime interface message browser_control.scope_tabs"
+  },
+  "runtime_browser_control_scope_updated": {
+    "message": "Kontrol kapsamı güncellendi.",
+    "description": "Runtime interface message browser_control.scope_updated"
   },
   "runtime_browser_control_selected_tabs": {
     "message": "Seçili sekmeler",
@@ -914,6 +1006,10 @@
   "runtime_browser_control_title": {
     "message": "Kiralanan sekmeleri yönet",
     "description": "Runtime interface message browser_control.title"
+  },
+  "runtime_browser_control_turn_off": {
+    "message": "Kapat",
+    "description": "Runtime interface message browser_control.turn_off"
   },
   "runtime_browser_control_waiting": {
     "message": "Hermes bekleniyor.",
@@ -2663,6 +2759,10 @@
     "message": "Kopyalama başarısız oldu",
     "description": "Runtime interface message ui.copy.failed"
   },
+  "runtime_ui_copy_message": {
+    "message": "Mesajı kopyala",
+    "description": "Runtime interface message ui.copy.message"
+  },
   "runtime_ui_copy_redacted_diagnostics": {
     "message": "Düzenlenmiş teşhisleri kopyala",
     "description": "Runtime interface message ui.copy.redacted.diagnostics"
@@ -2935,6 +3035,14 @@
     "message": "Düzenle",
     "description": "Runtime interface message ui.edit"
   },
+  "runtime_ui_edit_failed": {
+    "message": "Düzenleme başarısız oldu. Sohbetiniz değiştirilmedi.",
+    "description": "Runtime interface message ui.edit.failed"
+  },
+  "runtime_ui_edit_message": {
+    "message": "Mesajı düzenle",
+    "description": "Runtime interface message ui.edit.message"
+  },
   "runtime_ui_edit_models": {
     "message": "⚙ Modelleri Düzenle...",
     "description": "Runtime interface message ui.edit.models"
@@ -3178,6 +3286,38 @@
   "runtime_ui_group": {
     "message": "Grup",
     "description": "Runtime interface message ui.group"
+  },
+  "runtime_ui_group_presence_all_replied": {
+    "message": "Herkes yanıtladı",
+    "description": "Runtime interface message ui.group.presence.all.replied"
+  },
+  "runtime_ui_group_presence_done_failed": {
+    "message": "Tamam · {count} yanıtlayamadı",
+    "description": "Runtime interface message ui.group.presence.done.failed"
+  },
+  "runtime_ui_group_presence_done_passed": {
+    "message": "Tamam · {count} pas geçti",
+    "description": "Runtime interface message ui.group.presence.done.passed"
+  },
+  "runtime_ui_group_presence_reply_fail": {
+    "message": "{replied} yanıtladı, {failed} yanıtlayamadı",
+    "description": "Runtime interface message ui.group.presence.reply.fail"
+  },
+  "runtime_ui_group_presence_replying": {
+    "message": "{name} yanıtlıyor",
+    "description": "Runtime interface message ui.group.presence.replying"
+  },
+  "runtime_ui_group_presence_typing": {
+    "message": "{name} yazıyor",
+    "description": "Runtime interface message ui.group.presence.typing"
+  },
+  "runtime_ui_group_presence_using": {
+    "message": "{name} {tool} kullanıyor",
+    "description": "Runtime interface message ui.group.presence.using"
+  },
+  "runtime_ui_group_presence_waiting": {
+    "message": "{count} bekliyor",
+    "description": "Runtime interface message ui.group.presence.waiting"
   },
   "runtime_ui_handing_update_to_hermes": {
     "message": "Güncelleme Hermes'e aktarılıyor",
@@ -3754,6 +3894,10 @@
   "runtime_ui_message_queued": {
     "message": "İleti sıraya alındı",
     "description": "Runtime interface message ui.message.queued"
+  },
+  "runtime_ui_message_unmatched": {
+    "message": "Bu mesaj kayıtlı sohbetle eşleştirilemedi, bu yüzden yeni bir mesaj olarak gönderildi.",
+    "description": "Runtime interface message ui.message.unmatched"
   },
   "runtime_ui_messages": {
     "message": "Mesajlar",
@@ -4567,6 +4711,10 @@
     "message": "Yanıtla",
     "description": "Runtime interface message ui.reply"
   },
+  "runtime_ui_reply_to_member": {
+    "message": "@{name} kişisine yanıt ver",
+    "description": "Runtime interface message ui.reply.to.member"
+  },
   "runtime_ui_request": {
     "message": "Talep",
     "description": "Runtime interface message ui.request"
@@ -4579,6 +4727,14 @@
     "message": "Cloud Preview ve daha eski Hermes yapıları için gereklidir. Bulut konuşma tanımayı reddediyor.",
     "description": "Runtime interface message ui.required.for.cloud.preview.and.older.hermes.builds.it.refuses.c.f0bdad5b"
   },
+  "runtime_ui_rerun": {
+    "message": "Yeniden çalıştır",
+    "description": "Runtime interface message ui.rerun"
+  },
+  "runtime_ui_rerun_from_here": {
+    "message": "Buradan yeniden çalıştırılsın mı? Sonraki mesajlar kaldırılacak.",
+    "description": "Runtime interface message ui.rerun.from.here"
+  },
   "runtime_ui_reset": {
     "message": "Sıfırla",
     "description": "Runtime interface message ui.reset"
@@ -4590,6 +4746,10 @@
   "runtime_ui_response": {
     "message": "Yanıt",
     "description": "Runtime interface message ui.response"
+  },
+  "runtime_ui_restore_checkpoint": {
+    "message": "Kontrol noktasını geri yükle: bu mesajdan yeniden çalıştır",
+    "description": "Runtime interface message ui.restore.checkpoint"
   },
   "runtime_ui_restricted_page": {
     "message": "Kısıtlanmış sayfa",
@@ -4630,6 +4790,82 @@
   "runtime_ui_right_click_task_failed": {
     "message": "Sağ tıklama görevi başarısız oldu",
     "description": "Runtime interface message ui.right.click.task.failed"
+  },
+  "runtime_ui_room_bots_title": {
+    "message": "Bu odadaki botlar",
+    "description": "Runtime interface message ui.room.bots.title"
+  },
+  "runtime_ui_room_busy": {
+    "message": "Yanıtlamakla meşgul",
+    "description": "Runtime interface message ui.room.busy"
+  },
+  "runtime_ui_room_checking": {
+    "message": "Denetleniyor…",
+    "description": "Runtime interface message ui.room.checking"
+  },
+  "runtime_ui_room_fail_reason_generic": {
+    "message": "Bir şeyler ters gitti",
+    "description": "Runtime interface message ui.room.fail.reason.generic"
+  },
+  "runtime_ui_room_fail_reason_usage": {
+    "message": "Kullanım sınırına ulaşıldı, daha sonra tekrar deneyin",
+    "description": "Runtime interface message ui.room.fail.reason.usage"
+  },
+  "runtime_ui_room_failed": {
+    "message": "başarısız",
+    "description": "Runtime interface message ui.room.failed"
+  },
+  "runtime_ui_room_member_default_restored": {
+    "message": "{name} profil varsayılanına döndü",
+    "description": "Runtime interface message ui.room.member.default.restored"
+  },
+  "runtime_ui_room_member_failed": {
+    "message": "{name} yanıtlayamadı: {reason}",
+    "description": "Runtime interface message ui.room.member.failed"
+  },
+  "runtime_ui_room_member_failed_short": {
+    "message": "{name} yanıtlayamadı",
+    "description": "Runtime interface message ui.room.member.failed.short"
+  },
+  "runtime_ui_room_member_now_uses": {
+    "message": "{name} artık bu odada {model} kullanıyor",
+    "description": "Runtime interface message ui.room.member.now.uses"
+  },
+  "runtime_ui_room_member_passed": {
+    "message": "{name} pas geçti",
+    "description": "Runtime interface message ui.room.member.passed"
+  },
+  "runtime_ui_room_member_retry": {
+    "message": "Yeniden dene",
+    "description": "Runtime interface message ui.room.member.retry"
+  },
+  "runtime_ui_room_member_retry_aria": {
+    "message": "{name} için yeniden dene",
+    "description": "Runtime interface message ui.room.member.retry.aria"
+  },
+  "runtime_ui_room_model_note": {
+    "message": "Model değişiklikleri yalnızca bu oda için geçerlidir.",
+    "description": "Runtime interface message ui.room.model.note"
+  },
+  "runtime_ui_room_next": {
+    "message": "sıradaki",
+    "description": "Runtime interface message ui.room.next"
+  },
+  "runtime_ui_room_passed": {
+    "message": "pas geçti",
+    "description": "Runtime interface message ui.room.passed"
+  },
+  "runtime_ui_room_profile_default": {
+    "message": "Profil varsayılanı",
+    "description": "Runtime interface message ui.room.profile.default"
+  },
+  "runtime_ui_room_reset_default": {
+    "message": "Profil varsayılanına sıfırla",
+    "description": "Runtime interface message ui.room.reset.default"
+  },
+  "runtime_ui_room_unknown": {
+    "message": "Bilinmiyor",
+    "description": "Runtime interface message ui.room.unknown"
   },
   "runtime_ui_row": {
     "message": "Satır",
@@ -4907,6 +5143,18 @@
     "message": "Hermes Assist'i yazma alanlarında göster",
     "description": "Runtime interface message ui.show.hermes.assist.in.writing.fields"
   },
+  "runtime_ui_show_message_times": {
+    "message": "Mesaj saatlerini göster",
+    "description": "Runtime interface message ui.show.message.times"
+  },
+  "runtime_ui_show_message_times_hint": {
+    "message": "Mesajlarınızın saatini üzerine gelince veya dokununca gösterir.",
+    "description": "Runtime interface message ui.show.message.times.hint"
+  },
+  "runtime_ui_show_or_hide_status": {
+    "message": "Durumu göster veya gizle",
+    "description": "Runtime interface message ui.show.or.hide.status"
+  },
   "runtime_ui_side_panel": {
     "message": "Yan panel",
     "description": "Runtime interface message ui.side.panel"
@@ -5046,6 +5294,10 @@
   "runtime_ui_steer_the_current_run": {
     "message": "Mevcut koşuyu yönlendir",
     "description": "Runtime interface message ui.steer.the.current.run"
+  },
+  "runtime_ui_steered_label": {
+    "message": "Yönlendirildi",
+    "description": "Runtime interface message ui.steered.label"
   },
   "runtime_ui_stop": {
     "message": "Durdur",
@@ -5270,6 +5522,10 @@
   "runtime_ui_title": {
     "message": "Başlık",
     "description": "Runtime interface message ui.title"
+  },
+  "runtime_ui_today": {
+    "message": "Bugün",
+    "description": "Runtime interface message ui.today"
   },
   "runtime_ui_toggle_hey_hermes": {
     "message": "Hey Hermes seçeneğini değiştirin",
@@ -5634,6 +5890,10 @@
   "runtime_ui_xl": {
     "message": "XL",
     "description": "Runtime interface message ui.xl"
+  },
+  "runtime_ui_yesterday": {
+    "message": "Dün",
+    "description": "Runtime interface message ui.yesterday"
   },
   "runtime_ui_you": {
     "message": "sen",

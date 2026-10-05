@@ -119,6 +119,10 @@
     "message": "Hermes Legacy",
     "description": "Runtime interface message appearance.font_collapse"
   },
+  "runtime_appearance_font_fallback_note": {
+    "message": "未安裝授權的簽名字型，目前顯示內建的備援字型。",
+    "description": "Runtime interface message appearance.font_fallback_note"
+  },
   "runtime_appearance_font_family": {
     "message": "字型家族",
     "description": "Runtime interface message appearance.font_family"
@@ -254,6 +258,26 @@
   "runtime_assist_routing_fallback_short": {
     "message": "精確路由不可用時，會退回到閘道器預設值",
     "description": "Runtime interface message assist.routing.fallback_short"
+  },
+  "runtime_attachments_attachment_too_large": {
+    "message": "可附加最大25 MiB的檔案。",
+    "description": "Runtime interface message attachments.attachment_too_large"
+  },
+  "runtime_attachments_download_to_open": {
+    "message": "下載此檔案後，可使用相容的應用程式開啟。",
+    "description": "Runtime interface message attachments.download_to_open"
+  },
+  "runtime_attachments_file_unavailable": {
+    "message": "原始檔案無法使用。請重新附加以恢復存取。",
+    "description": "Runtime interface message attachments.file_unavailable"
+  },
+  "runtime_attachments_preview_limited": {
+    "message": "預覽內容有限。請下載完整檔案。",
+    "description": "Runtime interface message attachments.preview_limited"
+  },
+  "runtime_attachments_upload_unavailable": {
+    "message": "尚未確認完整檔案上傳。請檢查連線或使用儀表板WebSocket連線，然後重試。",
+    "description": "Runtime interface message attachments.upload_unavailable"
   },
   "runtime_bot_mode_active_now": {
     "message": "Active now",
@@ -832,7 +856,7 @@
     "description": "Runtime interface message browser_control.detached_detail"
   },
   "runtime_browser_control_detached_toast": {
-    "message": "已分離 Hermes 控制",
+    "message": "Hermes 控制已關閉",
     "description": "Runtime interface message browser_control.detached_toast"
   },
   "runtime_browser_control_enable": {
@@ -850,6 +874,50 @@
   "runtime_browser_control_follow": {
     "message": "跟隨 Hermes",
     "description": "Runtime interface message browser_control.follow"
+  },
+  "runtime_browser_control_help_attach": {
+    "message": "允許 Hermes 操作此分頁，取代先前連接的分頁。",
+    "description": "Runtime interface message browser_control.help_attach"
+  },
+  "runtime_browser_control_help_close": {
+    "message": "關閉此面板，但不暫停或關閉控制。",
+    "description": "Runtime interface message browser_control.help_close"
+  },
+  "runtime_browser_control_help_follow": {
+    "message": "顯示 Hermes 正在使用的已連接分頁，但不將瀏覽器視窗帶到最前方。",
+    "description": "Runtime interface message browser_control.help_follow"
+  },
+  "runtime_browser_control_help_off": {
+    "message": "關閉瀏覽器控制和此面板。可在設定中重新啟用。",
+    "description": "Runtime interface message browser_control.help_off"
+  },
+  "runtime_browser_control_help_pause": {
+    "message": "暫停瀏覽器控制但不將其關閉。已連接的分頁會保留。",
+    "description": "Runtime interface message browser_control.help_pause"
+  },
+  "runtime_browser_control_help_resume": {
+    "message": "在仍然連接的分頁上恢復瀏覽器控制。",
+    "description": "Runtime interface message browser_control.help_resume"
+  },
+  "runtime_browser_control_help_scope_selected_tabs": {
+    "message": "僅控制你在下方選擇的分頁。每個分頁需個別選取，其他分頁不在控制範圍內。",
+    "description": "Runtime interface message browser_control.help_scope_selected_tabs"
+  },
+  "runtime_browser_control_help_scope_task_set": {
+    "message": "僅將你在下方選擇的分頁作為一個共用瀏覽器工作進行控制。與「所選分頁」不同，這些分頁共用工作識別碼；並不包含所有已開啟的分頁。",
+    "description": "Runtime interface message browser_control.help_scope_task_set"
+  },
+  "runtime_browser_control_help_scope_this_tab": {
+    "message": "僅控制目前的分頁，不包含其他分頁。",
+    "description": "Runtime interface message browser_control.help_scope_this_tab"
+  },
+  "runtime_browser_control_help_stay": {
+    "message": "停留在目前分頁，同時讓 Hermes 在背景操作已連接的分頁。",
+    "description": "Runtime interface message browser_control.help_stay"
+  },
+  "runtime_browser_control_help_stop": {
+    "message": "停止目前和佇列中的瀏覽器操作，但不關閉控制。",
+    "description": "Runtime interface message browser_control.help_stop"
   },
   "runtime_browser_control_kicker": {
     "message": "HERMES 控制",
@@ -874,6 +942,30 @@
   "runtime_browser_control_scope": {
     "message": "控制範圍",
     "description": "Runtime interface message browser_control.scope"
+  },
+  "runtime_browser_control_scope_busy": {
+    "message": "請等待控制連線，並完成進行中的操作或核准。",
+    "description": "Runtime interface message browser_control.scope_busy"
+  },
+  "runtime_browser_control_scope_failed": {
+    "message": "無法確認此控制範圍。請檢查分頁後重試。",
+    "description": "Runtime interface message browser_control.scope_failed"
+  },
+  "runtime_browser_control_scope_locked": {
+    "message": "在這裡選擇控制範圍，然後套用。多分頁需要明確選取。",
+    "description": "Runtime interface message browser_control.scope_locked"
+  },
+  "runtime_browser_control_scope_selection_required": {
+    "message": "請在下方選取至少一個分頁，最多可連接32個。",
+    "description": "Runtime interface message browser_control.scope_selection_required"
+  },
+  "runtime_browser_control_scope_tabs": {
+    "message": "此範圍內的分頁",
+    "description": "Runtime interface message browser_control.scope_tabs"
+  },
+  "runtime_browser_control_scope_updated": {
+    "message": "控制範圍已更新。",
+    "description": "Runtime interface message browser_control.scope_updated"
   },
   "runtime_browser_control_selected_tabs": {
     "message": "選取的分頁",
@@ -914,6 +1006,10 @@
   "runtime_browser_control_title": {
     "message": "操作租用分頁",
     "description": "Runtime interface message browser_control.title"
+  },
+  "runtime_browser_control_turn_off": {
+    "message": "關閉控制",
+    "description": "Runtime interface message browser_control.turn_off"
   },
   "runtime_browser_control_waiting": {
     "message": "正在等待 Hermes。",
@@ -2663,6 +2759,10 @@
     "message": "複製失敗",
     "description": "Runtime interface message ui.copy.failed"
   },
+  "runtime_ui_copy_message": {
+    "message": "複製訊息",
+    "description": "Runtime interface message ui.copy.message"
+  },
   "runtime_ui_copy_redacted_diagnostics": {
     "message": "複製脫敏診斷",
     "description": "Runtime interface message ui.copy.redacted.diagnostics"
@@ -2935,6 +3035,14 @@
     "message": "編輯",
     "description": "Runtime interface message ui.edit"
   },
+  "runtime_ui_edit_failed": {
+    "message": "編輯失敗。你的會話未變更。",
+    "description": "Runtime interface message ui.edit.failed"
+  },
+  "runtime_ui_edit_message": {
+    "message": "編輯訊息",
+    "description": "Runtime interface message ui.edit.message"
+  },
   "runtime_ui_edit_models": {
     "message": "⚙ 編輯模型...",
     "description": "Runtime interface message ui.edit.models"
@@ -3178,6 +3286,38 @@
   "runtime_ui_group": {
     "message": "分組",
     "description": "Runtime interface message ui.group"
+  },
+  "runtime_ui_group_presence_all_replied": {
+    "message": "全部已回覆",
+    "description": "Runtime interface message ui.group.presence.all.replied"
+  },
+  "runtime_ui_group_presence_done_failed": {
+    "message": "完成 · {count} 個無法回覆",
+    "description": "Runtime interface message ui.group.presence.done.failed"
+  },
+  "runtime_ui_group_presence_done_passed": {
+    "message": "完成 · {count} 個已略過",
+    "description": "Runtime interface message ui.group.presence.done.passed"
+  },
+  "runtime_ui_group_presence_reply_fail": {
+    "message": "{replied} 個已回覆，{failed} 個無法回覆",
+    "description": "Runtime interface message ui.group.presence.reply.fail"
+  },
+  "runtime_ui_group_presence_replying": {
+    "message": "{name} 正在回覆",
+    "description": "Runtime interface message ui.group.presence.replying"
+  },
+  "runtime_ui_group_presence_typing": {
+    "message": "{name} 正在輸入",
+    "description": "Runtime interface message ui.group.presence.typing"
+  },
+  "runtime_ui_group_presence_using": {
+    "message": "{name} 正在使用 {tool}",
+    "description": "Runtime interface message ui.group.presence.using"
+  },
+  "runtime_ui_group_presence_waiting": {
+    "message": "{count} 個等待中",
+    "description": "Runtime interface message ui.group.presence.waiting"
   },
   "runtime_ui_handing_update_to_hermes": {
     "message": "正在將更新交給 Hermes",
@@ -3754,6 +3894,10 @@
   "runtime_ui_message_queued": {
     "message": "訊息已加入佇列",
     "description": "Runtime interface message ui.message.queued"
+  },
+  "runtime_ui_message_unmatched": {
+    "message": "此訊息無法與已儲存的會話相符，因此已作為新訊息傳送。",
+    "description": "Runtime interface message ui.message.unmatched"
   },
   "runtime_ui_messages": {
     "message": "訊息",
@@ -4567,6 +4711,10 @@
     "message": "回覆",
     "description": "Runtime interface message ui.reply"
   },
+  "runtime_ui_reply_to_member": {
+    "message": "回覆 @{name}",
+    "description": "Runtime interface message ui.reply.to.member"
+  },
   "runtime_ui_request": {
     "message": "請求",
     "description": "Runtime interface message ui.request"
@@ -4579,6 +4727,14 @@
     "message": "Cloud Preview 和較舊的 Hermes 組建需要此項。它會拒絕雲端語音辨識。",
     "description": "Runtime interface message ui.required.for.cloud.preview.and.older.hermes.builds.it.refuses.c.f0bdad5b"
   },
+  "runtime_ui_rerun": {
+    "message": "重新執行",
+    "description": "Runtime interface message ui.rerun"
+  },
+  "runtime_ui_rerun_from_here": {
+    "message": "從這裡重新執行？此後的訊息將被刪除。",
+    "description": "Runtime interface message ui.rerun.from.here"
+  },
   "runtime_ui_reset": {
     "message": "重置",
     "description": "Runtime interface message ui.reset"
@@ -4590,6 +4746,10 @@
   "runtime_ui_response": {
     "message": "回應",
     "description": "Runtime interface message ui.response"
+  },
+  "runtime_ui_restore_checkpoint": {
+    "message": "還原檢查點：從此訊息重新執行",
+    "description": "Runtime interface message ui.restore.checkpoint"
   },
   "runtime_ui_restricted_page": {
     "message": "受限頁面",
@@ -4630,6 +4790,82 @@
   "runtime_ui_right_click_task_failed": {
     "message": "右鍵任務失敗",
     "description": "Runtime interface message ui.right.click.task.failed"
+  },
+  "runtime_ui_room_bots_title": {
+    "message": "此房間中的機器人",
+    "description": "Runtime interface message ui.room.bots.title"
+  },
+  "runtime_ui_room_busy": {
+    "message": "正在回覆",
+    "description": "Runtime interface message ui.room.busy"
+  },
+  "runtime_ui_room_checking": {
+    "message": "檢查中…",
+    "description": "Runtime interface message ui.room.checking"
+  },
+  "runtime_ui_room_fail_reason_generic": {
+    "message": "發生了一些問題",
+    "description": "Runtime interface message ui.room.fail.reason.generic"
+  },
+  "runtime_ui_room_fail_reason_usage": {
+    "message": "已達使用上限，請稍後再試",
+    "description": "Runtime interface message ui.room.fail.reason.usage"
+  },
+  "runtime_ui_room_failed": {
+    "message": "失敗",
+    "description": "Runtime interface message ui.room.failed"
+  },
+  "runtime_ui_room_member_default_restored": {
+    "message": "{name} 已回到設定檔預設值",
+    "description": "Runtime interface message ui.room.member.default.restored"
+  },
+  "runtime_ui_room_member_failed": {
+    "message": "{name} 無法回覆：{reason}",
+    "description": "Runtime interface message ui.room.member.failed"
+  },
+  "runtime_ui_room_member_failed_short": {
+    "message": "{name} 無法回覆",
+    "description": "Runtime interface message ui.room.member.failed.short"
+  },
+  "runtime_ui_room_member_now_uses": {
+    "message": "{name} 現在在此房間使用 {model}",
+    "description": "Runtime interface message ui.room.member.now.uses"
+  },
+  "runtime_ui_room_member_passed": {
+    "message": "{name} 已略過",
+    "description": "Runtime interface message ui.room.member.passed"
+  },
+  "runtime_ui_room_member_retry": {
+    "message": "重試",
+    "description": "Runtime interface message ui.room.member.retry"
+  },
+  "runtime_ui_room_member_retry_aria": {
+    "message": "為 {name} 重試",
+    "description": "Runtime interface message ui.room.member.retry.aria"
+  },
+  "runtime_ui_room_model_note": {
+    "message": "模型變更僅適用於此房間。",
+    "description": "Runtime interface message ui.room.model.note"
+  },
+  "runtime_ui_room_next": {
+    "message": "下一個",
+    "description": "Runtime interface message ui.room.next"
+  },
+  "runtime_ui_room_passed": {
+    "message": "已略過",
+    "description": "Runtime interface message ui.room.passed"
+  },
+  "runtime_ui_room_profile_default": {
+    "message": "設定檔預設值",
+    "description": "Runtime interface message ui.room.profile.default"
+  },
+  "runtime_ui_room_reset_default": {
+    "message": "重設為設定檔預設值",
+    "description": "Runtime interface message ui.room.reset.default"
+  },
+  "runtime_ui_room_unknown": {
+    "message": "未知",
+    "description": "Runtime interface message ui.room.unknown"
   },
   "runtime_ui_row": {
     "message": "行",
@@ -4907,6 +5143,18 @@
     "message": "在寫作欄位中顯示 Hermes Assist",
     "description": "Runtime interface message ui.show.hermes.assist.in.writing.fields"
   },
+  "runtime_ui_show_message_times": {
+    "message": "顯示訊息時間",
+    "description": "Runtime interface message ui.show.message.times"
+  },
+  "runtime_ui_show_message_times_hint": {
+    "message": "滑鼠移入或輕觸訊息時顯示其時間。",
+    "description": "Runtime interface message ui.show.message.times.hint"
+  },
+  "runtime_ui_show_or_hide_status": {
+    "message": "顯示或隱藏狀態",
+    "description": "Runtime interface message ui.show.or.hide.status"
+  },
   "runtime_ui_side_panel": {
     "message": "側邊面板",
     "description": "Runtime interface message ui.side.panel"
@@ -5046,6 +5294,10 @@
   "runtime_ui_steer_the_current_run": {
     "message": "引導目前執行",
     "description": "Runtime interface message ui.steer.the.current.run"
+  },
+  "runtime_ui_steered_label": {
+    "message": "已轉向",
+    "description": "Runtime interface message ui.steered.label"
   },
   "runtime_ui_stop": {
     "message": "停止",
@@ -5270,6 +5522,10 @@
   "runtime_ui_title": {
     "message": "標題",
     "description": "Runtime interface message ui.title"
+  },
+  "runtime_ui_today": {
+    "message": "今天",
+    "description": "Runtime interface message ui.today"
   },
   "runtime_ui_toggle_hey_hermes": {
     "message": "切換 Hey Hermes",
@@ -5634,6 +5890,10 @@
   "runtime_ui_xl": {
     "message": "特大",
     "description": "Runtime interface message ui.xl"
+  },
+  "runtime_ui_yesterday": {
+    "message": "昨天",
+    "description": "Runtime interface message ui.yesterday"
   },
   "runtime_ui_you": {
     "message": "您",

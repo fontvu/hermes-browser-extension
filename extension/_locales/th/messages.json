@@ -119,6 +119,10 @@
     "message": "Hermes Legacy",
     "description": "Runtime interface message appearance.font_collapse"
   },
+  "runtime_appearance_font_fallback_note": {
+    "message": "ไม่มีฟอนต์ลายเซ็นแบบมีลิขสิทธิ์ติดตั้งอยู่ — กำลังแสดงฟอนต์สำรองที่มาพร้อมระบบ",
+    "description": "Runtime interface message appearance.font_fallback_note"
+  },
   "runtime_appearance_font_family": {
     "message": "ตระกูลฟอนต์",
     "description": "Runtime interface message appearance.font_family"
@@ -254,6 +258,26 @@
   "runtime_assist_routing_fallback_short": {
     "message": "ถอยกลับไปเป็นค่าเริ่มต้นของเกตเวย์เมื่อเส้นทางที่แน่นอนไม่พร้อมใช้งาน",
     "description": "Runtime interface message assist.routing.fallback_short"
+  },
+  "runtime_attachments_attachment_too_large": {
+    "message": "แนบไฟล์ขนาดไม่เกิน 25 MiB ได้",
+    "description": "Runtime interface message attachments.attachment_too_large"
+  },
+  "runtime_attachments_download_to_open": {
+    "message": "ดาวน์โหลดไฟล์นี้เพื่อเปิดในแอปที่รองรับ",
+    "description": "Runtime interface message attachments.download_to_open"
+  },
+  "runtime_attachments_file_unavailable": {
+    "message": "ไม่มีไฟล์ต้นฉบับ โปรดแนบไฟล์อีกครั้งเพื่อเรียกคืนการเข้าถึง",
+    "description": "Runtime interface message attachments.file_unavailable"
+  },
+  "runtime_attachments_preview_limited": {
+    "message": "แสดงตัวอย่างได้บางส่วน ดาวน์โหลดไฟล์ฉบับเต็ม",
+    "description": "Runtime interface message attachments.preview_limited"
+  },
+  "runtime_attachments_upload_unavailable": {
+    "message": "ยังยืนยันการอัปโหลดไฟล์ฉบับเต็มไม่ได้ ตรวจสอบการเชื่อมต่อหรือใช้ WebSocket ของแดชบอร์ด แล้วลองอีกครั้ง",
+    "description": "Runtime interface message attachments.upload_unavailable"
   },
   "runtime_bot_mode_active_now": {
     "message": "Active now",
@@ -832,7 +856,7 @@
     "description": "Runtime interface message browser_control.detached_detail"
   },
   "runtime_browser_control_detached_toast": {
-    "message": "แยกการควบคุม Hermes แล้ว",
+    "message": "ปิดการควบคุมของ Hermes แล้ว",
     "description": "Runtime interface message browser_control.detached_toast"
   },
   "runtime_browser_control_enable": {
@@ -850,6 +874,50 @@
   "runtime_browser_control_follow": {
     "message": "ตาม Hermes",
     "description": "Runtime interface message browser_control.follow"
+  },
+  "runtime_browser_control_help_attach": {
+    "message": "อนุญาตให้ Hermes ควบคุมแท็บนี้แทนแท็บที่เชื่อมต่อไว้ก่อนหน้า",
+    "description": "Runtime interface message browser_control.help_attach"
+  },
+  "runtime_browser_control_help_close": {
+    "message": "ปิดแผงนี้โดยไม่หยุดชั่วคราวหรือปิดการควบคุม",
+    "description": "Runtime interface message browser_control.help_close"
+  },
+  "runtime_browser_control_help_follow": {
+    "message": "แสดงแท็บที่เชื่อมต่อและ Hermes กำลังใช้งาน โดยไม่ดึงหน้าต่างเบราว์เซอร์ขึ้นมาด้านหน้า",
+    "description": "Runtime interface message browser_control.help_follow"
+  },
+  "runtime_browser_control_help_off": {
+    "message": "ปิดการควบคุมเบราว์เซอร์และปิดแผงนี้ เปิดใช้งานอีกครั้งได้ในการตั้งค่า",
+    "description": "Runtime interface message browser_control.help_off"
+  },
+  "runtime_browser_control_help_pause": {
+    "message": "หยุดการควบคุมเบราว์เซอร์ชั่วคราวโดยไม่ปิดใช้งาน แท็บที่เชื่อมต่อจะยังคงอยู่",
+    "description": "Runtime interface message browser_control.help_pause"
+  },
+  "runtime_browser_control_help_resume": {
+    "message": "ดำเนินการควบคุมเบราว์เซอร์ต่อบนแท็บที่ยังเชื่อมต่ออยู่",
+    "description": "Runtime interface message browser_control.help_resume"
+  },
+  "runtime_browser_control_help_scope_selected_tabs": {
+    "message": "ควบคุมเฉพาะแท็บที่คุณเลือกด้านล่าง แต่ละแท็บต้องเลือกแยกกัน แท็บอื่นจะอยู่นอกขอบเขต",
+    "description": "Runtime interface message browser_control.help_scope_selected_tabs"
+  },
+  "runtime_browser_control_help_scope_task_set": {
+    "message": "ควบคุมเฉพาะแท็บที่คุณเลือกด้านล่างเป็นงานเบราว์เซอร์ร่วมกันหนึ่งงาน ต่างจากแท็บที่เลือก แท็บเหล่านี้ใช้รหัสงานร่วมกัน ไม่ได้รวมทุกแท็บที่เปิดอยู่",
+    "description": "Runtime interface message browser_control.help_scope_task_set"
+  },
+  "runtime_browser_control_help_scope_this_tab": {
+    "message": "ควบคุมเฉพาะแท็บปัจจุบัน ไม่รวมแท็บอื่น",
+    "description": "Runtime interface message browser_control.help_scope_this_tab"
+  },
+  "runtime_browser_control_help_stay": {
+    "message": "อยู่บนแท็บของคุณต่อไปขณะที่ Hermes ทำงานบนแท็บที่เชื่อมต่ออยู่ในเบื้องหลัง",
+    "description": "Runtime interface message browser_control.help_stay"
+  },
+  "runtime_browser_control_help_stop": {
+    "message": "หยุดการทำงานปัจจุบันและงานที่อยู่ในคิวของเบราว์เซอร์โดยไม่ปิดการควบคุม",
+    "description": "Runtime interface message browser_control.help_stop"
   },
   "runtime_browser_control_kicker": {
     "message": "HERMES CONTROL",
@@ -874,6 +942,30 @@
   "runtime_browser_control_scope": {
     "message": "ขอบเขตการควบคุม",
     "description": "Runtime interface message browser_control.scope"
+  },
+  "runtime_browser_control_scope_busy": {
+    "message": "รอให้ระบบควบคุมเชื่อมต่อและดำเนินการหรือขออนุมัติให้เสร็จสิ้น",
+    "description": "Runtime interface message browser_control.scope_busy"
+  },
+  "runtime_browser_control_scope_failed": {
+    "message": "ยืนยันขอบเขตนี้ไม่ได้ ตรวจสอบแท็บแล้วลองอีกครั้ง",
+    "description": "Runtime interface message browser_control.scope_failed"
+  },
+  "runtime_browser_control_scope_locked": {
+    "message": "เลือกขอบเขตที่นี่แล้วกดใช้ หากต้องการหลายแท็บ ต้องเลือกแท็บด้วยตนเอง",
+    "description": "Runtime interface message browser_control.scope_locked"
+  },
+  "runtime_browser_control_scope_selection_required": {
+    "message": "เลือกอย่างน้อยหนึ่งแท็บด้านล่าง สามารถเชื่อมต่อได้สูงสุด 32 แท็บ",
+    "description": "Runtime interface message browser_control.scope_selection_required"
+  },
+  "runtime_browser_control_scope_tabs": {
+    "message": "แท็บในขอบเขตนี้",
+    "description": "Runtime interface message browser_control.scope_tabs"
+  },
+  "runtime_browser_control_scope_updated": {
+    "message": "อัปเดตขอบเขตการควบคุมแล้ว",
+    "description": "Runtime interface message browser_control.scope_updated"
   },
   "runtime_browser_control_selected_tabs": {
     "message": "แท็บที่เลือก",
@@ -914,6 +1006,10 @@
   "runtime_browser_control_title": {
     "message": "ควบคุมแท็บที่เช่า",
     "description": "Runtime interface message browser_control.title"
+  },
+  "runtime_browser_control_turn_off": {
+    "message": "ปิดการควบคุม",
+    "description": "Runtime interface message browser_control.turn_off"
   },
   "runtime_browser_control_waiting": {
     "message": "กำลังรอ Hermes",
@@ -2663,6 +2759,10 @@
     "message": "การคัดลอกล้มเหลว",
     "description": "Runtime interface message ui.copy.failed"
   },
+  "runtime_ui_copy_message": {
+    "message": "คัดลอกข้อความ",
+    "description": "Runtime interface message ui.copy.message"
+  },
   "runtime_ui_copy_redacted_diagnostics": {
     "message": "คัดลอกการวินิจฉัยที่แก้ไขแล้ว",
     "description": "Runtime interface message ui.copy.redacted.diagnostics"
@@ -2935,6 +3035,14 @@
     "message": "แก้ไข",
     "description": "Runtime interface message ui.edit"
   },
+  "runtime_ui_edit_failed": {
+    "message": "แก้ไขไม่สำเร็จ บทสนทนาของคุณไม่เปลี่ยนแปลง",
+    "description": "Runtime interface message ui.edit.failed"
+  },
+  "runtime_ui_edit_message": {
+    "message": "แก้ไขข้อความ",
+    "description": "Runtime interface message ui.edit.message"
+  },
   "runtime_ui_edit_models": {
     "message": "⚙ แก้ไขโมเดล...",
     "description": "Runtime interface message ui.edit.models"
@@ -3178,6 +3286,38 @@
   "runtime_ui_group": {
     "message": "กลุ่ม",
     "description": "Runtime interface message ui.group"
+  },
+  "runtime_ui_group_presence_all_replied": {
+    "message": "ตอบครบทุกคนแล้ว",
+    "description": "Runtime interface message ui.group.presence.all.replied"
+  },
+  "runtime_ui_group_presence_done_failed": {
+    "message": "เสร็จสิ้น · {count} ตอบไม่ได้",
+    "description": "Runtime interface message ui.group.presence.done.failed"
+  },
+  "runtime_ui_group_presence_done_passed": {
+    "message": "เสร็จสิ้น · {count} ข้าม",
+    "description": "Runtime interface message ui.group.presence.done.passed"
+  },
+  "runtime_ui_group_presence_reply_fail": {
+    "message": "{replied} ตอบกลับแล้ว {failed} ตอบกลับไม่ได้",
+    "description": "Runtime interface message ui.group.presence.reply.fail"
+  },
+  "runtime_ui_group_presence_replying": {
+    "message": "{name} กำลังตอบ",
+    "description": "Runtime interface message ui.group.presence.replying"
+  },
+  "runtime_ui_group_presence_typing": {
+    "message": "{name} กำลังพิมพ์",
+    "description": "Runtime interface message ui.group.presence.typing"
+  },
+  "runtime_ui_group_presence_using": {
+    "message": "{name} กำลังใช้ {tool}",
+    "description": "Runtime interface message ui.group.presence.using"
+  },
+  "runtime_ui_group_presence_waiting": {
+    "message": "{count} กำลังรอ",
+    "description": "Runtime interface message ui.group.presence.waiting"
   },
   "runtime_ui_handing_update_to_hermes": {
     "message": "กำลังส่งการอัปเดตเป็น Hermes",
@@ -3754,6 +3894,10 @@
   "runtime_ui_message_queued": {
     "message": "ข้อความอยู่ในคิว",
     "description": "Runtime interface message ui.message.queued"
+  },
+  "runtime_ui_message_unmatched": {
+    "message": "ไม่สามารถจับคู่ข้อความนี้กับบทสนทนาที่บันทึกไว้ได้ จึงส่งเป็นข้อความใหม่",
+    "description": "Runtime interface message ui.message.unmatched"
   },
   "runtime_ui_messages": {
     "message": "ข้อความ",
@@ -4567,6 +4711,10 @@
     "message": "ตอบกลับ",
     "description": "Runtime interface message ui.reply"
   },
+  "runtime_ui_reply_to_member": {
+    "message": "ตอบกลับ @{name}",
+    "description": "Runtime interface message ui.reply.to.member"
+  },
   "runtime_ui_request": {
     "message": "คำขอ",
     "description": "Runtime interface message ui.request"
@@ -4579,6 +4727,14 @@
     "message": "จำเป็นสำหรับ Cloud Preview และบิวด์ Hermes ที่เก่ากว่า มันปฏิเสธการรู้จำเสียงพูดบนคลาวด์",
     "description": "Runtime interface message ui.required.for.cloud.preview.and.older.hermes.builds.it.refuses.c.f0bdad5b"
   },
+  "runtime_ui_rerun": {
+    "message": "เรียกใช้อีกครั้ง",
+    "description": "Runtime interface message ui.rerun"
+  },
+  "runtime_ui_rerun_from_here": {
+    "message": "เรียกใช้อีกครั้งจากที่นี่หรือไม่ ข้อความหลังจากนี้จะถูกลบ",
+    "description": "Runtime interface message ui.rerun.from.here"
+  },
   "runtime_ui_reset": {
     "message": "รีเซ็ต",
     "description": "Runtime interface message ui.reset"
@@ -4590,6 +4746,10 @@
   "runtime_ui_response": {
     "message": "การตอบสนอง",
     "description": "Runtime interface message ui.response"
+  },
+  "runtime_ui_restore_checkpoint": {
+    "message": "กู้คืนจุดตรวจสอบ: เรียกใช้อีกครั้งจากข้อความนี้",
+    "description": "Runtime interface message ui.restore.checkpoint"
   },
   "runtime_ui_restricted_page": {
     "message": "เพจที่ถูกจำกัด",
@@ -4630,6 +4790,82 @@
   "runtime_ui_right_click_task_failed": {
     "message": "งานคลิกขวาล้มเหลว",
     "description": "Runtime interface message ui.right.click.task.failed"
+  },
+  "runtime_ui_room_bots_title": {
+    "message": "บอตในห้องนี้",
+    "description": "Runtime interface message ui.room.bots.title"
+  },
+  "runtime_ui_room_busy": {
+    "message": "กำลังยุ่งตอบ",
+    "description": "Runtime interface message ui.room.busy"
+  },
+  "runtime_ui_room_checking": {
+    "message": "กำลังตรวจสอบ…",
+    "description": "Runtime interface message ui.room.checking"
+  },
+  "runtime_ui_room_fail_reason_generic": {
+    "message": "เกิดข้อผิดพลาดบางอย่าง",
+    "description": "Runtime interface message ui.room.fail.reason.generic"
+  },
+  "runtime_ui_room_fail_reason_usage": {
+    "message": "ถึงขีดจำกัดการใช้งานแล้ว ลองอีกครั้งภายหลัง",
+    "description": "Runtime interface message ui.room.fail.reason.usage"
+  },
+  "runtime_ui_room_failed": {
+    "message": "ล้มเหลว",
+    "description": "Runtime interface message ui.room.failed"
+  },
+  "runtime_ui_room_member_default_restored": {
+    "message": "{name} กลับไปใช้ค่าเริ่มต้นของโปรไฟล์แล้ว",
+    "description": "Runtime interface message ui.room.member.default.restored"
+  },
+  "runtime_ui_room_member_failed": {
+    "message": "{name} ตอบไม่ได้: {reason}",
+    "description": "Runtime interface message ui.room.member.failed"
+  },
+  "runtime_ui_room_member_failed_short": {
+    "message": "{name} ตอบกลับไม่ได้",
+    "description": "Runtime interface message ui.room.member.failed.short"
+  },
+  "runtime_ui_room_member_now_uses": {
+    "message": "{name} ใช้ {model} ในห้องนี้แล้ว",
+    "description": "Runtime interface message ui.room.member.now.uses"
+  },
+  "runtime_ui_room_member_passed": {
+    "message": "{name} ข้าม",
+    "description": "Runtime interface message ui.room.member.passed"
+  },
+  "runtime_ui_room_member_retry": {
+    "message": "ลองใหม่",
+    "description": "Runtime interface message ui.room.member.retry"
+  },
+  "runtime_ui_room_member_retry_aria": {
+    "message": "ลองใหม่สำหรับ {name}",
+    "description": "Runtime interface message ui.room.member.retry.aria"
+  },
+  "runtime_ui_room_model_note": {
+    "message": "การเปลี่ยนโมเดลใช้กับห้องนี้เท่านั้น",
+    "description": "Runtime interface message ui.room.model.note"
+  },
+  "runtime_ui_room_next": {
+    "message": "ถัดไป",
+    "description": "Runtime interface message ui.room.next"
+  },
+  "runtime_ui_room_passed": {
+    "message": "ข้าม",
+    "description": "Runtime interface message ui.room.passed"
+  },
+  "runtime_ui_room_profile_default": {
+    "message": "ค่าเริ่มต้นของโปรไฟล์",
+    "description": "Runtime interface message ui.room.profile.default"
+  },
+  "runtime_ui_room_reset_default": {
+    "message": "รีเซ็ตเป็นค่าเริ่มต้นของโปรไฟล์",
+    "description": "Runtime interface message ui.room.reset.default"
+  },
+  "runtime_ui_room_unknown": {
+    "message": "ไม่ทราบ",
+    "description": "Runtime interface message ui.room.unknown"
   },
   "runtime_ui_row": {
     "message": "แถว",
@@ -4907,6 +5143,18 @@
     "message": "แสดง Hermes Assist ในช่องการเขียน",
     "description": "Runtime interface message ui.show.hermes.assist.in.writing.fields"
   },
+  "runtime_ui_show_message_times": {
+    "message": "แสดงเวลาข้อความ",
+    "description": "Runtime interface message ui.show.message.times"
+  },
+  "runtime_ui_show_message_times_hint": {
+    "message": "แสดงเวลาบนข้อความของคุณเมื่อวางเมาส์หรือแตะ",
+    "description": "Runtime interface message ui.show.message.times.hint"
+  },
+  "runtime_ui_show_or_hide_status": {
+    "message": "แสดงหรือซ่อนสถานะ",
+    "description": "Runtime interface message ui.show.or.hide.status"
+  },
   "runtime_ui_side_panel": {
     "message": "แผงด้านข้าง",
     "description": "Runtime interface message ui.side.panel"
@@ -5046,6 +5294,10 @@
   "runtime_ui_steer_the_current_run": {
     "message": "คัดท้ายการวิ่งปัจจุบัน",
     "description": "Runtime interface message ui.steer.the.current.run"
+  },
+  "runtime_ui_steered_label": {
+    "message": "ปรับทิศทาง",
+    "description": "Runtime interface message ui.steered.label"
   },
   "runtime_ui_stop": {
     "message": "หยุด",
@@ -5270,6 +5522,10 @@
   "runtime_ui_title": {
     "message": "ชื่อเรื่อง",
     "description": "Runtime interface message ui.title"
+  },
+  "runtime_ui_today": {
+    "message": "วันนี้",
+    "description": "Runtime interface message ui.today"
   },
   "runtime_ui_toggle_hey_hermes": {
     "message": "สลับ Hey Hermes",
@@ -5634,6 +5890,10 @@
   "runtime_ui_xl": {
     "message": "เอ็กแอล",
     "description": "Runtime interface message ui.xl"
+  },
+  "runtime_ui_yesterday": {
+    "message": "เมื่อวาน",
+    "description": "Runtime interface message ui.yesterday"
   },
   "runtime_ui_you": {
     "message": "คุณ",

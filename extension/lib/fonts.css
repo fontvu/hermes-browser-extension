@@ -1,7 +1,10 @@
 /* Bundled Latin faces for the extension UI only.
    Google Fonts files in assets/fonts/google are SIL Open Font License subsets.
-   The signature face is registered in design-tokens.css. Those files stay on
-   the build machine and are not part of the public source tree. */
+   The licensed "Rules" signature faces are not part of the public source tree,
+   so the signature profile uses a guaranteed bundled fallback: Space Grotesk
+   (UI, registered below) and HermesDisplay/Sigurd (display, registered in
+   design-tokens.css and sidepanel.css). The stack is defined so a clean
+   install never drops to a random system font. */
 
 @font-face {
   font-family: "Montserrat";

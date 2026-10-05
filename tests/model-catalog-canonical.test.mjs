@@ -4,6 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import * as discovery from '../extension/lib/model-discovery.mjs';
+import { normalizeHermesModels } from '../extension/lib/common.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
@@ -136,4 +137,57 @@ test('both Browser model surfaces enrich the live registry with the canonical He
     const loadModels = source.match(/async function loadModels\([^)]*\)\s*\{([\s\S]*?)\n\}/)?.[1] || '';
     assert.match(loadModels, /discoverCanonicalProviderCatalog\(\{/);
   }
+});
+
+test('Nous Space Bunny Alpha is requestable with a one-million-token window', async () => {
+  const registryModels = discovery.modelsFromModelOptionsPayload({
+    providers: [{
+      slug: 'nous',
+      name: 'Nous Portal',
+      authenticated: true,
+      models: [{ id: 'openai/gpt-5.6-luna', name: 'GPT-5.6 Luna' }],
+    }],
+  });
+  const catalog = await discovery.discoverCanonicalProviderCatalog({
+    registryModels,
+    fetchFn: async (url) => String(url) === discovery.NOUS_LIVE_MODEL_CATALOG_URL
+      ? {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: [{
+            id: 'stealth/space-bunny-alpha',
+            name: 'Space Bunny Alpha',
+            context_length: 1_000_000,
+          }],
+        }),
+      }
+      : {
+        ok: true,
+        status: 200,
+        json: async () => ({ providers: { nous: { models: [] } } }),
+      },
+  });
+  const models = normalizeHermesModels({ data: catalog.models }, registryModels[0].id);
+  const bunny = models.find((model) => model.rawModelId === 'stealth/space-bunny-alpha');
+
+  assert.equal(catalog.ok, true);
+  assert.equal(bunny?.id, 'nous::stealth/space-bunny-alpha');
+  assert.equal(bunny?.label, 'Space Bunny Alpha');
+  assert.equal(bunny?.provider, 'nous');
+  assert.equal(bunny?.providerLabel, 'Nous Portal');
+  assert.equal(bunny?.contextTokens, 1_000_000);
+  assert.equal(bunny?.runtimeSelectable, true);
+
+  const withoutCatalogLimit = normalizeHermesModels({
+    data: [{
+      id: 'nous::stealth/space-bunny-alpha',
+      rawModelId: 'stealth/space-bunny-alpha',
+      label: 'Space Bunny Alpha',
+      provider: 'nous',
+      providerLabel: 'Nous Portal',
+      context_length: 0,
+    }],
+  }, 'nous::stealth/space-bunny-alpha');
+  assert.equal(withoutCatalogLimit[0].contextTokens, 1_000_000);
 });

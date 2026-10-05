@@ -20,9 +20,9 @@ html[data-hermes-theme][data-hermes-mode] {
 }
 
 html[data-hermes-theme="nous"][data-hermes-mode="light"] {
-  --hermes-blue: #0505e8; --hermes-blue-rgb: 5, 5, 232; --hermes-blue-deep: #03038f;
+  --hermes-blue: #0000f2; --hermes-blue-rgb: 0, 0, 242; --hermes-blue-deep: #0000b4;
   --hermes-paper: #ffffff; --hermes-paper-rgb: 255, 255, 255;
-  --hermes-ink: #0505e8; --hermes-ink-rgb: 5, 5, 232;
+  --hermes-ink: #0000f2; --hermes-ink-rgb: 0, 0, 242;
   --hermes-accent: #dbe6ff; --hermes-shell-fg: #f8faff; --hermes-shell-fg-rgb: 248, 250, 255;
 }
 

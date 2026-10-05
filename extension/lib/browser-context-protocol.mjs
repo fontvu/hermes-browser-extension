@@ -528,6 +528,14 @@ function contextScopeLabel(scope = {}) {
   return 'Follow active tab';
 }
 
+// Issue #106: the receipt must name what actually crossed the turn budget.
+// Over the cap it reads "12 of 20"; at or under it reads a plain count.
+function tabsSentReceiptValue(count) {
+  const total = Math.max(0, Number(count) || 0);
+  const budget = BROWSER_CONTEXT_TURN_BUDGETS.maxTabs;
+  return total > budget ? `${budget} of ${total}` : `${total}`;
+}
+
 export function buildBrowserContextReceipt({ context = {}, attachments = [], settings = {}, contextHash = '', contextDelivery = 'full' } = {}) {
   const contextScope = context.contextScope || {};
   if (contextScope.mode === 'chat-only') {
@@ -603,7 +611,7 @@ export function buildBrowserContextReceipt({ context = {}, attachments = [], set
     },
     {
       label: 'Tabs sent to Hermes',
-      value: settings.includeTabs === false ? 'disabled' : `${selectedTabs.length}`,
+      value: settings.includeTabs === false ? 'disabled' : tabsSentReceiptValue(selectedTabs.length),
     },
     {
       label: 'Attachments',

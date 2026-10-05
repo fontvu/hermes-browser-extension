@@ -148,9 +148,9 @@ test('sidepanel implements every canonical palette and shares the Hermes Web Nou
   const nousLightSelector = 'html[data-hermes-theme="nous"][data-hermes-mode="light"]';
   const sidepanelNousLight = cssBlock(sidepanelCss, nousLightSelector);
   const fulltabNousLight = cssBlock(fulltabCss, nousLightSelector);
-  for (const token of sharedTokens) {
+  // Side panel Nous Light is a white shell; Hermes Web keeps the blue rail, so accent/fg intentionally differ.
+  for (const token of sharedTokens.filter((t) => t !== '--hermes-accent')) {
     assert.equal(cssValue(sidepanelNousLight, token), cssValue(fulltabNousLight, token), `Nous Light must match Hermes Web ${token}`);
   }
-  assert.equal(cssValue(sidepanelNousLight, '--hermes-fg'), cssValue(fulltabNousLight, '--hermes-shell-fg'));
-  assert.equal(cssValue(sidepanelNousLight, '--hermes-fg-rgb'), cssValue(fulltabNousLight, '--hermes-shell-fg-rgb'));
+  assert.equal(cssValue(sidepanelNousLight, '--hermes-fg'), '#0000f2');
 });

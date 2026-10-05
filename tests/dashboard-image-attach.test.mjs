@@ -125,9 +125,9 @@ test('full-tab dashboard turns stage images before prompt.submit and stop inlini
   assert.match(appSource, /content_base64: attachment\.dataUrl/);
   assert.match(appSource, /function attachmentPrompt\(\{ inlineImageData = !usesDashboardTicketTransport\(\) \} = \{\}\)/);
   assert.match(appSource, /signal: activeAbortController\.signal,\r?\n\s*attachments: turnAttachments,/);
-  assert.match(
-    appSource,
-    /if \(submitPrompt\) \{\s*void \(async \(\) => \{\s*try \{\s*await attachDashboardPromptImages\(connection\.client, sessionId, turnAttachments\);[\s\S]{0,400}WS_METHODS\.promptSubmit/,
-    'the full-tab attempt must attach images for the attempt session before submitting',
-  );
+  const attempt = appSource.slice(appSource.indexOf('async function streamDashboardPromptAttempt'), appSource.indexOf('async function loadGatewayCapabilities'));
+  const imageAttach = attempt.indexOf('await attachDashboardPromptImages(connection.client, sessionId, turnAttachments)');
+  const submit = attempt.indexOf('connection.client.request(WS_METHODS.promptSubmit');
+  assert.ok(imageAttach >= 0 && submit > imageAttach, 'the attempt stages images before submitting, after any generic-file stage');
+  assert.match(attempt, /if \(submitPrompt\) \{[\s\S]*?await attachDashboardPromptImages/);
 });

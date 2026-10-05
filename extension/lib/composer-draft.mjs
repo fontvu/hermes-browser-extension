@@ -23,6 +23,9 @@ export function serializeComposerAttachment(attachment = {}, { allowDataUrl = tr
   const next = {
     id: String(attachment.id || ''),
     kind,
+    // The paste-artifact marker must survive a draft reload so a restored
+    // large paste is still sent as a bounded excerpt, not the raw body.
+    source: String(attachment.source || ''),
     label,
     name,
     detail: String(attachment.detail || ''),
@@ -33,6 +36,10 @@ export function serializeComposerAttachment(attachment = {}, { allowDataUrl = tr
     savedSize: Number(attachment.savedSize || 0) || 0,
     size: Number(attachment.size || attachment.savedSize || 0) || 0,
     text: String(attachment.text || ''),
+    blobId: String(attachment.blobId || ''),
+    isText: attachment.isText === true,
+    textTruncated: attachment.textTruncated === true,
+    fileRefText: String(attachment.fileRefText || ''),
   };
   const dataUrl = String(attachment.dataUrl || '');
   if (

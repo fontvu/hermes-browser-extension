@@ -41,6 +41,7 @@ import {
   isLocalDocumentUrl,
   isUsableRemoteGatewayUrl,
   messageDisplayText,
+  isSteerMessage,
   messagesForLocalCache,
   microphonePermissionHelp,
   modelDisplayName,
@@ -70,6 +71,7 @@ import {
   reasoningEffortShortLabel,
   runtimeValueMatches,
   safeTab,
+  sanitizeGatewayDiagnosticText,
   shouldRequireModelLock,
   shouldReuseImageGenerationActivity,
   shouldStopSessionPaging,
@@ -138,6 +140,7 @@ import {
 } from './lib/pet-avatar.mjs';
 import { blobatar as blobatarSvg } from './lib/vendor/blobatar-2.0.0.js';
 import { renderMarkdownSafe, sanitizeHtml } from './lib/sanitizer.mjs';
+import { highlightCodeBlocks } from './lib/code-highlighting.mjs';
 import { enhanceMarkdownCodeBlocks } from './lib/markdown-code-copy.mjs';
 import {
   completionRevealPlan,
@@ -162,6 +165,15 @@ import {
 } from './lib/assist-model-contract.mjs';
 import { serializeBrowserTurnEnvelope } from './lib/browser-context-protocol.mjs';
 import {
+  PASTE_ARTIFACT_MAX_ATTACHMENTS,
+  PASTE_ARTIFACT_MAX_CHARS,
+  buildPasteArtifact,
+  classifyPastedText,
+  isPasteArtifact,
+  pasteArtifactExceedsLocalLimit,
+  pasteArtifactExcerpt,
+} from './lib/paste-artifact.mjs';
+import {
   APPEARANCE_THEMES,
   normalizeAppearanceTheme,
   normalizeColorMode,
@@ -179,9 +191,12 @@ import {
   withAppearancePreferenceUpdate,
 } from './lib/appearance-preferences.mjs';
 import { mountBrandedSelect } from './lib/branded-select.mjs';
+import { probeSignatureFonts } from './lib/font-availability.mjs';
+import { refreshHermesContextRegistry } from './lib/hermes-context-sync.mjs';
 import {
   CUSTOM_THEME_MAX_INPUT_BYTES,
   CUSTOM_THEME_STORAGE_KEY,
+  customThemeEffectiveMode,
   customThemePaletteForMode,
   customThemeSelection,
   serializeThemeDocument,
@@ -203,6 +218,7 @@ import { createStreamPacer } from './lib/stream-pacing.mjs';
 import { contextTelemetryFromRuntime, formatTokenCount, mergeContextTelemetry } from './lib/session-context-telemetry.mjs';
 import { liveStateBadge, mergeLiveSignals } from './lib/session-live-state.mjs';
 import { appendUserImageAttachments, extractHistoryMediaAttachments, normalizeUserImageAttachments, preserveUserImageAttachments, rawGeneratedImageCandidatesFromResult, resolveImageSource, resolvedGeneratedImageSources, resolvedGeneratedImageSourcesFromMessages } from './lib/image-render.mjs';
+import { createUserFileAttachment, appendUserFileAttachments, stageUserFiles, attachmentFileContext, attachmentSourceKey, rememberUserFileAttachments, restoreUserFileAttachments, openUserFileAttachment, downloadUserFileAttachment } from './lib/user-file-attachments.mjs';
 import { mediaDisplayName, mediaSourcePlan, probeArtifactFileSource, resolveArtifactDownloadSource, resolveArtifactFileSource } from './lib/media-source.mjs';
 import { classifyMediaKind, resolveMediaFetchPlan } from './lib/media-persistence.mjs';
 import { artifactActionPlan, artifactFailureNotice } from './lib/artifact-actions.mjs';
@@ -259,10 +275,22 @@ import {
   shouldPromptForProfileSwitch,
 } from './lib/profile-switch.mjs';
 import { browserDisplayMessages } from './lib/web-run-state.mjs';
+import { assignRoomIdentities, resolveRoomSpeaker } from './lib/bot-identity.mjs';
+import { remoteAvatarImageOf, selectRoomAvatarSource, shouldHydrateRemoteAvatar } from './lib/room-avatar.mjs';
+import { createPresenceState, reducePresence, presenceSummary, failureReason } from './lib/group-presence.mjs';
+import {
+  readRoomModelBinding,
+  writeRoomModelBinding,
+  clearRoomModelBinding,
+  needsReapply,
+  readRoomDisplayEvents,
+  appendRoomDisplayEvent,
+} from './lib/group-member-models.mjs';
 import {
   createBotGroupRuntime,
   groupProjectionEntryFromDisplayMessage,
   persistGroupProjectionAppend,
+  persistGroupProjectionCreate,
   persistGroupProjectionRename,
   persistGroupProjectionUpdate,
 } from './lib/bot-group-runtime.mjs';
@@ -310,12 +338,15 @@ import {
 import {
   acceptedTurnRecoveryPolicy,
   classifyTurnRecovery,
+  gatewayFailureRecoveryPlan,
   hermesGatewayTurnError,
   hermesRequestError,
   latestAssistantAfterUser,
   sessionContextFailureRecovery,
   turnRequestFailureState,
+  isDisplayTextRejection,
 } from './lib/turn-recovery.mjs';
+import { createGatewayRestartAction, restartGatewayViaDashboard, waitForGatewayReturn, watchGatewayRestart } from './lib/gateway-restart.mjs';
 import { createDiffusionCanvas, diffusionVariantForSeed } from './lib/diffusion-canvas.mjs';
 import { buildSupportDiagnostics } from './lib/support-diagnostics.mjs';
 import {
@@ -517,7 +548,21 @@ import {
 } from './lib/connection-controller.mjs';
 import { createHermesClient } from './lib/hermes-client.mjs';
 import { openHermesFullView } from './lib/fulltab-opener.mjs';
-import { writeAssistantClipboardEvent } from './lib/assistant-clipboard.mjs';
+import { buildCleanClipboardPayload, writeAssistantClipboardEvent } from './lib/assistant-clipboard.mjs';
+import { normalizeMessageTimestamp } from './lib/message-meta.mjs';
+import { setRailCopyEnabled } from './lib/message-actions.mjs';
+import { createMessageThreadUi } from './lib/message-thread-ui.mjs';
+import { bindWheelScrollX } from './lib/wheel-scroll-x.mjs';
+import { highlightMentions, insertMention } from './lib/room-mentions.mjs';
+import {
+  truncateSubmitParams,
+  resolveRowIdByDisplayText,
+  planEdit,
+  planRestore,
+  applyRewindLocally,
+  rebindSurvivorRowIds,
+  bindRowIdsFromHistory,
+} from './lib/message-rewind.mjs';
 import { explicitSiteCaptureAction } from './lib/site-adapters.mjs';
 import {
   SURFACE_KINDS,
@@ -534,6 +579,7 @@ import {
   currentTabLeaseReplacement,
   followTargetTabId,
 } from './lib/browser-control-ui.mjs';
+import { createBrowserControlDialog } from './lib/browser-control-dialog.mjs';
 
 // -- Train 1 Phase 0 startup instrumentation (observer-only) ---------------
 // Marks/measure hooks for scripts/bench-startup.mjs (window.__HBE_BOOT_MARKS).
@@ -602,6 +648,9 @@ const INLINE_SESSION_STATE_KEY = 'hermesBrowserInlineSessionState';
 const CONTEXT_MENU_STORAGE_KEY = 'hermesBrowserContextMenuRequest';
 const OPEN_SESSION_STORAGE_KEY = 'hermesBrowserOpenSessionRequest';
 const TASK_STACKS_STORAGE_KEY = 'hermesBrowserTaskStacks';
+// Durable per-room display-only transcript rows (member pass/failure and
+// model change/reset notices) so they survive a room close/reopen.
+const ROOM_EVENTS_STORAGE_KEY = 'hermesBrowserRoomEvents';
 
 const els = {
   shell: $('.shell'),
@@ -645,6 +694,7 @@ const els = {
   composerLabel: $('#composerLabel'),
   input: $('#promptInput'),
   contextChip: $('#contextChip'),
+  statusStackToggle: $('#statusStackToggle'),
   contextChipLabel: $('#contextChipLabel'),
   contextPreview: $('#contextPreview'),
   explicitSiteCaptureWrap: $('#explicitSiteCaptureWrap'),
@@ -731,9 +781,12 @@ const els = {
   groupThreadBadge: $('#groupThreadBadge'),
   groupThreadHint: $('#groupThreadHint'),
   groupThreadExitButton: $('#groupThreadExitButton'),
-  groupTypingIndicator: $('#groupTypingIndicator'),
-  groupTypingAvatars: $('#groupTypingAvatars'),
-  groupTypingText: $('#groupTypingText'),
+  groupPresence: $('#groupPresence'),
+  groupPresenceChips: $('#groupPresenceChips'),
+  groupPresenceStatus: $('#groupPresenceStatus'),
+  roomMemberPopover: $('#roomMemberPopover'),
+  roomMemberPopoverList: $('#roomMemberPopoverList'),
+  roomMemberPopoverTitle: $('#roomMemberPopoverTitle'),
   newGroupModal: $('#newGroupModal'),
   newGroupSearch: $('#newGroupSearch'),
   newGroupBotList: $('#newGroupBotList'),
@@ -832,6 +885,7 @@ const els = {
   activeUrl: $('#activeUrl'),
   statusDot: $('#statusDot'),
   statusActions: $('#statusActions'),
+  statusRetryProbeButton: $('#statusRetryProbeButton'),
   statusCopyDiagnosticsButton: $('#statusCopyDiagnosticsButton'),
   browserControlCard: $('#browserControlCard'),
   browserControlCardDetail: $('#browserControlCardDetail'),
@@ -841,6 +895,13 @@ const els = {
   browserControlFollowButton: $('#browserControlFollowButton'),
   browserControlEnableButton: $('#browserControlEnableButton'),
   browserControlDetachButton: $('#browserControlDetachButton'),
+  browserControlMenuButton: $('#browserControlMenuButton'),
+  browserControlDialog: $('#browserControlDialog'),
+  browserControlDialogScopeInput: $('#browserControlDialogScopeInput'),
+  browserControlDialogStayButton: $('#browserControlDialogStayButton'),
+  browserControlDialogFollowButton: $('#browserControlDialogFollowButton'),
+  browserControlOffButton: $('#browserControlOffButton'),
+  browserControlPauseLabel: $('#browserControlPauseLabel'),
   browserControlStrip: $('#browserControlStrip'),
   browserControlStripSignal: $('#browserControlStripSignal'),
   browserControlStripTitle: $('#browserControlStripTitle'),
@@ -929,6 +990,7 @@ const els = {
   contextMenuEditor: $('#contextMenuEditor'),
   panelResidencyInputs: Array.from(document.querySelectorAll('input[name="panelResidencyMode"]')),
   autoNameSessionsInput: $('#autoNameSessionsInput'),
+  showMessageTimesInput: $('#showMessageTimesInput'),
   transcriptProviderInput: $('#transcriptProviderInput'),
   wakeWordEnabledInput: $('#wakeWordEnabledInput'),
   wakeWordPhraseInput: $('#wakeWordPhraseInput'),
@@ -979,6 +1041,7 @@ const els = {
   customFontFamilyField: $('#customFontFamilyField'),
   customFontFamilyInput: $('#customFontFamilyInput'),
   appearanceSaveStatus: $('#appearanceSaveStatus'),
+  signatureFontFallbackNote: $('#signatureFontFallbackNote'),
   quickMoreMenu: $('#quickMoreMenu'),
   commandMenuButton: $('#commandMenuButton'),
   template: $('#messageTemplate'),
@@ -987,6 +1050,9 @@ const els = {
 let settings = { ...DEFAULT_SETTINGS };
 let appearanceMutationId = 0;
 let appearanceSaveStatus = '';
+// Guards the async signature-font probe so a stale result cannot toggle the
+// fallback note after a newer render already decided its visibility.
+let signatureNoteProbeId = 0;
 let themeFontPinned = false;
 let themeFontPinnedFor = '';
 let appearanceWriteQueue = Promise.resolve();
@@ -1040,6 +1106,8 @@ let pageCommentPickActive = false;
 const pageAnnotationImages = createPageAnnotationImageStore();
 let selectedTabs = []; // null = all tabs; array of SafeTab = user-filtered set
 let messages = [];
+let panelMessageThread = null;
+let fileHistoryRestoreGeneration = 0;
 let taskStackStore = {};
 let taskStackExpanded = true;
 let subagentState = {};
@@ -1082,7 +1150,14 @@ let activeGroupAbortController = null;
 let activeGroupThreadId = '';
 let activeGroupPendingNewThread = false;
 const activeGroupExpandedThreads = new Set();
-const activeGroupTypingMembers = new Map();
+let activeGroupPresence = createPresenceState();
+let activeGroupPresenceTimer = 0;
+let activeGroupPresenceThread = '';
+let activeGroupLiveMessage = null;
+let activeGroupLiveFrame = 0;
+let activeGroupDisplayEvents = [];
+let activeRoomIdentityKey = '';
+let activeRoomIdentities = [];
 // Bot session history paging: render only the newest page by default; older
 // messages load in pages via the Load More control (weeks of history stay
 // out of the DOM until requested).
@@ -1150,6 +1225,7 @@ let browserControlStatus = null;
 let browserControlActiveTab = null;
 let browserControlCurrentTarget = null;
 let browserControlPollTimer = null;
+let browserControlDialogUi = null;
 let latestUpdateReview = null;
 let sessionsRefreshing = false;
 let contextMenuEditor = null;
@@ -1695,6 +1771,10 @@ async function clearContextDeliveryState() {
 let trustedDashboardTabId = null;
 let connectionProbeStatus = 'connecting';
 let connectionProbeDetail = '';
+// Structured classification of the last probe or gateway failure. Recovery copy
+// is built from this evidence so the panel never claims a cause it cannot prove.
+let connectionProbeDiagnostic = null;
+let lastGatewayDiagnostic = null;
 let connectionProbeTimer = null;
 let connectionProbeInFlight = false;
 const connectionController = createConnectionController();
@@ -1864,6 +1944,7 @@ function connectionStateTitle(state, summary) {
     gatewayUrl: settings.gatewayUrl,
     state: state.state,
     probeDetail: connectionProbeDetail,
+    probeDiagnostic: connectionProbeDiagnostic,
   });
   return 'Not connected to Hermes';
 }
@@ -1874,12 +1955,16 @@ function currentConnectionTroubleshooting(state = currentConnectionState()) {
     gatewayUrl: settings.gatewayUrl,
     state: state.state,
     probeDetail: connectionProbeDetail,
+    probeDiagnostic: connectionProbeDiagnostic,
   });
 }
 
-function markConnectionProbe(status, detail = '') {
+function markConnectionProbe(status, detail = '', diagnostic = null) {
   connectionProbeStatus = status;
   connectionProbeDetail = detail;
+  connectionProbeDiagnostic = diagnostic && diagnostic.kind ? diagnostic : null;
+  if (connectionProbeDiagnostic) lastGatewayDiagnostic = connectionProbeDiagnostic;
+  if (status === 'connected') lastGatewayDiagnostic = null;
   updateConnectionPrompt();
 }
 
@@ -1896,12 +1981,23 @@ function setStatus(kind, title, detail, { translateTitle = true, translateDetail
 }
 
 function renderStatusActions() {
-  if (!els.statusActions || !els.statusCopyDiagnosticsButton) return;
-  const shouldShow = lastVisibleStatus?.kind === 'error'
-    && isRemoteMode()
-    && lastRemoteDiagnostic
-    && lastRemoteDiagnostic.kind !== 'unknown';
+  if (!els.statusActions) return;
+  // Gateway failures get their own recovery action. The panel only offers it
+  // while it is showing a failure it could actually classify, and the retry
+  // probe never sends a turn.
+  const gatewayFailure = Boolean(lastGatewayDiagnostic && lastGatewayDiagnostic.kind !== 'unknown');
+  const remoteFailure = Boolean(isRemoteMode() && lastRemoteDiagnostic && lastRemoteDiagnostic.kind !== 'unknown');
+  const shouldShow = ['error', 'warn'].includes(lastVisibleStatus?.kind || '')
+    && (gatewayFailure || remoteFailure);
   els.statusActions.hidden = !shouldShow;
+  if (!shouldShow) return;
+  if (els.statusRetryProbeButton) {
+    els.statusRetryProbeButton.hidden = !gatewayFailure;
+    els.statusRetryProbeButton.textContent = translateUiText('Check connection');
+    const detail = 'Runs the connection check again. Nothing is sent to Hermes.';
+    els.statusRetryProbeButton.title = translateUiText(detail);
+    els.statusRetryProbeButton.setAttribute('aria-label', translateUiText(detail));
+  }
 }
 
 function applyRemoteDiagnostic(diagnostic, { statusKind = 'error' } = {}) {
@@ -2051,21 +2147,30 @@ function renderBrowserControl() {
     : 'browser_control.enable');
   els.browserControlDetachButton.hidden = !enabled;
 
+  browserControlDialogUi?.render({
+    enabled,
+    canChangeScope: enabled && browserControlStatus?.connected === true && browserControlStatus?.controlEnabled === true
+      && !browserControlStatus?.activeAction && !browserControlStatus?.pendingCommands
+      && !browserControlStatus?.pendingApproval && !browserControlStatus?.pendingApprovals && !browserControlStatus?.scopeChanging,
+    view: { ...view, title: translateUiText(view.title), detail: translateUiText(view.detail) },
+    help: {
+      stay: t('browser_control.help_stay'), follow: t('browser_control.help_follow'),
+      attach: t('browser_control.help_attach'), off: t('browser_control.help_off'),
+      pause: t(paused ? 'browser_control.help_resume' : 'browser_control.help_pause'),
+      stop: t('browser_control.help_stop'), close: t('browser_control.help_close'),
+    },
+  });
+  // The dialog owns an explicit draft; status polling must not erase it.
+  els.browserControlDialogStayButton.setAttribute('aria-pressed', String(viewBehavior === 'stay'));
+  els.browserControlDialogFollowButton.setAttribute('aria-pressed', String(viewBehavior === 'follow'));
   els.browserControlStrip.hidden = !enabled;
   els.browserControlStrip.dataset.tone = view.tone;
   els.browserControlStripTitle.textContent = translateUiText(view.title);
   els.browserControlStripDetail.textContent = translateUiText(view.detail);
-  const activeTabIdForStrip = Number(browserControlActiveTab?.id);
-  const stripTabAttached = Number.isInteger(activeTabIdForStrip)
-    && Array.isArray(browserControlStatus?.leasedTabIds)
-    && browserControlStatus.leasedTabIds.some((tabId) => Number(tabId) === activeTabIdForStrip);
-  const stripToggleMode = stripTabAttached ? 'detach' : 'attach';
-  els.browserControlAttachButton.hidden = !(view.canAttach || stripTabAttached) || view.canAuthorize;
+  els.browserControlAttachButton.hidden = !view.canAttach || view.canAuthorize;
   els.browserControlAuthorizeButton.hidden = !view.canAuthorize;
-  els.browserControlAttachButton.dataset.mode = stripToggleMode;
-  els.browserControlAttachButton.textContent = t(stripToggleMode === 'detach' ? 'browser_control.detach' : 'ui.attach');
-  els.browserControlAttachButton.title = t(stripToggleMode === 'detach' ? 'browser_control.detach' : 'ui.attach.to.current.tab');
-  els.browserControlAttachButton.setAttribute('aria-label', t(stripToggleMode === 'detach' ? 'browser_control.detach' : 'ui.attach.to.current.tab'));
+  els.browserControlAttachButton.textContent = t('ui.attach.to.current.tab');
+  els.browserControlAttachButton.setAttribute('aria-label', t('ui.attach.to.current.tab'));
   els.browserControlPauseButton.dataset.paused = String(paused);
   // Toggle glyphs via attributes: SVGElement does not reliably reflect the hidden property.
   const pauseGlyph = els.browserControlPauseButton.querySelector('.glyph-pause');
@@ -2073,7 +2178,7 @@ function renderBrowserControl() {
   if (pauseGlyph) { if (paused) pauseGlyph.setAttribute('hidden', ''); else pauseGlyph.removeAttribute('hidden'); }
   if (playGlyph) { if (paused) playGlyph.removeAttribute('hidden'); else playGlyph.setAttribute('hidden', ''); }
   const pauseLabelKey = paused ? 'browser_control.resume' : 'browser_control.pause';
-  els.browserControlPauseButton.title = t(pauseLabelKey);
+  els.browserControlPauseLabel.textContent = t(pauseLabelKey);
   els.browserControlPauseButton.setAttribute('aria-label', t(pauseLabelKey));
   els.browserControlPauseButton.disabled = !view.canPause;
   els.browserControlStopButton.hidden = !view.canStop;
@@ -2276,24 +2381,6 @@ function hideOperationToast() {
   if (els.operationToast) els.operationToast.hidden = true;
 }
 
-function positionOperationToast() {
-  if (!els.operationToast || els.operationToast.hidden) return;
-  // If settings dialog is open, place toast neatly docked at the bottom of the viewport
-  if (els.settingsDialog && !els.settingsDialog.hidden) {
-    els.operationToast.style.top = 'auto';
-    els.operationToast.style.bottom = '16px';
-    return;
-  }
-  const composerTop = els.composer?.getBoundingClientRect().top;
-  if (!Number.isFinite(composerTop) || composerTop <= 0) {
-    els.operationToast.style.top = 'auto';
-    els.operationToast.style.bottom = '16px';
-    return;
-  }
-  els.operationToast.style.bottom = 'auto';
-  els.operationToast.style.top = `${Math.max(58, Math.round(composerTop - els.operationToast.offsetHeight - 10))}px`;
-}
-
 function showOperationToast({ kind = 'ok', title = 'Hermes Browser', detail = '', duration = 5200 } = {}) {
   if (!els.operationToast) return;
   hideOperationToast();
@@ -2301,7 +2388,6 @@ function showOperationToast({ kind = 'ok', title = 'Hermes Browser', detail = ''
   els.operationToastTitle.textContent = translateUiText(title);
   els.operationToastDetail.textContent = translateUiText(detail);
   els.operationToast.hidden = false;
-  positionOperationToast();
   if (duration > 0) operationToastTimer = setTimeout(hideOperationToast, duration);
 }
 
@@ -2600,6 +2686,7 @@ async function copySupportDiagnostics() {
       selectedModel: currentSelectedModel() || {},
       contextScope,
       lastError: lastVisibleStatus,
+      gatewayDiagnostic: lastGatewayDiagnostic,
       currentContext,
       extractorMode: currentContext?.pageContext?.source || 'extension-dom',
     });
@@ -3181,10 +3268,38 @@ function renderContextScopePromptControls(tabs = currentContext.tabs || []) {
   return section;
 }
 
-function renderContextScopeMenu(query = '', { focusSearch = false } = {}) {
+function renderContextScopeConsentNotice(requestedScope = contextScope) {
+  const gate = effectiveContextGate(requestedScope);
+  if (gate.allowed) return null;
+
+  const needsConnection = gate.reason === 'principal-unavailable';
+  const notice = document.createElement('section');
+  notice.className = 'context-scope-consent-notice';
+  notice.setAttribute('role', 'status');
+
+  const title = document.createElement('strong');
+  title.textContent = translateUiText(needsConnection ? 'Verify this connection first' : 'Page context approval required');
+  const detail = document.createElement('span');
+  detail.textContent = translateUiText(needsConnection
+    ? 'Reconnect or test this connection before choosing a tab scope.'
+    : 'Approve “Share page context with this connection” before choosing a tab scope.');
+  const action = document.createElement('button');
+  action.type = 'button';
+  action.className = 'context-scope-consent-action';
+  action.dataset.scopeAction = 'open-context-consent';
+  action.dataset.contextConsentReason = gate.reason || '';
+  action.textContent = translateUiText('Open Settings');
+  notice.append(title, detail, action);
+  return notice;
+}
+
+function renderContextScopeMenu(query = '', { focusSearch = false, consentScope = contextScope } = {}) {
   if (!els.contextScopeMenu) return;
   const searchQuery = String(query || '');
   els.contextScopeMenu.innerHTML = '';
+
+  const consentNotice = renderContextScopeConsentNotice(consentScope);
+  if (consentNotice) els.contextScopeMenu.appendChild(consentNotice);
 
   const actions = document.createElement('div');
   actions.className = 'context-scope-actions';
@@ -3467,6 +3582,19 @@ async function resolveAttachedPanelOwnerTab() {
   }
 }
 
+function requireContextConsentForScope(nextScope) {
+  const requested = normalizeContextScope(nextScope);
+  if (requested.mode === CONTEXT_SCOPE_MODES.CHAT_ONLY) return true;
+  const gate = effectiveContextGate(requested);
+  if (gate.allowed) return true;
+
+  renderContextScopeMenu('', { consentScope: requested });
+  requestAnimationFrame(() => {
+    els.contextScopeMenu?.querySelector('[data-scope-action="open-context-consent"]')?.focus();
+  });
+  return false;
+}
+
 async function pinContextTab(tab) {
   if (!tab?.id) return false;
   const attachedOwner = await resolveAttachedPanelOwnerTab();
@@ -3481,6 +3609,7 @@ async function pinContextTab(tab) {
     attachedTabId: sidePanelParams.tabId,
   });
   if (action.kind === 'noop') return false;
+  if (!requireContextConsentForScope(action.scope)) return false;
   const applied = await applyContextScope(action.scope, { ensureSession: true });
   return applied;
 }
@@ -3505,12 +3634,14 @@ async function unlockContextScope() {
   if (isAttachedPanelResidency() && !attachedOwner) {
     throw new Error('The attached owner tab is closed or no longer available.');
   }
-  const applied = await applyContextScope(resetContextScope({
+  const nextScope = resetContextScope({
     panelMode: settings.panelResidencyMode,
     attachedTab: attachedOwner,
     attachedTabId: sidePanelParams.tabId,
     previousScope: contextScope,
-  }), { ensureSession: true });
+  });
+  if (!requireContextConsentForScope(nextScope)) return false;
+  const applied = await applyContextScope(nextScope, { ensureSession: true });
   return applied;
 }
 
@@ -4096,9 +4227,14 @@ function updateConnectionPrompt() {
     }
   } else {
     els.sendButton.textContent = translateUiText(sending ? 'Hermes running' : 'Ask Hermes');
-    els.connectStatus.textContent = state.state === 'degraded'
-      ? `Connected to Hermes with a runtime warning. ${currentConnectionTroubleshooting(state)}`
-      : 'Connected to Hermes. You can start chatting with page context.';
+    if (state.state === 'degraded') {
+      els.connectStatus.textContent = `Connected to Hermes with a runtime warning. ${currentConnectionTroubleshooting(state)}`;
+      // Surface a degraded runtime as a warning status so the recovery action
+      // (Check connection) is offered after a server-runtime failure.
+      setStatus('warn', 'Hermes connected with a runtime warning', currentConnectionTroubleshooting(state), { translateDetail: false });
+    } else {
+      els.connectStatus.textContent = 'Connected to Hermes. You can start chatting with page context.';
+    }
   }
   updateComposerBusyState();
 }
@@ -4128,6 +4264,8 @@ function currentComposerDraftState() {
 }
 
 function updateComposerBusyState() {
+  document.body.classList.toggle('turn-running', sending);
+  panelMessageThread?.refreshActions();
   renderRunControlRecovery();
   const state = currentComposerDraftState();
   const startupBlocking = !startupReadiness.ready;
@@ -4251,17 +4389,30 @@ function renderSteerNotice() {
       body.dataset.steerText = steerText;
       renderMessageContentElement(body, messageDisplayText('user', steerText));
     }
-    els.messages.appendChild(existing);
+    placeSteerPendingRow(existing);
     return;
   }
   const node = els.template.content.firstElementChild.cloneNode(true);
-  node.classList.add('user', 'steer-pending-row');
+  // The template root is the row wrapper; the bubble classes belong on the
+  // article, otherwise the dashed user-bubble styling never matches.
+  node.classList.add('steer-pending-row');
+  node.dataset.role = 'pending-steer';
+  (node.matches('.message') ? node : node.querySelector('.message'))?.classList.add('user', 'steer-pending-row');
   node.querySelector('.message-role').textContent = translateUiText('Steer queued · arrives after the next tool call');
   const body = node.querySelector('.message-content');
   body.dataset.steerText = steerText;
   renderMessageContentElement(body, messageDisplayText('user', steerText));
-  els.messages.appendChild(node);
+  placeSteerPendingRow(node);
   scrollMessageStreamToBottom();
+}
+
+// A queued steer belongs directly under the message it steers (the newest user
+// message), above the live tool cards, never in a separate box at the bottom.
+function placeSteerPendingRow(node) {
+  const userRows = [...els.messages.querySelectorAll(':scope > .message-row[data-role="user"]')];
+  const anchor = userRows[userRows.length - 1];
+  if (anchor) anchor.after(node);
+  else els.messages.appendChild(node);
 }
 
 // The gateway generates the parent completion turn AFTER a subagent batch
@@ -6414,7 +6565,8 @@ function panelAppearanceSnapshot() {
 function mountSettingsBrandedSelects() {
   const root = document.getElementById('settingsDialog');
   if (!root) return;
-  for (const select of root.querySelectorAll('select')) {
+  // New settings-like dialogs must use the same select/chevron contract.
+  for (const select of document.querySelectorAll('#settingsDialog select, #browserControlDialog select')) {
     if (select.hidden || select.hasAttribute('hidden')) continue;
     if (select.id === 'languageSelect') {
       mountBrandedSelect(select, { language: true });
@@ -6431,6 +6583,7 @@ function mountSettingsBrandedSelects() {
 }
 
 function applyAppearanceSettings() {
+  document.body.classList.toggle('hide-message-times', settings.showMessageTimes === false);
   const colorMode = normalizeColorMode(settings.colorMode);
   const resolvedMode = resolvedColorMode(colorMode);
   const root = document.documentElement;
@@ -6447,16 +6600,37 @@ function applyAppearanceSettings() {
   root.dataset.hermesTheme = theme;
   root.dataset.hermesColorMode = colorMode;
   root.dataset.hermesMode = resolvedMode;
-  const effectiveColorScheme = selection.kind === 'custom' && resolvedMode === 'dark' && !selection.document.darkColors
-    ? 'light'
+  const effectiveMode = selection.kind === 'custom'
+    ? customThemeEffectiveMode(selection.document, resolvedMode)
     : resolvedMode;
-  root.style.colorScheme = effectiveColorScheme;
+  root.dataset.hermesEffectiveMode = effectiveMode;
+  root.style.colorScheme = effectiveMode;
   const visualTheme = selection.kind === 'custom' ? '' : theme;
   applyAppearancePreferences(root, appearancePreferencesForTheme(
     appearancePreferencesForSurface(settings, 'panel'),
     visualTheme,
     { pinThemeFont: themeFontPinned && themeFontPinnedFor === visualTheme },
   ));
+}
+
+// The signature profile renders the bundled fallback face when the licensed
+// Rules faces are absent. Probe the faces actually registered in
+// document.fonts (not document.fonts.check, which reports true even for a
+// family that was never registered) and reveal the honest note only when the
+// licensed faces are confirmed missing. A superseded probe result is dropped so
+// it cannot flip the note back after a newer render already decided.
+async function refreshSignatureFontFallbackNote(fontProfile) {
+  const note = els.signatureFontFallbackNote;
+  if (!note) return;
+  const probeId = ++signatureNoteProbeId;
+  if (fontProfile !== 'signature') {
+    note.hidden = true;
+    return;
+  }
+  const fontSet = typeof document === 'undefined' ? null : document.fonts;
+  const result = await probeSignatureFonts(fontSet);
+  if (probeId !== signatureNoteProbeId) return;
+  note.hidden = result.status !== 'fallback';
 }
 
 function renderAppearanceControls() {
@@ -6486,6 +6660,7 @@ function renderAppearanceControls() {
     els.textZoomInput.setAttribute('aria-valuetext', t('appearance.percent_value', { percent: preferences.textZoomPercent }));
   }
   if (els.fontProfileSelect) els.fontProfileSelect.value = requestedProfile;
+  void refreshSignatureFontFallbackNote(requestedProfile);
   mountSettingsBrandedSelects();
   if (els.customFontFamilyField) els.customFontFamilyField.hidden = requestedProfile !== 'custom-local';
   if (els.customFontFamilyInput && document.activeElement !== els.customFontFamilyInput) {
@@ -6585,7 +6760,7 @@ function formatBytes(bytes = 0) {
 }
 
 function attachmentIcon(kind = '') {
-  return ({ file: '📄', folder: '📁', image: '🖼', url: '🔗' })[kind] || '📎';
+  return ({ file: '📄', folder: '📁', image: '🖼', url: '🔗', text: '▤' })[kind] || '📎';
 }
 
 function attachmentId(kind, label) {
@@ -6655,8 +6830,12 @@ function renderAttachments() {
       icon.textContent = attachmentIcon(attachment.kind);
     }
 
-    const label = document.createElement('span');
+    const label = document.createElement(attachment.kind === 'file' ? 'button' : 'span');
     label.textContent = attachment.localPath ? `${attachment.label} · saved` : attachment.label;
+    if (attachment.kind === 'file') {
+      label.type = 'button'; label.className = 'attachment-open';
+      label.addEventListener('click', () => { void openUserFileAttachment(attachment, { translate: t }).catch(() => setStatus('warn', t('ui.file'), t('attachments.file_unavailable'))); });
+    }
 
     const close = document.createElement('button');
     close.type = 'button';
@@ -6794,14 +6973,11 @@ async function attachFiles(fileList, { imagesOnly = false } = {}) {
       });
       continue;
     }
-    const text = isLikelyTextFile(file) ? clampText(await readFileAsText(file), TEXT_ATTACHMENT_LIMIT) : '';
-    addAttachment({
-      id: attachmentId('file', file.name),
-      kind: 'file',
-      label: file.name || 'file',
-      detail: `${file.type || 'file'} · ${formatBytes(file.size)}`,
-      text: text || `[${file.name || 'file'} attached as metadata only: ${formatBytes(file.size)}. Browser cannot expose a stable local path; use Hermes Desktop for path-backed file refs.]`,
-    });
+    try {
+      addAttachment(await createUserFileAttachment(file));
+    } catch (error) {
+      setStatus('warn', t('ui.attachment'), t(error.uiKey || 'attachments.file_unavailable'), { translateTitle: false, translateDetail: false });
+    }
   }
   await ensureImageAttachmentsSaved();
   persistCurrentComposerDraft({ immediate: true });
@@ -6900,6 +7076,69 @@ async function handlePasteImages(event) {
   return true;
 }
 
+function pasteArtifactMetaLabel(attachment) {
+  return `${formatBytes(attachment.sizeBytes || 0)} · ${attachment.lineCount} lines`;
+}
+
+function addPasteArtifact(text) {
+  const artifact = buildPasteArtifact(text);
+  const attachment = {
+    ...artifact,
+    id: attachmentId('text', artifact.label),
+    detail: `${pasteArtifactMetaLabel(artifact)} · pasted from clipboard${artifact.truncated ? ` · kept only the first ${PASTE_ARTIFACT_MAX_CHARS.toLocaleString()} characters` : ' · full text kept locally; only an excerpt is sent'}`,
+  };
+  addAttachment(attachment);
+  return attachment;
+}
+
+// Issue #94: a transcript-sized Ctrl+V must never silently reach the textarea,
+// where it would be trimmed at the 6,000-char send budget with no warning.
+// Pastes within the local preservation ceiling become a text attachment whose
+// full body stays on this device — only a head+tail excerpt travels with the
+// turn. Over that ceiling (or when group rooms / the attachment cap block
+// attachments) we reject BEFORE preventDefault so the browser's default paste
+// still happens and no clipboard data is lost, and we say plainly that only an
+// excerpt is sent and the full text remains local. Returns true when the paste
+// was fully handled.
+function handlePasteText(event) {
+  const text = String(event?.clipboardData?.getData?.('text/plain') || '');
+  if (!classifyPastedText(text).large) return false;
+  // Group rooms cannot carry attachments today. Warn honestly instead of a
+  // silent no-op that leaves the user thinking the paste was preserved.
+  if (activeGroupProjection) {
+    setStatus('warn', 'Large paste not attached', `Group rooms cannot carry attachments yet, so this ${text.length.toLocaleString()}-character paste was not attached. Only the first 6,000 characters are sent inline; the full text stays on this device.`);
+    return false;
+  }
+  if (attachments.length >= PASTE_ARTIFACT_MAX_ATTACHMENTS) {
+    setStatus('warn', 'Paste kept as plain text', `Hermes turns carry at most ${PASTE_ARTIFACT_MAX_ATTACHMENTS} attachments; remove one to paste this as a file instead. Only the first 6,000 characters of an inline message are sent; the rest stays on this device.`);
+    return false;
+  }
+  // Reject over the local preservation ceiling before preventDefault so the
+  // default paste still runs and nothing is swallowed; never claim the full
+  // text was preserved when it cannot be.
+  if (pasteArtifactExceedsLocalLimit(text)) {
+    setStatus('warn', 'Paste too large to keep locally', `This ${text.length.toLocaleString()}-character paste is over the ${PASTE_ARTIFACT_MAX_CHARS.toLocaleString()}-character limit Hermes keeps on this device, so it was not attached. Only the first 6,000 characters are sent inline; the full text stays on this device — attach it as a file to send more.`);
+    return false;
+  }
+  event.preventDefault();
+  const attachment = addPasteArtifact(text);
+  setStatus('ok', 'Pasted as a text attachment', `${attachment.label} · ${pasteArtifactMetaLabel(attachment)} — only a head+tail excerpt is sent to Hermes; the full pasted text stays on this device and is never uploaded. Inline messages are limited to 6,000 characters, so long pastes are attached instead of being cut off.`);
+  els.input.focus();
+  return true;
+}
+
+// What the turn payload actually carries for a paste artifact: a pre-sized
+// head+tail excerpt plus the full text on the artifact object, never the whole
+// multi-kilobyte body inside the BCP v2 attachment budget.
+function attachmentForProtocol(attachment) {
+  if (!isPasteArtifact(attachment)) return attachment;
+  return {
+    ...attachment,
+    text: pasteArtifactExcerpt(String(attachment.text || '')),
+    detail: attachment.detail,
+  };
+}
+
 function dragEventHasFiles(event) {
   return Array.from(event?.dataTransfer?.types || []).includes('Files');
 }
@@ -6951,7 +7190,7 @@ function imageAttachmentPromptLine(image, index) {
 function attachmentContextText(items = attachments) {
   const blocks = items
     .filter((attachment) => attachment.kind !== 'image')
-    .map((attachment) => `### ${attachment.kind.toUpperCase()}: ${attachment.label}\n${attachment.text || attachment.detail || ''}`);
+    .map((attachment) => `### ${attachment.kind.toUpperCase()}: ${attachment.label}\n${isPasteArtifact(attachment) ? pasteArtifactExcerpt(String(attachment.text || '')) : attachmentFileContext(attachment)}`);
   const images = items.filter((attachment) => attachment.kind === 'image');
   if (images.length) blocks.push(`### IMAGES\n${images.map(imageAttachmentPromptLine).join('\n')}`);
   return blocks.length ? `\n\n--- Browser Attachments ---\n${blocks.join('\n\n')}` : '';
@@ -7206,6 +7445,11 @@ async function applyAssistSelectedModel(model) {
 }
 
 function modelForSelectionTarget(target = modelSelectionTarget) {
+  if (target === 'room-member') {
+    return availableModels.find(isModelRuntimeSelectable)
+      || availableModels[0]
+      || null;
+  }
   const modelId = target === 'assist' ? (settings.inlineAssistModel || settings.model) : settings.model;
   return availableModels.find((model) => model.id === modelId || model.rawModelId === modelId)
     || (target === 'chat' ? availableModels.find((model) => model.id === settings.model) : null)
@@ -7244,11 +7488,18 @@ function positionAssistModelMenu() {
 }
 
 function setModelSelectionTarget(target = 'chat') {
-  modelSelectionTarget = target === 'assist' ? 'assist' : 'chat';
+  modelSelectionTarget = target === 'assist' || target === 'room-member' ? target : 'chat';
   if (modelSelectionTarget === 'assist') {
     if (els.modelMenu.parentElement !== document.body) document.body.append(els.modelMenu);
     els.modelMenu.dataset.selectionTarget = 'assist';
     if (els.modelMenuTitle) els.modelMenuTitle.textContent = translateUiText('Choose Assist model');
+  } else if (modelSelectionTarget === 'room-member') {
+    // One picker component: a room-member pick switches that room member's
+    // session only, never the 1:1 chat model.
+    if (els.modelMenu.parentElement !== document.body) document.body.append(els.modelMenu);
+    els.modelMenu.dataset.selectionTarget = 'room-member';
+    if (els.modelMenuTitle) els.modelMenuTitle.textContent = `${t('ui.room.bots.title')} · ${roomMemberModelLabel()}`;
+    positionAssistModelMenu();
   } else {
     if (modelMenuHome.parent && els.modelMenu.parentElement !== modelMenuHome.parent) {
       modelMenuHome.parent.insertBefore(els.modelMenu, modelMenuHome.next);
@@ -7265,14 +7516,17 @@ function setModelSelectionTarget(target = 'chat') {
   els.modelMenuList.scrollTop = 0;
   renderModelMenu('');
   renderModelRuntimeOptions();
-  if (modelSelectionTarget === 'assist') positionAssistModelMenu();
+  if (modelSelectionTarget !== 'chat') positionAssistModelMenu();
   globalThis.queueMicrotask(() => {
     els.modelProviderList.querySelector('.model-provider-option.selected')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
   });
 }
 
 function renderModelMenu(query = els.modelSearchInput?.value || '') {
-  const menuModelId = modelSelectionTarget === 'assist' ? (settings.inlineAssistModel || settings.model) : settings.model;
+  const roomPick = modelSelectionTarget === 'room-member' ? roomModelPickTarget : null;
+  const menuModelId = modelSelectionTarget === 'assist'
+    ? (settings.inlineAssistModel || settings.model)
+    : String(roomPick?.model || settings.model);
   const allGroups = groupModelsForMenu(availableModels, menuModelId, '');
   const needle = String(query || '').trim().toLowerCase();
   const matchingGroups = needle ? groupModelsForMenu(availableModels, menuModelId, needle) : allGroups;
@@ -7361,6 +7615,7 @@ function renderModelMenu(query = els.modelSearchInput?.value || '') {
       button.append(name, meta);
       button.addEventListener('click', async () => {
               if (modelSelectionTarget === 'assist') await applyAssistSelectedModel(model);
+              else if (modelSelectionTarget === 'room-member') await setRoomMemberModel(model);
               else requestSelectedModelWithContextConfirm(model);
             });
       els.modelMenuList.appendChild(button);
@@ -7650,7 +7905,10 @@ function renderContextWindow(userText = els.input?.value || '') {
     if (els.contextChip) els.contextChip.hidden = false;
     const chip = contextChipSummary({ pageContext: pc, activeTab: currentContext.activeTab, parts: stats.parts });
     els.contextChipLabel.textContent = translateUiText(chip.label);
-    els.contextChip.title = translateUiText(chip.title);
+    // DOM means the page's structure and text; explain it rather than echo the URL the user is already on.
+    els.contextChip.title = (pc && !pc.restricted && pc.ok !== false)
+      ? translateUiText('DOM is the page content Hermes reads: the text and structure of the tab you are on. Click to preview exactly what gets sent with your message.')
+      : translateUiText(chip.title);
     els.contextPreview.textContent = [
       currentContext.activeTab?.title || '(unknown tab)',
       currentContext.activeTab?.url || '',
@@ -7855,7 +8113,7 @@ async function syncSessionModelLock(selected, { previousId = '', previousBinding
         const active = [runtime.provider, runtime.model].filter(Boolean).join(' · ') || 'an unreported model';
         throw new Error(`Hermes kept ${active} active instead of the requested model.`);
       }
-      runtime.context_length = selected?.contextTokens || settings.modelContextTokens || 0;
+      runtime.context_length = runtimeContextTokens(statusPayload.runtime || statusPayload) || selected?.contextTokens || settings.modelContextTokens || 0;
       applySessionRuntimeSnapshot({
         sessionId: settings.sessionId || liveSessionId,
         runtime,
@@ -8158,6 +8416,7 @@ async function syncProfileModelSelection(profileName = '', { row = null } = {}) 
 }
 
 async function loadModels({ quiet = false, payload = null, refresh = false, startup = false } = {}) {
+  if (!startup) await refreshHermesContextRegistry({ storage: browserApi.storage.local, refresh });
   const previousSelectedModel = settings.model;
   const previousAvailableModels = availableModels;
   const trackRefresh = Boolean(refresh && !payload);
@@ -8388,10 +8647,10 @@ async function loadModels({ quiet = false, payload = null, refresh = false, star
     if (!quiet) setStatus(
       'warn',
       diagnostic.kind === 'unknown' ? 'Model sync failed' : diagnostic.title,
-      diagnostic.kind === 'unknown' ? (error?.message || String(error)) : translateUiText(diagnostic.detail),
+      diagnostic.kind === 'unknown' ? sanitizeGatewayDiagnosticText(error?.message || String(error)) : translateUiText(diagnostic.detail),
       { translateDetail: false },
     );
-    return { ok: false, count: availableModels.length, error: diagnostic.kind === 'unknown' ? (error?.message || String(error)) : diagnostic.detail };
+    return { ok: false, count: availableModels.length, error: diagnostic.kind === 'unknown' ? sanitizeGatewayDiagnosticText(error?.message || String(error)) : diagnostic.detail };
   } finally {
     if (trackRefresh) {
       modelsRefreshing = false;
@@ -9144,14 +9403,8 @@ function botProfileDisplayName(row) {
   return profileName.charAt(0).toUpperCase() + profileName.slice(1);
 }
 
-function remoteAvatarImageOf(remoteAvatar) {
-  if (!remoteAvatar || typeof remoteAvatar !== 'object') return '';
-  for (const key of ['data', 'image', 'dataUrl', 'data_url', 'src', 'icon']) {
-    const value = remoteAvatar[key];
-    if (typeof value === 'string' && value.startsWith('data:image/')) return value;
-  }
-  return '';
-}
+// remoteAvatarImageOf is imported from ./lib/room-avatar.mjs so the same pure
+// rule is unit tested and shared with the resolver.
 
 async function refreshPetAvatarCache() {
   try {
@@ -9340,6 +9593,35 @@ async function hydrateBotModeRemoteAvatar(row, container) {
   container.replaceChildren(img);
 }
 
+// Single resolver for every Bot Mode room avatar surface: the room message
+// identity header, the composer member cluster, the room member popover, and the
+// presence strip. It renders the best avatar available right now (a fresh inline
+// roster avatar, otherwise a previously hydrated server image from the shared
+// per-connection cache) and, when the roster row carries a server-side avatar
+// with no inline image, hydrates the real profile picture through that same
+// cache. Because every surface goes through this one function, the real avatar
+// sticks everywhere and the deterministic blobatar is only shown for a bot that
+// truly has no avatar. Callers must not re-implement the sync/hydrate pair: the
+// divergence between them is exactly how the room surfaces used to fall back.
+function renderRoomMemberAvatar(container, { name = '', title = '' } = {}) {
+  if (!container) return;
+  const profileName = String(name || '').trim();
+  const rosterRow = profileName
+    ? botModeRoster.find((entry) => entry.profileName === profileName)
+    : null;
+  const displayName = String(title || (rosterRow ? botProfileDisplayName(rosterRow) : '') || profileName || '');
+  const cached = profileName ? botModeRemoteAvatarCache.get(botModeAvatarCacheKey(profileName)) : '';
+  const selection = selectRoomAvatarSource({ rosterAvatar: rosterRow?.avatar || null, cachedImage: cached });
+  appendBotModeAvatar(container, displayName, profileName, selection.avatar);
+  // Already showing the real picture: nothing left to do.
+  if (!profileName || selection.source) return;
+  const targetRow = rosterRow || { profileName, hasAvatar: true };
+  const rosterHasInline = Boolean(remoteAvatarImageOf(targetRow.avatar));
+  if (shouldHydrateRemoteAvatar({ hasAvatar: rosterRow ? rosterRow.hasAvatar === true : true, rosterHasInline })) {
+    void hydrateBotModeRemoteAvatar(targetRow, container);
+  }
+}
+
 function renderBotModeRoster(query = '') {
   if (!els.botModeRoster || !els.botModeButton) return;
   const enabled = settings.botModeEnabled === true;
@@ -9491,7 +9773,8 @@ function renderBotModeGroupChats(query = '') {
     meta.textContent = row.title || `${row.members.length} member${row.members.length === 1 ? '' : 's'} · synced projection`;
     const preview = document.createElement('span');
     preview.className = 'bot-mode-row-preview';
-    preview.textContent = row.canonical?.preview || 'Synced group projection.';
+    const unsynced = row.syncState === 'local-only' || row.syncState === 'sync-failed';
+    preview.textContent = row.canonical?.preview || (unsynced ? 'Only on this device until it syncs.' : 'Synced group projection.');
     copy.append(name, meta, preview);
 
     const actions = document.createElement('span');
@@ -9508,7 +9791,12 @@ function renderBotModeGroupChats(query = '') {
     bottomRow.className = 'group-row-bottom';
     const pill = document.createElement('span');
     pill.className = 'room-pill';
-    pill.textContent = syntheticFallback ? 'Awaiting sync' : 'Synced room';
+    pill.textContent = syntheticFallback
+      ? 'Awaiting sync'
+      : row.syncState === 'local-only'
+        ? 'Not synced'
+        : row.syncState === 'sync-failed' ? 'Sync failed' : 'Synced room';
+    if (unsynced) pill.title = row.syncError || 'This room has not been saved to the connected Hermes instance yet.';
 
     const settingsBtn = document.createElement('button');
     settingsBtn.type = 'button';
@@ -9572,82 +9860,598 @@ function groupRuntimeMembers(row = activeGroupProjection) {
     .filter((member) => member.name);
 }
 
-function renderGroupTypingIndicator() {
-  const container = els.groupTypingIndicator;
-  if (!container) return;
-  if (!activeGroupProjection || !activeGroupTypingMembers.size) {
-    container.hidden = true;
-    if (els.groupTypingAvatars) els.groupTypingAvatars.replaceChildren();
-    if (els.groupTypingText) els.groupTypingText.textContent = '';
+function roomIdentityForMember(name) {
+  const members = groupRuntimeMembers().map((member) => ({
+    profileName: member.name,
+    color: botModeRoster.find((entry) => entry.profileName === member.name)?.color,
+  }));
+  const mode = document.documentElement.dataset.hermesMode === 'light' ? 'light' : 'dark';
+  const key = JSON.stringify([mode, members]);
+  if (key !== activeRoomIdentityKey) {
+    activeRoomIdentityKey = key;
+    activeRoomIdentities = assignRoomIdentities(members, { mode });
+  }
+  return activeRoomIdentities.find((identity) => identity.profileName === String(name));
+}
+
+function applyRoomMessageIdentity(node, record) {
+  if (!activeGroupProjection || record.role !== 'assistant') return;
+  const member = resolveRoomSpeaker(record, groupRuntimeMembers());
+  const identity = member ? roomIdentityForMember(member.name) : null;
+  if (!member || !identity) return;
+  node.closest('.message-row')?.classList.add('room-message');
+  node.style.setProperty('--bot-ink', identity.ink);
+  node.style.setProperty('--bot-bar', identity.bar);
+  node.style.setProperty('--bot-tint', identity.tint);
+  const header = node.querySelector('.message-role');
+  header.replaceChildren();
+  const avatar = document.createElement('span');
+  avatar.className = 'room-avatar';
+  avatar.setAttribute('aria-hidden', 'true');
+  renderRoomMemberAvatar(avatar, { name: member.name, title: member.title });
+  const name = document.createElement('span');
+  name.className = 'room-name';
+  name.textContent = member.title || member.name;
+  header.append(avatar, name);
+}
+
+function clearActiveGroupLiveMessage() {
+  if (activeGroupLiveFrame) cancelAnimationFrame(activeGroupLiveFrame);
+  activeGroupLiveFrame = 0;
+  activeGroupLiveMessage?.row?.remove();
+  activeGroupLiveMessage = null;
+}
+
+// ── Room member popover + per-room model bindings (BUILD-B B3.3/B3.4) ────────
+// Outcome R (live-verified): a room session loses its --session model pick on
+// resume, so a binding is re-applied through the runtime before EVERY member
+// submission attempt, not only at pick time.
+let roomPopoverOpen = false;
+let roomPopoverMemberReads = 0;
+let roomModelPickTarget = null;
+
+function activeRoomId() {
+  return String(activeGroupProjection?.roomId || activeGroupProjection?.id || '');
+}
+
+// In-memory mirror of the durable per-room display-event store. Hydrated in
+// loadSettings and kept in sync across surfaces by the storage change listener.
+let roomEventStore = {};
+
+function persistRoomEventStore() {
+  return browserApi.storage.local.set({ [ROOM_EVENTS_STORAGE_KEY]: roomEventStore });
+}
+
+// Persist one display-only room row so failure/pass and model-change notices
+// survive a room close/reopen (the v0.3.4 durable room-rows rider).
+function recordRoomDisplayEvent(record) {
+  const roomId = activeRoomId();
+  if (!roomId || !record) return record;
+  roomEventStore = appendRoomDisplayEvent(roomEventStore, roomId, record);
+  void persistRoomEventStore();
+  return record;
+}
+
+// Append a persisted, display-only room transcript line. It is a local row:
+// never sent to a bot and never written to the synced projection.
+function appendRoomEventLine(content, thread = '') {
+  if (!activeGroupProjection) return null;
+  const record = {
+    role: 'system',
+    kind: 'room-event',
+    content: String(content || ''),
+    ts: Date.now(),
+    thread: thread || activeGroupPresenceThread || 'main',
+  };
+  activeGroupDisplayEvents.push(record);
+  recordRoomDisplayEvent(record);
+  activeGroupMessages = [...activeGroupMessages, record];
+  messages = activeGroupMessages;
+  addMessage('system', record.content, { persist: false, sourceRecord: record });
+  return record;
+}
+
+function roomMemberBindings() {
+  return settings.groupRoomModelBindings || {};
+}
+
+async function persistRoomModelBindings(store) {
+  settings = { ...settings, groupRoomModelBindings: store };
+  await browserApi.storage.local.set({ hermesBrowserSettings: settings });
+}
+
+function roomMemberBusyNow(name) {
+  if (sending) {
+    const active = activeGroupPresence.members.find((entry) => entry.member === name);
+    if (active && !['replied', 'passed', 'failed'].includes(active.state)) return true;
+  }
+  return false;
+}
+
+function roomMemberRow(roomId, member) {
+  const identity = roomIdentityForMember(member.name);
+  const binding = readRoomModelBinding(roomMemberBindings(), roomId, member.name);
+  const row = document.createElement('div');
+  row.className = 'room-member-row';
+  row.setAttribute('role', 'listitem');
+  // Focusable so openRoomPopover can move focus into the dialog on open and
+  // the .room-member-row:focus-visible style is reachable by keyboard.
+  row.tabIndex = 0;
+  if (identity) {
+    row.style.setProperty('--bot-ink', identity.ink);
+    row.style.setProperty('--bot-bar', identity.bar);
+  }
+
+  const avatar = document.createElement('span');
+  avatar.className = 'room-member-avatar';
+  avatar.setAttribute('aria-hidden', 'true');
+  renderRoomMemberAvatar(avatar, { name: member.name, title: member.title });
+
+  const name = document.createElement('span');
+  name.className = 'room-member-name';
+  name.textContent = member.title || member.name;
+
+  const model = document.createElement('span');
+  model.className = 'room-member-model';
+  // The popover opens immediately; the independent status reads fill in after.
+  model.textContent = t('ui.room.checking');
+
+  const actions = document.createElement('span');
+  actions.className = 'room-member-actions';
+  if (binding) {
+    const dot = document.createElement('span');
+    dot.className = 'room-member-dot';
+    dot.title = t('ui.room.model.note');
+    actions.append(dot);
+    // A bound member can be put back on its profile default (B3.4). Reset is
+    // only offered when a room pick exists.
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'room-member-change room-member-reset';
+    reset.textContent = t('ui.room.reset.default');
+    reset.title = t('ui.room.reset.default');
+    reset.setAttribute('aria-label', `${reset.textContent} · ${name.textContent}`);
+    reset.addEventListener('click', (event) => {
+      event.stopPropagation();
+      void resetRoomMemberModel(roomId, member);
+    });
+    actions.append(reset);
+  }
+  const change = document.createElement('button');
+  change.type = 'button';
+  change.className = 'room-member-change';
+  change.textContent = translateUiText('Change');
+  change.setAttribute('aria-label', `${change.textContent} · ${name.textContent}`);
+  change.addEventListener('click', (event) => {
+    event.stopPropagation();
+    openRoomMemberModelMenu(roomId, member);
+  });
+  actions.append(change);
+
+  row.append(avatar, name, model, actions);
+  return { row, model, change, binding };
+}
+
+function renderRoomPopover() {
+  const popover = els.roomMemberPopover;
+  const list = els.roomMemberPopoverList;
+  if (!popover || !list) return;
+  const roomId = activeRoomId();
+  const members = groupRuntimeMembers();
+  els.roomMemberPopoverTitle && (els.roomMemberPopoverTitle.textContent = t('ui.room.bots.title'));
+  list.replaceChildren();
+  if (!roomId || !members.length) {
+    const empty = document.createElement('div');
+    empty.className = 'room-member-row';
+    empty.setAttribute('role', 'listitem');
+    empty.textContent = t('ui.room.unknown');
+    list.append(empty);
     return;
   }
-  container.hidden = false;
-  const avatarsWrap = els.groupTypingAvatars;
-  if (avatarsWrap) {
-    avatarsWrap.replaceChildren();
-    let idx = 0;
-    for (const [memberKey, info] of activeGroupTypingMembers.entries()) {
-      if (idx >= 3) break;
-      const avatarWrap = document.createElement('span');
-      avatarWrap.className = 'group-typing-avatar-slot';
-      avatarWrap.style.setProperty('--i', idx);
-      const rosterRow = botModeRoster.find((entry) => entry.profileName === memberKey);
-      appendBotModeAvatar(avatarWrap, info.displayName || memberKey, memberKey, rosterRow?.avatar || null);
-      avatarsWrap.append(avatarWrap);
-      idx += 1;
+  const generation = roomPopoverMemberReads + 1;
+  roomPopoverMemberReads = generation;
+  const rows = members.map((member) => roomMemberRow(roomId, member));
+  for (const entry of rows) list.append(entry.row);
+  // Independent per-member status reads: never block the popover from opening.
+  const reads = Promise.all(rows.map(async (entry, index) => {
+    const member = members[index];
+    let read = { state: 'unknown' };
+    try {
+      read = await activeGroupRuntime.readMemberModel(roomId, member);
+    } catch (error) {
+      read = { state: 'unknown', error: String(error?.message || error) };
     }
-  }
-  const textElem = els.groupTypingText;
-  if (textElem) {
-    const list = [...activeGroupTypingMembers.values()];
-    const names = list.map((item) => item.displayName || item.name);
-    const activeTool = list.find((item) => item.tool)?.tool;
-    if (activeTool) {
-      const actor = list.find((item) => item.tool)?.displayName || 'Bot';
-      textElem.textContent = `${actor} is using ${activeTool}…`;
-    } else if (names.length === 1) {
-      textElem.textContent = `${names[0]} is typing…`;
-    } else if (names.length === 2) {
-      textElem.textContent = `${names[0]} and ${names[1]} are typing…`;
-    } else if (names.length === 3) {
-      textElem.textContent = `${names[0]}, ${names[1]}, and ${names[2]} are typing…`;
-    } else {
-      textElem.textContent = `${names[0]} and ${names.length - 1} other bots are typing…`;
+    if (generation !== roomPopoverMemberReads || !roomPopoverOpen) return;
+    if (!list.contains(entry.row)) return;
+    // Show the confirmed provider beside the model, matching the standing
+    // model/provider disclosure convention; never an assumed value.
+    const label = read?.state === 'ok' && read.model
+      ? `${read.model}${read.provider ? ` · ${read.provider}` : ''}`
+      : t(read?.state === 'no-session' ? 'ui.room.profile.default' : 'ui.room.unknown');
+    entry.model.textContent = label;
+    if (read?.state === 'ok' && entry.binding?.model === read.model) {
+      entry.row.title = t('ui.room.model.note');
     }
+  }));
+  void reads;
+}
+
+function openRoomPopover() {
+  const popover = els.roomMemberPopover;
+  if (!popover || !activeGroupProjection) return;
+  closeProfileSwitchMenu();
+  roomPopoverOpen = true;
+  popover.hidden = false;
+  els.activeProfileIndicator?.setAttribute('aria-expanded', 'true');
+  renderRoomPopover();
+  popover.querySelector('.room-member-row')?.focus?.();
+}
+
+function closeRoomPopover() {
+  const popover = els.roomMemberPopover;
+  if (!popover) return;
+  // Bump the read generation so a late status read cannot repaint a closed popover.
+  roomPopoverMemberReads += 1;
+  roomPopoverOpen = false;
+  popover.hidden = true;
+  if (activeGroupProjection) els.activeProfileIndicator?.setAttribute('aria-expanded', 'false');
+}
+
+function toggleRoomPopover() {
+  if (!activeGroupProjection) return;
+  if (roomPopoverOpen) {
+    closeRoomPopover();
+    els.activeProfileIndicator?.focus?.();
+    return;
   }
+  openRoomPopover();
+}
+
+function openRoomMemberModelMenu(roomId, member) {
+  if (!activeGroupRuntime) return;
+  if (roomMemberBusyNow(member.name)) {
+    setStatus('warn', t('ui.room.busy'), `${member.title || member.name} is replying right now; wait for its turn to finish.`, { translateDetail: false });
+    return;
+  }
+  const binding = readRoomModelBinding(roomMemberBindings(), roomId, member.name);
+  roomModelPickTarget = { roomId, member, model: binding?.model || '', hasBinding: Boolean(binding) };
+  setModelSelectionTarget('room-member');
+  closeFloatingPanels();
+  els.modelMenu.hidden = false;
+  els.modelMenuButton.setAttribute('aria-expanded', 'true');
+  els.modelSearchInput?.focus();
+}
+
+function roomMemberModelLabel() {
+  const target = roomModelPickTarget;
+  return target ? `${target.member.title || target.member.name}` : '';
+}
+
+let roomModelConfirmState = null;
+
+function closeRoomModelConfirm({ restoreFocus = false } = {}) {
+  const state = roomModelConfirmState;
+  if (!state) return;
+  roomModelConfirmState = null;
+  document.removeEventListener('click', state.onDocumentClick, true);
+  document.removeEventListener('keydown', state.onKey, true);
+  state.dialog.remove();
+  if (restoreFocus) state.returnFocus?.focus?.();
+}
+
+// A named confirmation for a gateway `confirm_required` model switch (an
+// expensive model, for example). It names the member, model and provider, and
+// the ONLY path that retries with `confirm: true` is its explicit confirm
+// action. Reuses the shared profile-switch dialog styling.
+function openRoomModelConfirm({ member, model, provider, message, onConfirm }) {
+  closeRoomModelConfirm();
+  const name = member?.title || member?.name || '';
+  const providerLabel = provider ? ` · ${provider}` : '';
+  const dialog = document.createElement('section');
+  dialog.className = 'profile-switch-dialog room-model-confirm';
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-modal', 'true');
+  dialog.setAttribute('aria-label', `${name} · ${model}${providerLabel}`);
+  const card = document.createElement('div');
+  card.className = 'profile-switch-card';
+  const title = document.createElement('h2');
+  title.textContent = name;
+  const detail = document.createElement('p');
+  detail.className = 'room-model-confirm-detail';
+  detail.textContent = `${model}${providerLabel} — ${message || ''}`.trim();
+  const actions = document.createElement('div');
+  actions.className = 'profile-switch-actions';
+  const confirmButton = document.createElement('button');
+  confirmButton.type = 'button';
+  confirmButton.className = 'primary room-model-confirm-yes';
+  confirmButton.textContent = t('ui.confirm');
+  const cancelButton = document.createElement('button');
+  cancelButton.type = 'button';
+  cancelButton.className = 'ghost room-model-confirm-cancel';
+  cancelButton.textContent = t('ui.cancel');
+  actions.append(confirmButton, cancelButton);
+  card.append(title, detail, actions);
+  dialog.append(card);
+
+  const state = { dialog, returnFocus: document.activeElement };
+  state.onDocumentClick = (event) => { if (!dialog.contains(event.target)) closeRoomModelConfirm(); };
+  state.onKey = (event) => {
+    if (event.key === 'Escape') { event.preventDefault(); closeRoomModelConfirm({ restoreFocus: true }); }
+  };
+  cancelButton.addEventListener('click', (event) => { event.stopPropagation(); closeRoomModelConfirm({ restoreFocus: true }); });
+  confirmButton.addEventListener('click', (event) => {
+    event.stopPropagation();
+    closeRoomModelConfirm();
+    void Promise.resolve(onConfirm?.()).catch(() => undefined);
+  });
+  dialog.addEventListener('click', (event) => { if (event.target === dialog) closeRoomModelConfirm({ restoreFocus: true }); });
+  roomModelConfirmState = state;
+  document.body.append(dialog);
+  document.addEventListener('click', state.onDocumentClick, true);
+  document.addEventListener('keydown', state.onKey, true);
+  confirmButton.focus?.();
+}
+
+async function setRoomMemberModel(model, { confirm = false } = {}) {
+  const target = roomModelPickTarget;
+  if (!target || !activeGroupRuntime) return;
+  const { roomId, member } = target;
+  const modelId = model?.id || model?.model || '';
+  if (!modelId) return;
+  const requestedModel = model.rawModelId || model.model || model.id;
+  const requestedProvider = model.provider || '';
+  const result = await activeGroupRuntime.setMemberModel(roomId, member, {
+    model: requestedModel,
+    provider: requestedProvider,
+    confirm,
+  });
+  if (result?.state === 'confirm') {
+    // The gateway asked for an explicit confirmation (e.g. an expensive model).
+    // Name the member/model/provider and retry only when the user confirms.
+    openRoomModelConfirm({
+      member,
+      model: result.detail?.model || requestedModel,
+      provider: result.detail?.provider || requestedProvider,
+      message: result.detail?.message || result.detail?.warning || t('ui.room.model.note'),
+      onConfirm: () => setRoomMemberModel(model, { confirm: true }),
+    });
+    return;
+  }
+  if (result?.state !== 'ok') {
+    // An accepted-but-unverified switch is NOT success: never claim the member
+    // now uses a model the gateway has not confirmed on that session.
+    setStatus('warn', t('ui.room.unknown'), result?.error || t('ui.room.model.note'), { translateDetail: false });
+    renderRoomPopover();
+    return;
+  }
+  await persistRoomModelBindings(writeRoomModelBinding(roomMemberBindings(), roomId, member.name, {
+    model: result.model || modelId,
+    provider: result.provider || '',
+    setAt: Date.now(),
+  }));
+  const content = t('ui.room.member.now.uses', { name: member.title || member.name, model: result.model || modelId });
+  appendRoomEventLine(content);
+  setStatus('ok', content, '', { translateDetail: false });
+  roomModelPickTarget = { roomId, member, model: result.model || modelId, hasBinding: true };
+  renderRoomPopover();
+}
+
+async function resetRoomMemberModel(roomId, member, { confirm = false } = {}) {
+  if (!activeGroupRuntime) return;
+  const result = await activeGroupRuntime.resetMemberModel(roomId, member, { confirm });
+  if (result?.state === 'confirm') {
+    openRoomModelConfirm({
+      member,
+      model: result.detail?.model || t('ui.room.profile.default'),
+      provider: result.detail?.provider || '',
+      message: result.detail?.message || result.detail?.warning || t('ui.room.model.note'),
+      onConfirm: () => resetRoomMemberModel(roomId, member, { confirm: true }),
+    });
+    return;
+  }
+  if (result?.state !== 'ok') {
+    setStatus('warn', t('ui.room.unknown'), result?.error || t('ui.room.model.note'), { translateDetail: false });
+    renderRoomPopover();
+    return;
+  }
+  await persistRoomModelBindings(clearRoomModelBinding(roomMemberBindings(), roomId, member.name));
+  const content = t('ui.room.member.default.restored', { name: member.title || member.name });
+  appendRoomEventLine(content);
+  setStatus('ok', content, '', { translateDetail: false });
+  renderRoomPopover();
+}
+
+// B3.3 Outcome R: re-apply a stored per-room model before every member turn.
+async function applyRoomMemberModelBeforeTurn(roomId, member, session) {
+  const binding = readRoomModelBinding(roomMemberBindings(), roomId, member.name);
+  if (!binding || !activeGroupRuntime) return;
+  const read = await activeGroupRuntime.readMemberModel(roomId, member);
+  if (read?.state !== 'ok') {
+    // Fail closed: a binding exists but the live model cannot be read, so the
+    // per-room pin cannot be verified. Never let the turn answer on an
+    // unverified model — mark the member failed and skip its turn.
+    const error = new Error(read?.error || 'The per-room model binding could not be verified.');
+    error.code = 'room-model-unverified';
+    throw error;
+  }
+  const statusModel = { model: read.model, provider: read.provider };
+  if (!needsReapply({ binding, statusModel })) return;
+  const result = await activeGroupRuntime.setMemberModel(roomId, member, {
+    model: binding.model,
+    provider: binding.provider || '',
+  });
+  if (result?.state !== 'ok') {
+    // Fail closed: answering on the wrong model is worse than skipping the turn.
+    const error = new Error(result?.error || 'The room model binding could not be verified.');
+    error.code = 'room-model-unverified';
+    throw error;
+  }
+  void session;
+}
+
+function renderGroupTypingIndicator() {
+  if (!els.groupPresence || !els.groupPresenceChips || !els.groupPresenceStatus) return;
+  const entries = activeGroupPresence.members;
+  const visible = Boolean(activeGroupProjection && entries.length && activeGroupPresence.phase !== 'idle');
+  els.groupPresence.hidden = !visible;
+  els.groupPresenceChips.replaceChildren();
+  els.groupPresence.querySelectorAll(':scope > .presence-notice').forEach((node) => node.remove());
+  els.groupPresenceStatus.textContent = '';
+  if (!visible) return;
+  const next = entries.find((entry) => entry.state === 'queued')?.member;
+  const narrow = document.documentElement.clientWidth < 380;
+  // Failure notices render as their own slim full-width row in the strip, so the
+  // name and reason never get squeezed into a chip-sized pill.
+  const notices = [];
+  for (const entry of entries.slice(0, narrow ? 6 : entries.length)) {
+    const chipTitle = entry.roleLabel || entry.member;
+    const identity = roomIdentityForMember(entry.member);
+    if (entry.state === 'failed') {
+      // Failure is an inline notice, not a chip: warning icon, the member's own
+      // avatar and colour, a clear human line, and the mapped short reason. The
+      // whole notice opens the full diagnostic on click.
+      const notice = document.createElement('span');
+      notice.className = 'presence-notice';
+      notice.setAttribute('role', 'listitem');
+      notice.dataset.state = 'failed';
+      if (identity) notice.style.setProperty('--bot-ink', identity.ink);
+      const detail = sanitizeGatewayDiagnosticText(entry.error || t('ui.room.failed'));
+      notice.title = `${chipTitle}: ${detail}`;
+      const icon = document.createElement('span');
+      icon.className = 'presence-notice-icon';
+      icon.setAttribute('aria-hidden', 'true');
+      icon.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>';
+      const avatar = document.createElement('span');
+      avatar.className = 'presence-avatar';
+      avatar.setAttribute('aria-hidden', 'true');
+      renderRoomMemberAvatar(avatar, { name: entry.member, title: chipTitle });
+      const copy = document.createElement('span');
+      copy.className = 'presence-notice-copy';
+      const line = document.createElement('span');
+      line.className = 'presence-notice-line';
+      line.textContent = t('ui.room.member.failed.short', { name: chipTitle });
+      const reason = document.createElement('span');
+      reason.className = 'presence-notice-reason';
+      reason.textContent = failureReason(entry.error, { translate: translateUiText });
+      copy.append(line, reason);
+      // Retry is offered for THIS member only, and disabled while any turn
+      // (a send or another retry) is running so it cannot overlap or double-fire.
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'presence-notice-retry';
+      retry.textContent = t('ui.room.member.retry');
+      retry.disabled = Boolean(sending);
+      retry.setAttribute('aria-label', t('ui.room.member.retry.aria', { name: chipTitle }));
+      retry.addEventListener('click', (event) => {
+        event.stopPropagation();
+        retryFailedGroupMember(entry.member);
+      });
+      notice.append(icon, avatar, copy, retry);
+      notice.addEventListener('click', () => showOperationToast({ kind: 'error', title: chipTitle, detail }));
+      notices.push(notice);
+      continue;
+    }
+    const chip = document.createElement('span');
+    chip.className = 'presence-chip';
+    chip.setAttribute('role', 'listitem');
+    chip.dataset.state = entry.state;
+    if (identity) chip.style.setProperty('--bot-bar', identity.bar);
+    chip.title = chipTitle;
+    const avatar = document.createElement('span');
+    avatar.className = 'presence-avatar';
+    avatar.setAttribute('aria-hidden', 'true');
+    renderRoomMemberAvatar(avatar, { name: entry.member, title: chipTitle });
+    const name = document.createElement('span');
+    name.className = 'presence-name';
+    name.textContent = chipTitle;
+    const micro = document.createElement('span');
+    micro.className = 'presence-micro';
+    micro.textContent = entry.state === 'replied' ? '✓'
+      : entry.state === 'typing' ? '···'
+        : entry.state === 'tool' ? entry.tool
+          : entry.state === 'passed' ? t('ui.room.passed')
+            : entry.member === next ? t('ui.room.next') : '';
+    chip.append(avatar, name, micro);
+    els.groupPresenceChips.append(chip);
+  }
+  if (narrow && entries.length > 6) {
+    const extra = document.createElement('span');
+    extra.className = 'presence-chip';
+    extra.setAttribute('role', 'listitem');
+    extra.textContent = `+${entries.length - 6}`;
+    els.groupPresenceChips.append(extra);
+  }
+  els.groupPresenceStatus.textContent = presenceSummary({
+    ...activeGroupPresence,
+    members: entries.map((entry) => ({ ...entry, member: entry.roleLabel || entry.member })),
+  }, { translate: translateUiText });
+  // Notices sit between the chip row and the status line.
+  for (const notice of notices) els.groupPresence.insertBefore(notice, els.groupPresenceStatus);
 }
 
 function updateActiveGroupActivity(activity = {}) {
   if (!activeGroupProjection) return;
-  const memberKey = String(activity.member || '').trim().toLowerCase();
-  if (activity.kind === 'typing' || activity.kind === 'tool_start') {
-    if (memberKey) {
-      const rosterRow = botModeRoster.find((entry) => entry.profileName === memberKey);
-      const current = activeGroupTypingMembers.get(memberKey) || {
-        name: memberKey,
-        displayName: activity.roleLabel || (rosterRow ? botProfileDisplayName(rosterRow) : activity.member),
-        startedAt: Date.now(),
-        tool: null,
-      };
-      if (activity.kind === 'tool_start') {
-        current.tool = activity.tool || 'a tool';
-      }
-      activeGroupTypingMembers.set(memberKey, current);
-    }
-  } else if (activity.kind === 'tool_complete') {
-    if (memberKey && activeGroupTypingMembers.has(memberKey)) {
-      const current = activeGroupTypingMembers.get(memberKey);
-      activeGroupTypingMembers.set(memberKey, { ...current, tool: null });
-    }
-  } else if (activity.kind === 'reply' || activity.kind === 'pass' || activity.kind === 'failed' || activity.kind === 'idle') {
-    if (memberKey) activeGroupTypingMembers.delete(memberKey);
-    if (activity.kind === 'idle') activeGroupTypingMembers.clear();
+  activeGroupPresence = reducePresence(activeGroupPresence, activity);
+  if (activity.kind === 'turn_start') {
+    clearTimeout(activeGroupPresenceTimer);
+    activeGroupPresenceThread = activity.thread || 'main';
+  }
+  if (activity.kind === 'working') {
+    clearActiveGroupLiveMessage();
+    activeGroupLiveMessage = {
+      ...addMessage('assistant', '', {
+        persist: false, streaming: true, speaker: activity.member,
+        thread: activeGroupPresenceThread, roleLabel: activity.roleLabel || activity.member,
+      }), member: activity.member,
+    };
+    activeGroupLiveMessage.row.classList.add('is-live');
+    activeGroupLiveMessage.node.querySelector('.message-content').style.whiteSpace = 'pre-wrap';
+    const dots = document.createElement('span');
+    dots.className = 'room-live-dots';
+    dots.textContent = '···';
+    dots.setAttribute('aria-label', translateUiText('Working'));
+    activeGroupLiveMessage.node.querySelector('.message-content').append(dots);
+  } else if (activity.kind === 'typing' && activeGroupLiveMessage?.member === activity.member) {
+    const live = activeGroupLiveMessage;
+    live.record.content = String(activity.text || '');
+    if (!activeGroupLiveFrame) activeGroupLiveFrame = requestAnimationFrame(() => {
+      activeGroupLiveFrame = 0;
+      if (activeGroupLiveMessage !== live) return;
+      live.node.querySelector('.message-content').textContent = live.record.content;
+      scrollMessageStreamToBottom();
+    });
+  } else if (['pass', 'failed'].includes(activity.kind)) {
+    clearActiveGroupLiveMessage();
+    const content = activity.kind === 'pass'
+      ? t('ui.room.member.passed', { name: activity.roleLabel || activity.member })
+      // Same mapped short reason as the presence notice so the transcript line
+      // and the notice never disagree, and a raw diagnostic never leaks here.
+      : `${t('ui.room.member.failed.short', { name: activity.roleLabel || activity.member })}: ${failureReason(activity.error, { translate: translateUiText })}`;
+    const record = { role: 'system', kind: 'room-event', content, ts: Date.now(), thread: activeGroupPresenceThread };
+    activeGroupDisplayEvents.push(record);
+    // Persist the failure/pass row so it survives a room close/reopen.
+    recordRoomDisplayEvent(record);
+    activeGroupMessages = [...activeGroupMessages, record];
+    messages = activeGroupMessages;
+    addMessage('system', content, { persist: false, sourceRecord: record });
+  } else if (activity.kind === 'idle') {
+    clearActiveGroupLiveMessage();
+    clearTimeout(activeGroupPresenceTimer);
+    activeGroupPresenceTimer = setTimeout(() => {
+      activeGroupPresence = createPresenceState();
+      renderGroupTypingIndicator();
+    }, 2000);
   }
   renderGroupTypingIndicator();
 }
 
-function resetActiveGroupTypingIndicator() {
-  activeGroupTypingMembers.clear();
+function resetActiveGroupTypingIndicator({ clearPresence = true } = {}) {
+  clearActiveGroupLiveMessage();
+  if (clearPresence) {
+    clearTimeout(activeGroupPresenceTimer);
+    activeGroupPresenceTimer = 0;
+    activeGroupPresence = createPresenceState();
+  }
   renderGroupTypingIndicator();
 }
 
@@ -9690,6 +10494,10 @@ async function sendActiveGroupMessage(text = '', turnAttachments = []) {
   els.input.value = '';
   renderAttachments();
   try {
+    if (groupProjection.syncState === 'local-only' || groupProjection.syncState === 'sync-failed') {
+      await syncLocalGroupRoom(groupProjection);
+      renderBotModeGroupChats(els.botModeSearch?.value);
+    }
     const isStartingNewThread = Boolean(activeGroupPendingNewThread);
     activeGroupPendingNewThread = false;
     let targetThreadId = '';
@@ -9721,17 +10529,26 @@ async function sendActiveGroupMessage(text = '', turnAttachments = []) {
       activeGroupThreadId = targetThreadId;
       activeGroupExpandedThreads.add(targetThreadId);
     }
-    activeGroupMessages = result.messages;
+    activeGroupMessages = [...result.messages, ...activeGroupDisplayEvents].sort((a, b) => (a.ts || 0) - (b.ts || 0));
     messages = activeGroupMessages;
     if (activeGroupProjection) {
-      activeGroupProjection.messages = result.messages.map(groupProjectionEntryFromDisplayMessage);
+      activeGroupProjection.messages = result.messages.map(groupProjectionEntryFromDisplayMessage).filter(Boolean);
     }
     renderGroupThreadStrip();
     renderMessagesFromStorage();
     updateSessionLabel();
     renderActiveProfileIndicator();
+    const syncFailures = Array.isArray(result.syncFailures) ? result.syncFailures : [];
+    if (syncFailures.length) {
+      const live = activeGroupProjection || groupProjection;
+      if (live.syncState !== 'local-only') live.syncState = 'sync-failed';
+      live.syncError = syncFailures.at(-1)?.error || '';
+      renderBotModeGroupChats(els.botModeSearch?.value);
+    }
     if (result.failures.length) {
       setStatus('warn', 'Group message partially delivered', `${result.failures.length} member${result.failures.length === 1 ? '' : 's'} did not complete a reply.`, { translateDetail: false });
+    } else if (syncFailures.length) {
+      setStatus('warn', 'Group room not synced', `Members replied, but ${syncFailures.length} message${syncFailures.length === 1 ? '' : 's'} could not be saved to the synced room. ${syncFailures.at(-1)?.error || ''}`.trim(), { translateDetail: false });
     } else {
       setStatus('ok', 'Group message sent', `${groupProjection.displayName} · ${result.messages.length} messages in the current room view.`, { translateDetail: false });
     }
@@ -9749,8 +10566,73 @@ async function sendActiveGroupMessage(text = '', turnAttachments = []) {
   } finally {
     if (activeGroupAbortController === abortController) activeGroupAbortController = null;
     sending = false;
-    resetActiveGroupTypingIndicator();
+    resetActiveGroupTypingIndicator({ clearPresence: activeGroupPresence.phase !== 'done' });
     updateComposerBusyState();
+  }
+}
+
+// Per-member Retry for a failed room member. Runs ONLY that member's turn on
+// the room runtime (same session + per-room model re-apply path a normal turn
+// uses) with the original user prompt and the current room context. Guarded by
+// the shared `sending` flag so it cannot start while any turn runs, and the
+// runtime itself refuses an overlapping or doubled retry.
+async function retryFailedGroupMember(memberName) {
+  const name = String(memberName || '').trim();
+  if (!name || sending) return false;
+  const projection = activeGroupProjection;
+  const runtime = activeGroupRuntime;
+  if (!projection || !runtime) return false;
+  const generation = activeGroupGeneration;
+  const abortController = new AbortController();
+  activeGroupAbortController = abortController;
+  sending = true;
+  updateComposerBusyState();
+  // Immediate feedback: the notice's Retry button disables on the next paint.
+  renderGroupTypingIndicator();
+  try {
+    const lastUser = [...activeGroupMessages].reverse()
+      .find((message) => String(message?.role || '').toLowerCase() === 'user');
+    const result = await runtime.retryMember({
+      roomId: projection.roomId || projection.id,
+      groupName: projection.displayName,
+      members: groupRuntimeMembers(projection),
+      messages: activeGroupMessages,
+      member: { name },
+      text: lastUser ? String(lastUser.content || '') : '',
+      thread: activeGroupThreadId || 'main',
+      signal: abortController.signal,
+    });
+    if (
+      abortController.signal.aborted
+      || generation !== activeGroupGeneration
+      || activeGroupRuntime !== runtime
+    ) return false;
+    if (result?.ok === false) return false;
+    activeGroupMessages = [...result.messages, ...activeGroupDisplayEvents].sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    messages = activeGroupMessages;
+    if (activeGroupProjection) {
+      activeGroupProjection.messages = result.messages.map(groupProjectionEntryFromDisplayMessage).filter(Boolean);
+    }
+    renderGroupThreadStrip();
+    renderMessagesFromStorage();
+    updateSessionLabel();
+    renderActiveProfileIndicator();
+    if (result.failures.length) {
+      setStatus('warn', 'Retry did not complete', `${name} still could not complete a reply.`, { translateDetail: false });
+    } else {
+      setStatus('ok', 'Member retried', `${name} replied again in the room.`, { translateDetail: false });
+    }
+    return true;
+  } catch (error) {
+    if (generation === activeGroupGeneration && activeGroupRuntime === runtime) {
+      setStatus('error', 'Retry failed', String(error?.message || error), { translateDetail: false });
+    }
+    return false;
+  } finally {
+    if (activeGroupAbortController === abortController) activeGroupAbortController = null;
+    sending = false;
+    updateComposerBusyState();
+    renderGroupTypingIndicator();
   }
 }
 
@@ -10008,12 +10890,50 @@ async function createNewGroupChat() {
     canonical: { durableId: '', resolvedRuntimeId: '', status: 'missing', preview: '' },
     activity: { activeNow: false, lastActive: Date.now(), unread: 0, attention: false },
     messages: [],
+    syncState: 'local-only',
   };
+  if (els.newGroupCreateButton) els.newGroupCreateButton.disabled = true;
+  await syncLocalGroupRoom(row);
   botModeGroupChats = mergeGroupChatLists([row], botModeGroupChats);
   renderBotModeGroupChats(els.botModeSearch?.value);
   closeNewGroupModal();
   els.botModePanel.hidden = true;
   await openBotGroupChat(row);
+  if (row.syncState !== 'synced') {
+    setStatus('warn', 'Group room not synced', `Bots can still reply, but this room is only on this device until it syncs. ${row.syncError || ''}`.trim(), { translateDetail: false });
+  }
+}
+
+// Writes a browser-created room to the synced group projection so members,
+// other clients, and later sessions can see it. Never throws: the outcome is
+// recorded on the row as syncState ('synced' | 'local-only').
+async function syncLocalGroupRoom(row) {
+  if (!row || row.syncState === 'synced') return true;
+  if (isRemoteMode() && !isRemoteWsMode()) {
+    row.syncState = 'local-only';
+    row.syncError = 'Group rooms sync through the connected Hermes Dashboard.';
+    return false;
+  }
+  try {
+    const connection = await ensureActiveDashboardWsConnection();
+    const result = await persistGroupProjectionCreate(connection.client, {
+      roomId: row.roomId || row.id,
+      name: row.displayName,
+      members: row.members,
+      image: row.image || null,
+      now: Date.now(),
+    });
+    row.roomKey = result.roomKey;
+    row.revision = Math.max(Number(row.revision) || 0, 1);
+    row.syncState = 'synced';
+    row.syncError = '';
+    row.title = `${row.members.length} member${row.members.length === 1 ? '' : 's'} · synced projection`;
+    return true;
+  } catch (error) {
+    row.syncState = 'local-only';
+    row.syncError = String(error?.message || error || 'The room could not be synced.');
+    return false;
+  }
 }
 
 function startNewGroupThread() {
@@ -10155,7 +11075,12 @@ async function openBotGroupChat(row) {
   }
   const groupGeneration = ++activeGroupGeneration;
   activeGroupProjection = row;
-  activeGroupMessages = groupProjectionMessagesForDisplay(row);
+  // Restore this room's durable display-only rows (member pass/failure and
+  // model change/reset notices) and merge them back into the transcript so a
+  // close/reopen does not lose them.
+  activeGroupDisplayEvents = readRoomDisplayEvents(roomEventStore, String(row.roomId || row.id || ''));
+  activeGroupMessages = [...groupProjectionMessagesForDisplay(row), ...activeGroupDisplayEvents]
+    .sort((a, b) => (a.ts || 0) - (b.ts || 0));
   messages = activeGroupMessages;
   activeConversationTransport = 'dashboard-ws';
   activeGroupRuntime = null;
@@ -10190,17 +11115,30 @@ async function openBotGroupChat(row) {
     if (!isCurrentOpen()) return false;
     groupRuntime = createBotGroupRuntime({
       client: connection.client,
-      onMessage: (message) => {
+      onMessage: (message, meta = {}) => {
         if (!isCurrentRuntime()) return;
         activeGroupMessages = [...activeGroupMessages, message];
         messages = activeGroupMessages;
         const entry = groupProjectionEntryFromDisplayMessage(message);
         const projection = liveProjection();
-        if (projection) {
+        if (projection && entry) {
           projection.messages = [...(projection.messages || []), entry];
         }
         renderGroupThreadStrip();
-        renderMessagesFromStorage();
+        if (message.role === 'assistant' && activeGroupLiveMessage && activeGroupLiveMessage.member === meta.member) {
+          const live = activeGroupLiveMessage;
+          if (activeGroupLiveFrame) cancelAnimationFrame(activeGroupLiveFrame);
+          activeGroupLiveFrame = 0;
+          Object.assign(live.record, message);
+          live.node.querySelector('.message-content').style.removeProperty('white-space');
+          setMessageContent(live.node, message.content);
+          applyRoomMessageIdentity(live.node, live.record);
+          live.row.classList.remove('is-live');
+          messageThreadUi().setStreaming(live.row, false);
+          messageThreadUi().refreshActions();
+          activeGroupLiveMessage = null;
+        } else renderMessagesFromStorage();
+        if (meta.kind === 'reply') updateActiveGroupActivity({ kind: 'reply', member: meta.member, roleLabel: message.roleLabel });
         updateSessionLabel();
         renderActiveProfileIndicator();
       },
@@ -10221,6 +11159,13 @@ async function openBotGroupChat(row) {
       persist: (displayMessages) => isCurrentRuntime()
         ? persistActiveGroupProjection(connection.client, displayMessages)
         : undefined,
+      // B3.3 Outcome R: a room session drops its --session model pick on
+      // resume, so the stored binding is re-verified and re-applied before
+      // EVERY submission attempt. An unverified switch fails the member's
+      // turn rather than silently answering on the wrong model.
+      beforeMemberTurn: async (member, session) => {
+        await applyRoomMemberModelBeforeTurn(row.roomId || row.id, member, session);
+      },
     });
     activeGroupRuntime = groupRuntime;
     const prepared = await groupRuntime.prepare({
@@ -11060,12 +12005,8 @@ function renderActiveProfileIndicator() {
       const slot = document.createElement('span');
       slot.className = 'group-member-avatar-slot';
       slot.title = name;
-      appendBotModeAvatar(slot, name, member.name, rosterRow?.avatar || null);
+      renderRoomMemberAvatar(slot, { name: member.name, title: name });
       els.activeProfileIndicator.append(slot);
-      const targetRow = rosterRow || { profileName: member.name, hasAvatar: true };
-      if (!remoteAvatarImageOf(targetRow.avatar)) {
-        void hydrateBotModeRemoteAvatar(targetRow, slot);
-      }
     }
 
     if (overflowCount > 0) {
@@ -11076,8 +12017,11 @@ function renderActiveProfileIndicator() {
       els.activeProfileIndicator.append(moreBadge);
     }
 
-    els.activeProfileIndicator.title = `${activeGroupProjection.displayName} · ${members.length} members`;
-        els.activeProfileIndicator.setAttribute('aria-disabled', 'true');
+    // The room cluster is a control (BUILD-B B3.4): it opens the room member
+    // popover, so it advertises a dialog and is not marked disabled.
+    els.activeProfileIndicator.title = `${t('ui.room.bots.title')} · ${members.length}`;
+    els.activeProfileIndicator.setAttribute('aria-haspopup', 'dialog');
+    els.activeProfileIndicator.removeAttribute('aria-disabled');
         const clusterWidth = maxVisible * 32 + (overflowCount > 0 ? 42 : 4);
     els.activeProfileIndicator.style.width = `${clusterWidth}px`;
     els.activeProfileIndicator.style.maxWidth = `${clusterWidth}px`;
@@ -11111,6 +12055,8 @@ function renderActiveProfileIndicator() {
     void hydrateBotModeRemoteAvatar(row, els.activeProfileIndicator);
   }
   els.activeProfileIndicator.title = `Active profile: ${name}`;
+  // Restore the 1:1 affordance after a room set aria-haspopup="dialog".
+  els.activeProfileIndicator.setAttribute('aria-haspopup', 'menu');
   els.activeProfileIndicator.hidden = false;
   }
 
@@ -14107,7 +15053,8 @@ async function fetchSessionMessagesQuietly(sessionId, {
         role: message.role,
         content: message.content,
         display_kind: message.display_kind,
-        ts: Number(message.timestamp || message.ts || Date.now()),
+        ts: normalizeMessageTimestamp(message.timestamp ?? message.ts),
+        rowId: Number.isInteger(message.row_id) && message.row_id > 0 ? message.row_id : undefined,
       }));
     return {
       contextMessages,
@@ -14125,7 +15072,7 @@ async function fetchSessionMessagesQuietly(sessionId, {
     role: String(message.role || '').toLowerCase(),
     content: String(message.content || ''),
     display_kind: message.display_kind,
-    ts: Number(message.timestamp || Date.now()),
+    ts: normalizeMessageTimestamp(message.timestamp ?? message.ts),
   }));
   return {
     contextMessages,
@@ -14479,6 +15426,10 @@ async function commitFetchedSessionMessages(result, { sessionId, requestId = nul
     if (!extracted.length || normalizeUserImageAttachments(message.attachments).length) return message;
     return { ...message, attachments: extracted };
   });
+  // Bind durable row ids to local user records by display text so Edit and
+  // Restore can address them without an extra round trip. Fail-closed on
+  // duplicates; already-bound records are left alone.
+  messages = bindRowIdsFromHistory(messages, incoming, { displayText: messageDisplayText });
   // A steered message that reached the transcript clears its queued row —
   // the dashed placeholder must not outlive the real message.
   if (pendingSteerText && messages.some((message) => message?.role === 'user' && String(message.content || '').includes(pendingSteerText))) {
@@ -14782,6 +15733,7 @@ function renderThinkingIndicator(element) {
 function patchRenderedMessageContent(element, html = '') {
   const template = document.createElement('template');
   template.innerHTML = html;
+  highlightCodeBlocks(template.content);
   const incoming = [...template.content.childNodes];
   const existing = [...element.childNodes];
   let stable = 0;
@@ -14823,6 +15775,12 @@ function renderMessageContentElement(element, content = '') {
     copyLabel: translateUiText('Copy code'),
     copiedLabel: translateUiText('Copied'),
   });
+  if (activeGroupProjection) {
+    highlightMentions(element, {
+      document, members: groupRuntimeMembers(),
+      inkFor: (owner) => roomIdentityForMember(owner)?.ink || '',
+    });
+  }
   wrapGeneratedImagesForInspection(element);
   void hydrateSessionMediaInElement(element);
   // Only Hermes' own replies can name a file it just produced; a path the user
@@ -15305,31 +16263,396 @@ function assistantMessageRoleLabel() {
   return botProfileDisplayName(row).toUpperCase();
 }
 
-function addMessage(role, content, { persist = true, roleLabel = '', contextReceipt = null, attachments = null, scroll = true } = {}) {
-  if (!messages.length) els.messages.innerHTML = '';
-  const node = els.template.content.firstElementChild.cloneNode(true);
+// The selected bot of a 1:1 Bot Mode chat, or null (plain Hermes, rooms).
+function soloBotRow() {
+  if (activeGroupProjection || !document.body.classList.contains('bot-mode-engaged')) return null;
+  const selected = settings.botModeSelectedProfile || settings.activeProfile || '';
+  return botModeRoster.find((entry) => entry.type !== 'group' && entry.profileName === selected) || null;
+}
+
+// 1:1 bot chats: the bot's avatar beside its name, in the shared header voice.
+// No per-bot color here; that belongs to rooms only.
+function applySoloBotIdentity(node, record) {
+  if (record.role !== 'assistant') return;
+  const row = soloBotRow();
+  if (!row) return;
+  const header = node.querySelector('.message-role');
+  if (!header) return;
+  const title = botProfileDisplayName(row);
+  header.replaceChildren();
+  const avatar = document.createElement('span');
+  avatar.className = 'room-avatar';
+  avatar.setAttribute('aria-hidden', 'true');
+  renderRoomMemberAvatar(avatar, { name: row.profileName, title });
+  const name = document.createElement('span');
+  name.className = 'room-name';
+  name.textContent = title;
+  header.append(avatar, name);
+}
+
+function messageThreadUi() {
+  panelMessageThread ||= createMessageThreadUi({
+    root: els.messages, document, window, locale: getLocale, translate: translateUiText,
+    onCopy: (record, node) => copyMessageRecord(record.role, record, node),
+    replyLabelFor: (record) => roomReplyLabel(record),
+    onReply: (record) => replyToRoomMember(record),
+    canRewind: (record) => canRewindMessage(record),
+    onEdit: (row, record) => beginEditMessage(row, record),
+    onRestore: (row, record, anchor) => confirmRestoreMessage(row, record, anchor),
+  });
+  return panelMessageThread;
+}
+
+function roomReplyMember(record) {
+  if (!activeGroupProjection || record?.role !== 'assistant') return null;
+  return resolveRoomSpeaker(record, groupRuntimeMembers());
+}
+
+function roomReplyLabel(record) {
+  const member = roomReplyMember(record);
+  return member ? t('ui.reply.to.member', { name: member.name }) : '';
+}
+
+// Reply: drop "@handle " into the existing draft at the caret, keep the rest of
+// the draft, focus the composer. Never sends.
+function replyToRoomMember(record) {
+  const member = roomReplyMember(record);
+  if (!member || !els.input) return;
+  const field = els.input;
+  const result = insertMention(field.value, field.selectionStart, field.selectionEnd, member.name);
+  field.value = result.value;
+  field.focus();
+  field.setSelectionRange?.(result.caret, result.caret);
+  field.dispatchEvent(new Event('input', { bubbles: true }));
+  renderSkillSuggestions();
+  renderContextWindow(result.value);
+}
+
+async function copyMessageRecord(role, record, node) {
+  try {
+    if (role === 'user') {
+      await navigator.clipboard.writeText(messageDisplayText(role, record.content));
+      return true;
+    }
+    const content = node.querySelector('.message-content');
+    if (!content) return false;
+    const fragment = document.createDocumentFragment();
+    for (const child of content.childNodes) fragment.append(child.cloneNode(true));
+    const payload = buildCleanClipboardPayload({ fragment, document });
+    if (!payload) return false;
+    if (navigator.clipboard.write && typeof ClipboardItem === 'function') {
+      try {
+        await navigator.clipboard.write([new window.ClipboardItem({
+          'text/html': new Blob([payload.html], { type: 'text/html' }),
+          'text/plain': new Blob([payload.text], { type: 'text/plain' }),
+        })]);
+        return true;
+      } catch { /* Plain text remains available when rich clipboard is unsupported. */ }
+    }
+    await navigator.clipboard.writeText(payload.text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ── Edit (A3) and Restore checkpoint (A4) ────────────────────────────────────
+// A user turn can be rewound only on the dashboard WebSocket transport: the
+// gateway truncates by row id (never an ordinal). When no durable address can
+// be resolved the text is sent as a brand new message and nothing is cut.
+function lastUserRecordIndex(list = messages) {
+  for (let index = list.length - 1; index >= 0; index -= 1) {
+    if (list[index]?.role === 'user') return index;
+  }
+  return -1;
+}
+
+function canRewindMessage(record) {
+  if (!record || record.role !== 'user') return false;
+  if (sending) return false;
+  if (activeGroupProjection) return false;
+  if (isSteerMessage(record)) return false;
+  if (record.failed || record.localOnly || record.pending) return false;
+  // Turns that carried prepared attachments are not replayable through the
+  // normal send pipeline (the payload is already a saved data URL), so Edit and
+  // Restore are hidden on them rather than silently dropping the images.
+  if (Array.isArray(record.attachments) && record.attachments.length) return false;
+  // Offered on every idle 1:1 user turn. Without a durable row id (REST
+  // transport, unmatched history) submitRewind fails closed: it sends the text
+  // as a new message and truncates nothing.
+  return messages.indexOf(record) !== -1;
+}
+
+function beginEditMessage(row, record) {
+  if (!row || !record || row.classList.contains('is-editing')) return;
+  if (!canRewindMessage(record)) return;
+  const node = row.querySelector(':scope > .message');
+  const content = node?.querySelector(':scope > .message-content');
+  if (!content) return;
+  const original = content.cloneNode(true);
+  const editor = document.createElement('div');
+  editor.className = 'message-editor';
+  const textarea = document.createElement('textarea');
+  textarea.className = 'message-editor-input';
+  textarea.setAttribute('rows', '1');
+  const displayOriginal = String(messageDisplayText('user', record.content || '') || '').trim();
+  textarea.value = displayOriginal;
+  const actions = document.createElement('div');
+  actions.className = 'message-editor-actions';
+  const cancelButton = document.createElement('button');
+  cancelButton.type = 'button';
+  cancelButton.className = 'message-editor-cancel';
+  cancelButton.textContent = translateUiText('Cancel');
+  const sendButton = document.createElement('button');
+  sendButton.type = 'button';
+  sendButton.className = 'message-editor-send';
+  sendButton.textContent = translateUiText('Send');
+  actions.append(cancelButton, sendButton);
+  editor.append(textarea, actions);
+  const autosize = () => {
+    textarea.style.height = 'auto';
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  };
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    editor.replaceWith(original);
+    row.classList.remove('is-editing');
+    panelMessageThread?.refreshActions?.();
+  };
+  const submit = () => {
+    if (closed) return;
+    const text = textarea.value.trim();
+    const index = messages.indexOf(record);
+    // Identical or empty text closes the editor without a turn (spec A3.4).
+    if (!text || text === displayOriginal || index === -1 || !planEdit(messages, index, text)) { close(); return; }
+    close();
+    void submitRewind({ record, text, mode: 'edit' });
+  };
+  cancelButton.addEventListener('click', (event) => { event.stopPropagation(); close(); });
+  sendButton.addEventListener('click', (event) => { event.stopPropagation(); submit(); });
+  textarea.addEventListener('input', autosize);
+  textarea.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); return; }
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      submit();
+    }
+  });
+  content.replaceWith(editor);
+  row.classList.add('is-editing');
+  panelMessageThread?.pin?.(row);
+  autosize();
+  textarea.focus();
+  const end = textarea.value.length;
+  try { textarea.setSelectionRange(end, end); } catch { /* selection unsupported */ }
+}
+
+let restorePopoverState = null;
+
+function closeRestorePopover({ restoreFocus = false } = {}) {
+  const state = restorePopoverState;
+  if (!state) return;
+  restorePopoverState = null;
+  state.popover.remove();
+  document.removeEventListener('click', state.onDocumentClick, true);
+  document.removeEventListener('keydown', state.onKey, true);
+  state.row?.classList.remove('is-restoring');
+  if (restoreFocus) { try { state.anchor?.focus?.(); } catch { /* detached anchor */ } }
+}
+
+function confirmRestoreMessage(row, record, anchor) {
+  closeRestorePopover();
+  if (!canRewindMessage(record)) return;
+  const popover = document.createElement('div');
+  popover.className = 'message-restore-popover';
+  popover.setAttribute('role', 'dialog');
+  popover.setAttribute('aria-label', translateUiText('Restore checkpoint: rerun from this prompt'));
+  const text = document.createElement('p');
+  text.className = 'message-restore-text';
+  text.textContent = translateUiText('Rerun from here? Messages after this will be removed.');
+  const actions = document.createElement('div');
+  actions.className = 'message-restore-actions';
+  const cancelButton = document.createElement('button');
+  cancelButton.type = 'button';
+  cancelButton.className = 'message-restore-cancel';
+  cancelButton.textContent = translateUiText('Cancel');
+  const rerunButton = document.createElement('button');
+  rerunButton.type = 'button';
+  rerunButton.className = 'message-restore-confirm';
+  rerunButton.textContent = translateUiText('Rerun');
+  actions.append(cancelButton, rerunButton);
+  popover.append(text, actions);
+
+  const state = { popover, row, anchor };
+  state.onDocumentClick = (event) => {
+    if (popover.contains(event.target)) return;
+    if (anchor && anchor.contains?.(event.target)) return;
+    closeRestorePopover();
+  };
+  state.onKey = (event) => {
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeRestorePopover({ restoreFocus: true }); return; }
+    if (event.key === 'Tab') {
+      // Focus stays trapped on the two popover buttons while it is open.
+      event.preventDefault();
+      const order = [cancelButton, rerunButton];
+      const current = order.indexOf(document.activeElement);
+      const next = event.shiftKey
+        ? (current <= 0 ? order.length - 1 : current - 1)
+        : (current + 1) % order.length;
+      order[next].focus();
+    }
+  };
+  cancelButton.addEventListener('click', (event) => { event.stopPropagation(); closeRestorePopover({ restoreFocus: true }); });
+  rerunButton.addEventListener('click', (event) => {
+    event.stopPropagation();
+    closeRestorePopover();
+    void submitRewind({ record, text: String(record.content || ''), mode: 'restore' });
+  });
+  restorePopoverState = state;
+  row.classList.add('is-restoring');
+  row.append(popover);
+  // Opens upward by default; when the row sits at the top of the transcript the
+  // upward popover would clip under the header, so it opens downward instead.
+  const edge = (els.appScroll || els.messages).getBoundingClientRect().top;
+  if (popover.getBoundingClientRect().top < edge + 4) popover.classList.add('is-below');
+  document.addEventListener('click', state.onDocumentClick, true);
+  document.addEventListener('keydown', state.onKey, true);
+  rerunButton.focus();
+}
+
+async function submitRewind({ record, text, mode = 'edit' } = {}) {
+  const index = messages.indexOf(record);
+  if (index === -1) return false;
+  const plan = mode === 'restore' ? planRestore(messages, index) : planEdit(messages, index, text);
+  if (!plan) return false;
+  // Restore replays what the user typed, never the stored protocol envelope
+  // (that would be wrapped a second time and shown as raw JSON).
+  if (mode === 'restore') plan.text = messageDisplayText('user', plan.sourceText);
+  if (!String(plan.text || '').trim()) return false;
+  // Resolve the durable row id: the record's own id first, else a display-text
+  // match against live gateway history (newest-at-tail only for the last turn).
+  let rowId = Number.isInteger(plan.rowId) ? plan.rowId : undefined;
+  if (!Number.isInteger(rowId)) {
+    try {
+      const result = await fetchDashboardHistoryWithResume(settings.sessionId);
+      const history = Array.isArray(result?.messages) ? result.messages : [];
+      rowId = resolveRowIdByDisplayText(history, messageDisplayText('user', plan.sourceText), {
+        displayText: messageDisplayText,
+        isNewest: index === lastUserRecordIndex(),
+      });
+    } catch {
+      rowId = undefined;
+    }
+  }
+  if (!Number.isInteger(rowId)) {
+    // Fail closed: no address means no truncation. Send the text as a new turn
+    // and say so, leaving the saved conversation untouched.
+    addMessage('system', translateUiText('This message could not be matched to the saved conversation, so it was sent as a new message.'));
+    return askHermes(plan.text, [], { disableAutoTitle: true, preserveComposer: true });
+  }
+  const snapshot = messages.slice();
+  messages = applyRewindLocally(messages, index, mode === 'edit' ? plan.text : undefined, { now: Date.now() });
+  renderMessagesFromStorage();
+  let submitResponse = null;
+  let accepted = false;
+  try {
+    await askHermes(plan.text, [], {
+      reuseUserRecord: true,
+      disableAutoTitle: true,
+      preserveComposer: true,
+      truncate: { rowId },
+      onSubmitResponse: (response) => { submitResponse = response || null; accepted = true; },
+    });
+  } catch {
+    accepted = false;
+  }
+  if (!accepted) {
+    // Any failure before the turn is accepted (4004 / 4018 / 4030 / transport)
+    // restores the snapshot so the transcript is never left half-rewound.
+    messages = snapshot;
+    renderMessagesFromStorage();
+    addMessage('system', translateUiText('Edit failed. Your conversation was not changed.'));
+    return false;
+  }
+  if (submitResponse) {
+    messages = rebindSurvivorRowIds(messages, submitResponse);
+    const newRowId = Number(submitResponse.user_row_id);
+    if (Number.isInteger(newRowId) && newRowId > 0) {
+      const target = [...messages].reverse().find((message) => message?.role === 'user');
+      if (target && !Number.isInteger(target.rowId)) target.rowId = newRowId;
+    }
+    await trimAndSaveMessages();
+  }
+  return true;
+}
+
+function addMessage(role, content, {
+  persist = true, roleLabel = '', contextReceipt = null, attachments = null, scroll = true,
+  ts = null, rowId, speaker = null, thread = '', sourceRecord = null, streaming = false,
+} = {}) {
+  if (!messages.length) {
+    panelMessageThread?.reset();
+    els.messages.innerHTML = '';
+  }
+  if (sourceRecord?.kind === 'room-event') {
+    const row = document.createElement('div');
+    row.className = 'room-event-line';
+    row.textContent = String(content || '');
+    els.messages.append(row);
+    if (scroll) scrollMessageStreamToBottom();
+    return { node: row, row, record: sourceRecord };
+  }
+  const shell = els.template.content.firstElementChild.cloneNode(true);
+  const row = shell.classList.contains('message-row') ? shell : document.createElement('div');
+  row.classList.add('message-row');
+  const node = shell.classList.contains('message-row') ? shell.querySelector('.message') : shell;
+  if (shell !== row) row.append(node);
   node.classList.add(role);
-  node.querySelector('.message-role').textContent = roleLabel || (role === 'assistant' ? assistantMessageRoleLabel() : role);
+  // A mid-turn steer shows the user's own words under a "Steered" tag, never
+  // the model-facing marker wrapper.
+  const steered = isSteerMessage({ role, content, display_kind: sourceRecord?.display_kind });
+  if (steered) node.classList.add('steer-sent');
+  node.querySelector('.message-role').textContent = steered
+    ? t('ui.steered.label')
+    : (roleLabel || (role === 'assistant' ? assistantMessageRoleLabel() : role));
   renderMessageContentElement(node.querySelector('.message-content'), messageDisplayText(role, content || ''));
   if (contextReceipt && contextReceipt?.items?.length) appendContextReceipt(node, contextReceipt);
   if (role === 'user') {
     appendUserImageAttachments(node.querySelector('.message-content'), attachments, {
       onOpen: (image) => openGeneratedImageLightbox(image),
     });
+    appendUserFileAttachments(node.querySelector('.message-content'), attachments, {
+      translate: t,
+      onOpen: (item) => { void openUserFileAttachment(item, { translate: t }).catch(() => setStatus('warn', t('ui.file'), t('attachments.file_unavailable'))); },
+      onDownload: (item) => { void downloadUserFileAttachment(item).catch(() => setStatus('warn', t('ui.file'), t('attachments.file_unavailable'))); },
+    });
   }
-  els.messages.appendChild(node);
-    if (scroll) scrollMessageStreamToBottom({ force: true });
   // The "What Hermes saw" receipt rides on the stored row so history replays
   // (post-turn reconcile, session reload) keep it attached — never lose it.
-  const record = { role, content: content || '', ts: Date.now() };
+  const knownTs = normalizeMessageTimestamp(ts);
+  const record = sourceRecord || { role, content: content || '', ts: knownTs ?? (persist ? Date.now() : null) };
   if (roleLabel) record.roleLabel = roleLabel;
+  if (Number.isInteger(rowId) && rowId > 0) record.rowId = rowId;
+  if (speaker) record.speaker = speaker;
+  if (thread) record.thread = thread;
   if (contextReceipt && contextReceipt?.items?.length) record.contextReceipt = contextReceipt;
   if (Array.isArray(attachments) && attachments.length) record.attachments = attachments;
+  applyRoomMessageIdentity(node, record);
+  applySoloBotIdentity(node, record);
+  messageThreadUi().attach({
+    row, node, record, room: Boolean(activeGroupProjection), streaming,
+    entering: persist || streaming,
+  });
+  els.messages.appendChild(row);
+  if (streaming) setRailCopyEnabled(row.querySelector('.message-rail'), false);
+  if (scroll) scrollMessageStreamToBottom({ force: true });
   if (persist) {
     messages.push(record);
     trimAndSaveMessages();
   }
-  return { node, record };
+  return { node, row, record };
 }
 
 function appendContextReceipt(messageNode, receipt = { title: 'What Hermes saw', items: [] }) {
@@ -15380,6 +16703,9 @@ function createStreamingMessageUpdater(node) {
     const renderedRecoveredImage = Boolean(existingImage?.querySelector('.generated-image-reveal-source'));
     if (!renderedRecoveredImage || imageSource) setToolActivity(node, null);
     setMessageContent(node, pending);
+    const row = node.closest('.message-row');
+    panelMessageThread?.setStreaming(row, false);
+    setRailCopyEnabled(row?.querySelector('.message-rail'), true);
   };
   const paintStream = () => {
     setMessageContent(node, pending || THINKING_PLACEHOLDER);
@@ -15401,12 +16727,51 @@ function createStreamingMessageUpdater(node) {
     setToolActivity(node, null);
   }
   return {
+    node,
     update: updateText,
     updateText,
     updateTool,
     flush,
     dispose,
   };
+}
+
+// A gateway still running pre-update code cannot be fixed from the panel's own
+// transport, so the failure bubble carries an explicit, confirmed restart that
+// goes through the local dashboard (the same one the roster and media use).
+function attachGatewayRestartAction(node) {
+  if (!node || node.querySelector(':scope > .gateway-restart-action')) return;
+  const action = createGatewayRestartAction({
+    document,
+    translate: translateUiText,
+    restart: async ({ onProgress } = {}) => {
+      const baseUrl = desktopDashboardUrl || await ensureDesktopDashboardUrl({ timeoutMs: 4_000 });
+      // Plain fetch: dashboardFetch is a GET-only loopback proxy and rejects POST.
+      return restartGatewayViaDashboard({ baseUrl, onProgress });
+    },
+    // A slow restart must not fall back to the restart button: re-poll for the
+    // new process instead of issuing a second restart.
+    check: async ({ beforeBootId, onProgress } = {}) => {
+      const baseUrl = desktopDashboardUrl || await ensureDesktopDashboardUrl({ timeoutMs: 4_000 });
+      return waitForGatewayReturn({ baseUrl, beforeBootId, onProgress });
+    },
+    // Follow a restart that did not come from this button (terminal, Desktop)
+    // so the bubble resolves itself instead of leaving a stale prompt.
+    watch: async ({ shouldStop, onProgress } = {}) => {
+      const baseUrl = desktopDashboardUrl || await ensureDesktopDashboardUrl({ timeoutMs: 4_000 });
+      return watchGatewayRestart({ baseUrl, shouldStop, onProgress });
+    },
+    onRestarted: () => {
+      // Close the loop: the bubble that said "restart it" now says it is done.
+      setMessageContent(node, `**Hermes is back**\n\nThe gateway restarted and is running the updated code. Your message is still in the box — send it again.`);
+      markGatewayReachable();
+      setStatus('ok', 'Hermes restarted', 'The gateway is running the updated code. Send your message again.', { translateDetail: false });
+      probeGatewayLiveness({ quiet: true }).catch(() => {});
+      els.input?.focus?.({ preventScroll: true });
+    },
+  });
+  node.appendChild(action);
+  scrollMessageStreamToBottom();
 }
 
 async function persistInlineSessionState() {
@@ -15430,9 +16795,12 @@ async function loadSettings({ restoreMessages = false } = {}) {
   loadContextScopeForInstance();
   await refreshCustomThemeStore({ render: false });
   const messageKey = activeMessagesStorageKey(previousConversationScope);
-  const stored = await browserApi.storage.local.get(['hermesBrowserSettings', CONTEXT_CONSENT_STORAGE_KEY, messageKey, HERMES_BROWSER_INTRO_SEEN_STORAGE_KEY, TASK_STACKS_STORAGE_KEY]);
+  const stored = await browserApi.storage.local.get(['hermesBrowserSettings', CONTEXT_CONSENT_STORAGE_KEY, messageKey, HERMES_BROWSER_INTRO_SEEN_STORAGE_KEY, TASK_STACKS_STORAGE_KEY, ROOM_EVENTS_STORAGE_KEY]);
   taskStackStore = stored[TASK_STACKS_STORAGE_KEY] && typeof stored[TASK_STACKS_STORAGE_KEY] === 'object'
     ? stored[TASK_STACKS_STORAGE_KEY]
+    : {};
+  roomEventStore = stored[ROOM_EVENTS_STORAGE_KEY] && typeof stored[ROOM_EVENTS_STORAGE_KEY] === 'object' && !Array.isArray(stored[ROOM_EVENTS_STORAGE_KEY])
+    ? stored[ROOM_EVENTS_STORAGE_KEY]
     : {};
   browserIntroSeen = stored[HERMES_BROWSER_INTRO_SEEN_STORAGE_KEY] === true;
   renderBrowserIntroVisibility();
@@ -15464,6 +16832,7 @@ async function loadSettings({ restoreMessages = false } = {}) {
     agentDiscoveryHost: normalizeAgentDiscoveryHost(settings.agentDiscoveryHost || DEFAULT_SETTINGS.agentDiscoveryHost),
     agentDiscoveryScheme: normalizeAgentDiscoveryScheme(settings.agentDiscoveryScheme || DEFAULT_SETTINGS.agentDiscoveryScheme),
     autoNameSessions: settings.autoNameSessions !== false,
+    showMessageTimes: settings.showMessageTimes !== false,
     sessionStartupMode: normalizeSessionStartupMode(settings.sessionStartupMode),
     inlineAssistEnabled: settings.inlineAssistEnabled !== false,
     inlineAssistDefaultRoute: normalizeInlineDraftRoutePreference(settings.inlineAssistDefaultRoute),
@@ -15552,9 +16921,28 @@ async function loadSettings({ restoreMessages = false } = {}) {
 }
 
 function renderMessagesFromStorage() {
+  const fileGeneration = ++fileHistoryRestoreGeneration;
+  const fileMessages = messages;
+  const fileMessageCount = messages.length;
+  const fileSessionId = settings.sessionId;
+  const fileSourceKey = attachmentSourceKey(settings);
+  if (!activeGroupProjection) {
+    void restoreUserFileAttachments(fileMessages, fileSourceKey, fileSessionId).then(restored => {
+      // Messages are appended in place, so identity alone is not enough: a new
+      // turn arriving mid-read must win over a stale cold-history snapshot.
+      if (fileGeneration !== fileHistoryRestoreGeneration || messages !== fileMessages
+        || messages.length !== fileMessageCount || sending
+        || fileSessionId !== settings.sessionId || fileSourceKey !== attachmentSourceKey(settings)
+        || restored === fileMessages) return;
+      messages = restored;
+      renderMessagesFromStorage();
+    }).catch(() => {});
+  }
+  document.body.classList.toggle('bot-mode-compact', settings.botModeDisplayDensity === 'compact');
   const scroller = els.appScroll;
   const stickToBottom = !scroller || isMessageStreamNearBottom();
   const previousTop = scroller?.scrollTop || 0;
+  panelMessageThread?.reset();
   els.messages.innerHTML = '';
   // Thread-filtered view: when a group thread is expanded, match threadId strictly or by prefix/content
   let visibleMessages = messages;
@@ -15582,7 +16970,27 @@ function renderMessagesFromStorage() {
           roleLabel: message.roleLabel || '',
           contextReceipt: message.contextReceipt || null,
           attachments: message.attachments || null,
+          ts: message.ts,
+          rowId: message.rowId,
+          speaker: message.speaker || null,
+          thread: message.thread || '',
+          sourceRecord: message,
         });
+  }
+  // Quiet history/media refreshes can rebuild the stream during a room turn.
+  // Reattach the one live record, rather than lose the ongoing speaker bubble.
+  if (activeGroupProjection && activeGroupLiveMessage) {
+    const previous = activeGroupLiveMessage;
+    activeGroupLiveMessage = {
+      ...addMessage('assistant', previous.record.content, {
+        persist: false, scroll: false, streaming: true, sourceRecord: previous.record,
+        speaker: previous.member, thread: previous.record.thread, roleLabel: previous.record.roleLabel,
+      }), member: previous.member,
+    };
+    activeGroupLiveMessage.row.classList.add('is-live');
+    const content = activeGroupLiveMessage.node.querySelector('.message-content');
+    content.style.whiteSpace = 'pre-wrap';
+    content.textContent = previous.record.content || '···';
   }
   renderEmptyState();
   renderActiveProfileIndicator();
@@ -15633,6 +17041,7 @@ function syncSettingsForm() {
     input.checked = input.value === normalizePanelResidencyMode(settings.panelResidencyMode);
   }
   if (els.autoNameSessionsInput) els.autoNameSessionsInput.checked = settings.autoNameSessions !== false;
+  if (els.showMessageTimesInput) els.showMessageTimesInput.checked = settings.showMessageTimes !== false;
   if (els.agentHostInput) els.agentHostInput.value = settings.agentDiscoveryHost || DEFAULT_SETTINGS.agentDiscoveryHost;
   if (els.agentSchemeInput) els.agentSchemeInput.value = normalizeAgentDiscoveryScheme(settings.agentDiscoveryScheme || DEFAULT_SETTINGS.agentDiscoveryScheme);
   if (els.agentPortsInput) els.agentPortsInput.value = getAgentPorts().join(',');
@@ -15725,6 +17134,7 @@ async function saveSettingsFromForm() {
     contextMenuDefaultRoute: ['current', 'new', 'background'].includes(els.contextMenuDefaultRoute?.value) ? els.contextMenuDefaultRoute.value : 'ask',
     panelResidencyMode: normalizePanelResidencyMode(els.panelResidencyInputs?.find((input) => input.checked)?.value || settings.panelResidencyMode),
     autoNameSessions: els.autoNameSessionsInput ? els.autoNameSessionsInput.checked : settings.autoNameSessions !== false,
+    showMessageTimes: els.showMessageTimesInput ? els.showMessageTimesInput.checked : settings.showMessageTimes !== false,
     agentDiscoveryHost: normalizeAgentDiscoveryHost(els.agentHostInput?.value || settings.agentDiscoveryHost || DEFAULT_SETTINGS.agentDiscoveryHost),
     agentDiscoveryScheme: normalizeAgentDiscoveryScheme(els.agentSchemeInput?.value || settings.agentDiscoveryScheme || DEFAULT_SETTINGS.agentDiscoveryScheme),
     agentPorts: parseAgentPortsInput(els.agentPortsInput?.value || '').length ? parseAgentPortsInput(els.agentPortsInput?.value || '') : getAgentPorts(),
@@ -16796,10 +18206,15 @@ async function probeGatewayLiveness({ quiet = false } = {}) {
   if (!quiet) markConnectionProbe('connecting', normalizeGatewayUrl(settings.gatewayUrl));
   try {
     const response = await apiFetch('/health', { method: 'GET', cache: 'no-store' });
-    if (!response.ok) throw new Error(`health returned ${response.status}`);
+    if (!response.ok) {
+      const probeError = new Error(`health returned ${response.status}`);
+      probeError.httpStatus = response.status;
+      throw probeError;
+    }
     markConnectionProbe('connected', normalizeGatewayUrl(settings.gatewayUrl));
   } catch (error) {
-    markConnectionProbe('unreachable', `${normalizeGatewayUrl(settings.gatewayUrl)} · ${error?.message || String(error)}`);
+    const diagnostic = classifyGatewayError(error, { url: normalizeGatewayUrl(settings.gatewayUrl) });
+    markConnectionProbe('unreachable', `${diagnostic.title}: ${diagnostic.detail}`, diagnostic);
   } finally {
     connectionProbeInFlight = false;
     scheduleConnectionProbe();
@@ -16812,19 +18227,18 @@ function markGatewayReachable(detail = normalizeGatewayUrl(settings.gatewayUrl))
   scheduleConnectionProbe();
 }
 
-function markGatewayUnreachable(error) {
-  markConnectionProbe('unreachable', error?.message || String(error || 'Gateway disconnected'));
+function markGatewayUnreachable(error, diagnostic = null) {
+  const resolved = diagnostic && diagnostic.kind
+    ? diagnostic
+    : classifyGatewayError(error, { url: normalizeGatewayUrl(settings.gatewayUrl) });
+  markConnectionProbe('unreachable', resolved.detail, resolved);
   scheduleConnectionProbe();
+  return resolved;
 }
 
 function markGatewayDegraded(error) {
-  const diagnostic = classifyGatewayError(error);
-  markConnectionProbe('degraded', diagnostic.kind === 'unknown' ? (error?.message || String(error || 'Gateway degraded')) : gatewayConnectionTroubleshooting({
-    gatewayMode: settings.gatewayMode,
-    gatewayUrl: settings.gatewayUrl,
-    state: 'degraded',
-    probeDetail: error?.message || String(error || ''),
-  }));
+  const diagnostic = classifyGatewayError(error, { url: normalizeGatewayUrl(settings.gatewayUrl) });
+  markConnectionProbe('degraded', diagnostic.detail, diagnostic);
   scheduleConnectionProbe();
   return diagnostic;
 }
@@ -17294,6 +18708,15 @@ async function ensureRemoteWsSession(connection) {
   return liveId;
 }
 
+// A browser turn stores the typed words; the model still gets the envelope. Cores with strict
+// params contracts reject the field, so it stays off once one has refused it.
+let displayTextUnsupported = false;
+function browserTurnDisplayParam(text) {
+  if (displayTextUnsupported) return {};
+  const shown = messageDisplayText('user', text);
+  return shown && shown !== text ? { display_text: shown } : {};
+}
+
 async function streamDashboardWsChat(prompt, onDelta, onTool, options = {}) {
   let connection = await ensureActiveDashboardWsConnection();
   let sessionId = await ensureRemoteWsSession(connection);
@@ -17336,7 +18759,7 @@ async function streamDashboardWsChat(prompt, onDelta, onTool, options = {}) {
   }
 }
 
-async function streamDashboardWsChatAttempt(connection, sessionId, prompt, onDelta, onTool, { signal, onRun, onSteerQueued, onRuntime, knownAssistantTexts = [], submitPrompt = true, attachments: turnAttachments = [] } = {}) {
+async function streamDashboardWsChatAttempt(connection, sessionId, prompt, onDelta, onTool, { signal, onRun, onSteerQueued, onRuntime, knownAssistantTexts = [], submitPrompt = true, attachments: turnAttachments = [], truncate = null, onSubmitResponse = null } = {}) {
   onRun?.(sessionId);
   const { client } = connection;
   const sessionIds = [sessionId, connection.wsSessionId, connection.wsStoredSessionId];
@@ -17472,7 +18895,21 @@ async function streamDashboardWsChatAttempt(connection, sessionId, prompt, onDel
           console.warn('[Hermes Browser] Dashboard image attach failed:', error);
         }
         if (settled) return;
-        client.request(WS_METHODS.promptSubmit, { session_id: sessionId, text: prompt }).catch((error) => finish(reject, error));
+        const submitParams = () => ({
+          session_id: sessionId,
+          text: prompt,
+          ...browserTurnDisplayParam(prompt),
+          ...truncateSubmitParams({ rowId: truncate?.rowId }),
+        });
+        client.request(WS_METHODS.promptSubmit, submitParams()).catch((error) => {
+          if (!isDisplayTextRejection(error) || displayTextUnsupported) throw error;
+          displayTextUnsupported = true;
+          return client.request(WS_METHODS.promptSubmit, submitParams());
+        }).then((response) => {
+          onSubmitResponse?.(response);
+          void rememberUserFileAttachments(attachmentSourceKey(settings), connection.wsStoredSessionId || settings.sessionId, prompt, turnAttachments)
+            .catch(() => setStatus('warn', t('ui.file'), t('attachments.file_unavailable')));
+        }).catch((error) => finish(reject, error));
       })();
     } else {
       void seedFromHistory();
@@ -17481,7 +18918,7 @@ async function streamDashboardWsChatAttempt(connection, sessionId, prompt, onDel
   });
 }
 
-async function streamSessionChat(prompt, onDelta, onTool, { signal, attachments: turnAttachments = attachments, onRun, onSteerQueued, onRuntime, knownAssistantTexts = [] } = {}) {
+async function streamSessionChat(prompt, onDelta, onTool, { signal, attachments: turnAttachments = attachments, onRun, onSteerQueued, onRuntime, knownAssistantTexts = [], truncate = null, onSubmitResponse = null } = {}) {
   if (usesDashboardWsChatTransport()) return streamDashboardWsChat(prompt, onDelta, onTool, {
     signal,
     attachments: turnAttachments,
@@ -17489,6 +18926,8 @@ async function streamSessionChat(prompt, onDelta, onTool, { signal, attachments:
     onSteerQueued,
     onRuntime,
     knownAssistantTexts,
+    truncate,
+    onSubmitResponse,
   });
   let hasSessionRoutes = false;
   try {
@@ -17810,11 +19249,11 @@ async function connectTicketTransport({ cloud = false } = {}) {
     updateConnectionPrompt();
     renderEmptyState();
   } catch (error) {
-    const diagnostic = classifyGatewayError(error);
+    const diagnostic = classifyGatewayError(error, { url: normalizeGatewayUrl(settings.gatewayUrl) });
     if (connectionController.transition(generation, CONNECTION_STATES.ERROR, { errorKind: diagnostic.kind })) {
-      markGatewayUnreachable(error);
-      els.connectStatus.textContent = error?.message || String(error);
-      setStatus('error', cloud ? 'Hermes Cloud Preview failed' : 'Dashboard Attach failed', error?.message || String(error), { translateDetail: false });
+      markGatewayUnreachable(error, diagnostic);
+      els.connectStatus.textContent = diagnostic.detail;
+      setStatus('error', cloud ? 'Hermes Cloud Preview failed' : 'Dashboard Attach failed', diagnostic.userMessage, { translateDetail: false });
     }
   } finally {
     if (connectionController.isCurrent(generation)) {
@@ -17854,10 +19293,18 @@ async function connectApiWithPairing() {
   els.connectButton.disabled = true;
   els.connectButton.textContent = translateUiText('Connecting...');
   els.connectStatus.textContent = `Looking for ${summary.title} at ${summary.normalizedUrl}...`;
+  // A failing request can only be blamed on the origin/CORS layer when the
+  // health probe already answered from this extension origin.
+  let healthProbeAnswered = false;
   try {
     const health = await publicApiFetch('/health', { method: 'GET' });
     if (!connectionController.isCurrent(generation)) return;
-    if (!health.ok) throw new Error(`Hermes API server is not reachable (${health.status}).`);
+    if (!health.ok) {
+      const healthError = new Error(`Hermes API server is not reachable (${health.status}).`);
+      healthError.httpStatus = health.status;
+      throw healthError;
+    }
+    healthProbeAnswered = true;
 
     const capabilities = await loadGatewayCapabilities({ quiet: true, publicOnly: true, healthOk: true });
     if (!connectionController.isCurrent(generation)) return;
@@ -17927,10 +19374,13 @@ async function connectApiWithPairing() {
     setStatus('ok', 'Hermes Browser Extension connected', normalizeGatewayUrl(settings.gatewayUrl));
     renderEmptyState();
   } catch (error) {
-    const diagnostic = classifyGatewayError(error);
+    const diagnostic = classifyGatewayError(error, {
+      url: normalizeGatewayUrl(settings.gatewayUrl),
+      healthOk: healthProbeAnswered,
+    });
     if (!connectionController.transition(generation, CONNECTION_STATES.ERROR, { errorKind: diagnostic.kind })) return;
-    markGatewayUnreachable(error);
-    els.connectStatus.textContent = `${currentConnectionTroubleshooting() || error?.message || String(error)} Manual setup is still available in settings.`;
+    markGatewayUnreachable(error, diagnostic);
+    els.connectStatus.textContent = `${currentConnectionTroubleshooting() || diagnostic.detail} Manual setup is still available in settings.`;
     openSettingsDialog();
   } finally {
     if (connectionController.isCurrent(generation)) {
@@ -18094,6 +19544,12 @@ async function askHermes(userText, turnAttachments = [...attachments], turnOptio
   let streamPacer = null;
   try {
     let preparedAttachments = await saveImageAttachmentsForTurn(turnAttachments);
+    if (preparedAttachments.some((item) => item.kind === 'file')) {
+      if (!dashboardTransport) throw Object.assign(new Error('attachments.upload_unavailable'), { attachmentFailure: true, uiKey: 'attachments.upload_unavailable' });
+      const fileConnection = await ensureActiveDashboardWsConnection();
+      const fileSessionId = await ensureRemoteWsSession(fileConnection);
+      await stageUserFiles(fileConnection.client, fileSessionId, preparedAttachments, { sourceKey: attachmentSourceKey(settings) });
+    }
     if (dashboardTransport && preparedAttachments.some((attachment) => attachment.kind === 'image' && attachment.dataUrl)) {
       try {
         const attachConnection = await ensureActiveDashboardWsConnection();
@@ -18149,10 +19605,7 @@ async function askHermes(userText, turnAttachments = [...attachments], turnOptio
       ? `${profileContextHandoff}\n\n[New profile message]\n${basePromptText}`
       : basePromptText;
     const promptUserText = userTextWithAttachments(outboundUserText, preparedAttachments);
-    const displayAttachments = preparedAttachments.filter((attachment) => attachment.kind !== 'image');
-    const displayUserText = turnOptions.displayUserText || commentPack.displayUserText || (displayAttachments.length
-      ? `${userText || 'Attachment-only turn.'}\n${displayAttachments.map((attachment) => `${attachmentIcon(attachment.kind)} ${attachment.label}`).join('\n')}`
-      : userText);
+    const displayUserText = turnOptions.displayUserText || commentPack.displayUserText || userText || 'Attachment-only turn.';
     const isTabCommand = parsedCommand?.command?.category === 'Tabs';
     const effectiveScopeForTurn = isTabCommand
       ? normalizeContextScope({ ...turnContextScope, selectedTabIds: null })
@@ -18194,7 +19647,7 @@ async function askHermes(userText, turnAttachments = [...attachments], turnOptio
       pageContext: context.pageContext,
       selectedTabs: selectedPromptTabs,
       contextScope: turnContextScope,
-      attachments: preparedAttachments,
+      attachments: preparedAttachments.map(attachmentForProtocol),
       settings: turnProtocolSettings,
       contextHash,
       contextDelivery,
@@ -18212,17 +19665,27 @@ async function askHermes(userText, turnAttachments = [...attachments], turnOptio
       contextHash,
       contextDelivery,
     });
-    addMessage('user', displayUserText, {
-      contextReceipt: receipt,
-      attachments: preparedAttachments,
-    });
+    if (turnOptions.reuseUserRecord) {
+      // A rewind already stands the edited user bubble in the transcript; never
+      // add a second one. Refresh its receipt/attachments from this turn.
+      const target = [...messages].reverse().find((message) => message?.role === 'user');
+      if (target) {
+        if (receipt && receipt?.items?.length) target.contextReceipt = receipt;
+        target.attachments = preparedAttachments;
+      }
+    } else {
+      addMessage('user', displayUserText, {
+        contextReceipt: receipt,
+        attachments: preparedAttachments,
+      });
+    }
     // Prior completed assistant bubbles, for run.completed reconcile filtering.
     // Server degraded-history edge case must never restack them into this turn's
     // live bubble. See runtime-events.mjs:filterKnownAssistantReconcileParts.
     const priorAssistantTexts = messages
       .filter((message) => message.role === 'assistant' && message.content)
       .map((message) => String(message.content));
-    const { node } = addMessage('assistant', THINKING_PLACEHOLDER, { persist: false, roleLabel: assistantMessageRoleLabel() });
+    const { node } = addMessage('assistant', THINKING_PLACEHOLDER, { persist: false, roleLabel: assistantMessageRoleLabel(), streaming: true });
     streamView = createStreamingMessageUpdater(node);
     let answer = '';
     let liveText = '';
@@ -18287,6 +19750,8 @@ async function askHermes(userText, turnAttachments = [...attachments], turnOptio
             applyTurnRuntimePayload(payload);
           },
           knownAssistantTexts: priorAssistantTexts,
+          truncate: turnOptions.truncate || null,
+          onSubmitResponse: turnOptions.onSubmitResponse || null,
         },
       );
     } catch (streamError) {
@@ -18395,6 +19860,17 @@ ${streamError.message}`);
       renderPageCommentTray();
     }
   } catch (error) {
+    if (error?.attachmentFailure) {
+      if (!turnOptions.preserveComposer && !els.input.value.trim() && !attachments.length) {
+        els.input.value = userText;
+        attachments = [...turnAttachments];
+        renderAttachments();
+        persistCurrentComposerDraft({ immediate: true });
+      }
+      activeRunControl = markRunTerminal(activeRunControl, 'failed');
+      setStatus('warn', t('ui.attachment'), t(error.uiKey || 'attachments.upload_unavailable'), { translateTitle: false, translateDetail: false });
+      return false;
+    }
     // Terminal stream errors leave the image-generation placeholder (and its
     // diffusion canvas loop) running: dispose it wherever the turn ends without
     // a final flush. The requestAccepted branch below always flushes (which
@@ -18465,22 +19941,42 @@ ${streamError.message}`);
           renderAttachments();
           renderSkillSuggestions();
         }
-        streamView.update(`${requestFailure.title}\n${requestFailure.detail}`);
+        streamView.update(`**${requestFailure.title}**\n\n${requestFailure.detail}`);
+        if (requestFailure.kind === 'hermes-update-restart') attachGatewayRestartAction(streamView.node);
         setStatus('error', requestFailure.title, `${requestFailure.detail} Gateway remains connected.`, {
           translateTitle: false,
           translateDetail: false,
         });
         return didSend;
       }
-      const diagnostic = classifyGatewayError(error);
+      const diagnostic = classifyGatewayError(error, { url: normalizeGatewayUrl(settings.gatewayUrl) });
+      const recoveryPlan = gatewayFailureRecoveryPlan({ error, diagnostic });
+      if (recoveryPlan.preserveDraft && !turnOptions.preserveComposer && !els.input.value.trim() && !attachments.length) {
+        // Either the turn provably never reached Hermes, or its delivery is
+        // unconfirmed because the connection dropped mid-flight. Either way the
+        // composer text belongs to the user, so restore it and keep it
+        // persisted across panel reloads; the recovery plan never resends it on
+        // its own.
+        els.input.value = commentPack.consumed ? (commentPack.displayUserText || '') : userText;
+        attachments = commentPack.consumed
+          ? [...turnAttachments].filter((item) => item?.source !== 'page-annotations')
+          : [...turnAttachments];
+        renderAttachments();
+        renderSkillSuggestions();
+        renderContextWindow('');
+        persistCurrentComposerDraft({ immediate: true });
+      }
       if (diagnostic.probeStatus === 'degraded') {
         markGatewayDegraded(error);
       } else {
-        markGatewayUnreachable(error);
+        markGatewayUnreachable(error, diagnostic);
       }
-      addMessage('system', diagnostic.kind === 'unknown'
-        ? `Hermes Browser Extension error: ${error?.message || String(error)}`
-        : `Hermes Browser Extension warning: ${diagnostic.userMessage}`);
+      // A mid-flight drop may have delivered the turn even though Browser never
+      // saw a response. Say so before the user resends the preserved draft.
+      const duplicateWarning = recoveryPlan.duplicateSendRisk
+        ? ' Hermes may already have received this turn before the connection dropped, so sending the draft again could duplicate it.'
+        : '';
+      addMessage('system', `Hermes Browser Extension warning: ${recoveryPlan.userMessage || diagnostic.userMessage}${duplicateWarning}`);
     } else {
       addMessage('system', `Hermes Browser Extension error: ${error?.message || String(error)}`);
     }
@@ -19166,12 +20662,12 @@ async function testConnection() {
 
     ok = true;
   } catch (error) {
-    const diagnostic = classifyGatewayError(error);
+    const diagnostic = classifyGatewayError(error, { url: normalizeGatewayUrl(settings.gatewayUrl) });
     if (!connectionController.transition(generation, CONNECTION_STATES.ERROR, { errorKind: diagnostic.kind })) return;
     if (error?.remoteDiagnostic && applyRemoteDiagnostic(error.remoteDiagnostic, { statusKind: 'error' })) {
       return;
     }
-    markGatewayUnreachable(error);
+    markGatewayUnreachable(error, diagnostic);
     if (isRemoteMode()) {
       const diagnostic = classifyRemoteGatewaySetup({
         url: settings.gatewayUrl,
@@ -19281,7 +20777,6 @@ function bindEvents() {
       assistantSelector: '.message.assistant',
     });
   });
-  window.addEventListener('resize', positionOperationToast);
   watchTopbarHeight();
   els.settingsButton.addEventListener('click', openSettingsDialog);
   els.botModeButton?.addEventListener('click', async (event) => {
@@ -19488,6 +20983,7 @@ function bindEvents() {
         event.preventDefault();
         event.stopPropagation();
         closeProfileSwitchMenu();
+        toggleRoomPopover();
         return;
       }
       event.stopPropagation();
@@ -19495,6 +20991,13 @@ function bindEvents() {
     });
   document.addEventListener('click', (event) => {
     if (!event.target.closest('#profileSwitchMenu, #activeProfileIndicator')) closeProfileSwitchMenu();
+    if (roomPopoverOpen && !event.target.closest('#roomMemberPopover, #activeProfileIndicator')) closeRoomPopover();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !roomPopoverOpen) return;
+    event.preventDefault();
+    closeRoomPopover();
+    els.activeProfileIndicator?.focus?.();
   });
   els.botModeSheetSaveButton?.addEventListener('click', () => { void saveBotProfileSheet(); });
   els.scanAgentRosterButton?.addEventListener('click', () => { void loadProfiles(); });
@@ -19791,6 +21294,14 @@ function bindEvents() {
       renderTaskStack();
       return;
     }
+    if (areaName === 'local' && changes?.[ROOM_EVENTS_STORAGE_KEY]) {
+      roomEventStore = changes[ROOM_EVENTS_STORAGE_KEY].newValue
+        && typeof changes[ROOM_EVENTS_STORAGE_KEY].newValue === 'object'
+        && !Array.isArray(changes[ROOM_EVENTS_STORAGE_KEY].newValue)
+        ? changes[ROOM_EVENTS_STORAGE_KEY].newValue
+        : {};
+      return;
+    }
     if (!isSessionStorageArea(areaName)) return;
     const inlineDraftChange = changes?.[INLINE_DRAFT_STORAGE_KEY];
     if (inlineDraftChange?.newValue) {
@@ -20014,6 +21525,7 @@ function bindEvents() {
       setModelRuntimeOption('reasoningEffort', normalizeReasoningEffort(effort.dataset.effort));
     }
   });
+  bindWheelScrollX(els.modelProviderList);
   els.modelSearchInput.addEventListener('input', () => renderModelMenu(els.modelSearchInput.value));
   els.attachMenuButton.addEventListener('click', (event) => {
     event.stopPropagation();
@@ -20089,6 +21601,24 @@ function bindEvents() {
     await attachFolder(els.folderInput.files);
     els.folderInput.value = '';
   });
+  {
+    const STATUS_STACK_KEY = 'hermesStatusStackCollapsed';
+    const applyStatusStack = (collapsed) => {
+      els.composer?.classList.toggle('status-stack-collapsed', collapsed);
+      els.statusStackToggle?.setAttribute('aria-expanded', String(!collapsed));
+    };
+    let statusStackCollapsed = false;
+    try { statusStackCollapsed = localStorage.getItem(STATUS_STACK_KEY) === '1'; } catch { /* storage unavailable */ }
+    applyStatusStack(statusStackCollapsed);
+    els.statusStackToggle?.addEventListener('click', () => {
+      statusStackCollapsed = !statusStackCollapsed;
+      // Always reopen with the DOM preview closed, however it was left.
+      if (els.contextPreview) els.contextPreview.hidden = true;
+      els.contextChip?.setAttribute('aria-expanded', 'false');
+      applyStatusStack(statusStackCollapsed);
+      try { localStorage.setItem(STATUS_STACK_KEY, statusStackCollapsed ? '1' : '0'); } catch { /* storage unavailable */ }
+    });
+  }
   els.contextChip.addEventListener('click', () => {
     const nextHidden = !els.contextPreview.hidden;
     els.contextPreview.hidden = nextHidden;
@@ -20112,6 +21642,11 @@ function bindEvents() {
   els.statusCopyDiagnosticsButton?.addEventListener('click', () => {
     copySupportDiagnostics().catch((error) => setStatus('warn', 'Diagnostics copy failed', error?.message || String(error), { translateDetail: false }));
   });
+  // Recovery action: re-probe /health with the structured diagnostic so the
+  // panel can replace an ambiguous failure with real evidence.
+  els.statusRetryProbeButton?.addEventListener('click', () => {
+    probeGatewayLiveness({ quiet: false }).catch(() => {});
+  });
   els.clearTokenButton?.addEventListener('click', () => {
     clearStoredToken().catch((error) => setStatus('warn', 'Could not clear token', error?.message || String(error), { translateDetail: false }));
   });
@@ -20120,6 +21655,38 @@ function bindEvents() {
       renderBrowserContextConsentControl();
       setStatus('warn', 'Context sharing unchanged', error?.message || String(error), { translateDetail: false });
     });
+  });
+  browserControlDialogUi = createBrowserControlDialog({
+    dialog: els.browserControlDialog,
+    launcher: els.browserControlMenuButton,
+    closeButton: els.browserControlDismissButton,
+    focusFallback: els.input,
+    label: () => t('browser_control.kicker'),
+    refresh: () => refreshBrowserControlStatus({ follow: false }),
+    scopeInput: els.browserControlDialogScopeInput,
+    tabsField: $('#browserControlDialogTabs'), tabsList: $('#browserControlDialogTabList'),
+    applyButton: $('#browserControlDialogApplyScope'), scopeHint: $('#browserControlDialogScopeHint'),
+    translate: t,
+    loadTabs: () => browserApi.tabs.query({ currentWindow: true }),
+    getScope: () => settings.browserControlScope || 'this-tab',
+    getSelectedTabIds: () => browserControlStatus?.ownedTabIds || browserControlStatus?.leasedTabIds || [],
+    applyScope: async ({ scope, tabIds }) => {
+      const authority = browserControlStatus;
+      const tab = await activeTab();
+      const selectedIds = scope === 'this-tab' ? [tab?.id] : tabIds;
+      const result = await browserControlMessage('HERMES_CONTROLLER_SCOPE_REPLACE', {
+        kind: scope, tabIds: selectedIds, ownerId: authority?.controllerId,
+        expectedGeneration: authority?.generation, expectedSettingsRevision: authority?.settingsRevision,
+        ...(scope === 'task-set' ? { taskSetId: `task-set-${[...selectedIds].sort((a, b) => a - b).join('-')}`.slice(0, 120) } : {}),
+      });
+      await refreshBrowserControlStatus({ follow: false });
+      if (!result?.ok) throw Object.assign(new Error(result?.error || 'scope_change_failed'), { code: result?.error });
+      // Read back the settings the worker saved; never publish picker intent.
+      const stored = await browserApi.storage.local.get('hermesBrowserSettings');
+      if (stored.hermesBrowserSettings?.browserControlScope !== scope) throw new Error('scope_unconfirmed');
+      settings = { ...settings, browserControlScope: stored.hermesBrowserSettings.browserControlScope };
+      renderBrowserControl();
+    },
   });
   els.browserControlEnableButton?.addEventListener('click', async () => {
     els.browserControlEnableButton.disabled = true;
@@ -20133,10 +21700,6 @@ function bindEvents() {
     }
   });
   els.browserControlAttachButton?.addEventListener('click', async () => {
-    if (els.browserControlAttachButton.dataset.mode === 'detach') {
-      detachBrowserControl().catch((error) => showOperationToast({ kind: 'warn', title: 'Detach incomplete', detail: error?.message || String(error) }));
-      return;
-    }
     els.browserControlAttachButton.disabled = true;
     try {
       await attachBrowserControlToCurrentTab();
@@ -20163,12 +21726,18 @@ function bindEvents() {
       renderBrowserControl();
     }
   });
-  els.browserControlDetachButton?.addEventListener('click', () => {
-    detachBrowserControl().catch((error) => showOperationToast({ kind: 'warn', title: 'Detach incomplete', detail: error?.message || String(error) }));
-  });
-  els.browserControlDismissButton?.addEventListener('click', () => {
-    detachBrowserControl().catch((error) => showOperationToast({ kind: 'warn', title: 'Detach incomplete', detail: error?.message || String(error) }));
-  });
+  for (const button of [els.browserControlDetachButton, els.browserControlOffButton]) {
+    button?.addEventListener('click', async () => {
+      button.disabled = true;
+      try {
+        await detachBrowserControl();
+      } catch (error) {
+        showOperationToast({ kind: 'warn', title: t('browser_control.turn_off'), detail: error?.message || String(error) });
+      } finally {
+        button.disabled = false;
+      }
+    });
+  }
   els.browserIntroDismissButton?.addEventListener('click', () => {
     persistBrowserIntroSeen();
   });
@@ -20181,12 +21750,16 @@ function bindEvents() {
       .then(renderBrowserControl)
       .catch((error) => showOperationToast({ kind: 'warn', title: 'Scope unchanged', detail: error?.message || String(error) }));
   });
-  els.browserControlStayButton?.addEventListener('click', () => {
-    setBrowserControlViewBehavior('stay').catch((error) => showOperationToast({ kind: 'warn', title: 'View unchanged', detail: error?.message || String(error) }));
-  });
-  els.browserControlFollowButton?.addEventListener('click', () => {
-    setBrowserControlViewBehavior('follow').catch((error) => showOperationToast({ kind: 'warn', title: 'View unchanged', detail: error?.message || String(error) }));
-  });
+  for (const button of [els.browserControlStayButton, els.browserControlDialogStayButton]) {
+    button?.addEventListener('click', () => {
+      setBrowserControlViewBehavior('stay').catch((error) => showOperationToast({ kind: 'warn', title: 'View unchanged', detail: error?.message || String(error) }));
+    });
+  }
+  for (const button of [els.browserControlFollowButton, els.browserControlDialogFollowButton]) {
+    button?.addEventListener('click', () => {
+      setBrowserControlViewBehavior('follow').catch((error) => showOperationToast({ kind: 'warn', title: 'View unchanged', detail: error?.message || String(error) }));
+    });
+  }
   els.browserControlPauseButton?.addEventListener('click', () => {
     toggleBrowserControlPause().catch((error) => showOperationToast({ kind: 'warn', title: 'Control state unchanged', detail: error?.message || String(error) }));
   });
@@ -20378,11 +21951,15 @@ function bindEvents() {
     }
   });
   els.localDocumentApproveButton?.addEventListener('click', async () => {
-    settings = { ...settings, allowLocalDocuments: true };
-    await browserApi.storage.local.set({ hermesBrowserSettings: settings });
-    dismissLocalDocumentApprovalNotice();
-    await refreshContext({ allowLocalDocuments: true });
-    await attachBrowserControlToCurrentTab();
+    try {
+      settings = { ...settings, allowLocalDocuments: true };
+      await browserApi.storage.local.set({ hermesBrowserSettings: settings });
+      dismissLocalDocumentApprovalNotice();
+      await refreshContext({ allowLocalDocuments: true });
+      await attachBrowserControlToCurrentTab();
+    } catch (error) {
+      showOperationToast({ kind: 'warn', title: 'Control not attached', detail: error?.message || String(error) });
+    }
   });
   els.localDocumentDismissButton?.addEventListener('click', () => {
     dismissLocalDocumentApprovalNotice();
@@ -20441,7 +22018,12 @@ function bindEvents() {
     }
   });
   els.input.addEventListener('paste', (event) => {
-    handlePasteImages(event).catch((error) => addMessage('system', `Paste failed: ${error?.message || String(error)}`));
+    handlePasteImages(event)
+      .then((handledImages) => {
+        if (handledImages) return;
+        handlePasteText(event);
+      })
+      .catch((error) => addMessage('system', `Paste failed: ${error?.message || String(error)}`));
   });
   document.addEventListener('paste', (event) => {
     const tag = String(event.target?.tagName || '').toUpperCase();
@@ -20546,6 +22128,21 @@ function bindEvents() {
         els.input.focus();
         askHermes('/sort-tabs', [], { disableCommandParsing: false });
       }
+      return;
+    }
+    if (action === 'open-context-consent') {
+      const gateReason = button.dataset.contextConsentReason || '';
+      els.contextScopeMenu.hidden = true;
+      renderContextScopeControls();
+      openSettingsDialog();
+      requestAnimationFrame(() => {
+        if (gateReason === 'principal-unavailable') {
+          els.testConnectionButton?.focus({ preventScroll: true });
+          return;
+        }
+        els.browserContextConsentControl?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        els.browserContextConsentInput?.focus({ preventScroll: true });
+      });
       return;
     }
 

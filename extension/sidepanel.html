@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta http-equiv="Content-Security-Policy" content="script-src 'self'; object-src 'self'; img-src 'self' data: blob:; media-src 'self'; connect-src http: https: wss: ws://127.0.0.1:* ws://localhost:*;" />
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self'; object-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src http: https: wss: ws://127.0.0.1:* ws://localhost:*;" />
     <title data-i18n="manifest.extension_name">Hermes Browser Extension</title>
     <link rel="icon" href="assets/icons/icon-32.png" />
     <link rel="stylesheet" href="lib/fonts.css" />
@@ -11,6 +11,7 @@
     <link rel="stylesheet" href="sidepanel.css" />
     <link rel="stylesheet" href="sidepanel-themes.css" />
     <link rel="stylesheet" href="context-menu-editor.css" />
+    <link rel="stylesheet" href="lib/user-file-attachments.css" />
   </head>
   <body>
     <main class="shell">
@@ -397,30 +398,6 @@
           <img class="hero-badge" src="assets/img/hermes-badge.webp" alt="Hermes Agent badge" data-i18n-alt="ui.hermes.agent.badge" />
         </section>
 
-        <section id="browserControlStrip" class="browser-control-strip" aria-live="polite" hidden>
-          <span id="browserControlStripSignal" class="browser-control-signal" aria-hidden="true"></span>
-          <div class="browser-control-strip-copy">
-            <strong id="browserControlStripTitle" data-i18n-runtime data-i18n="browser_control.control_ready">Control ready</strong>
-            <span id="browserControlStripDetail" data-i18n-runtime data-i18n="browser_control.waiting">Waiting for Hermes.</span>
-          </div>
-          <button id="browserControlDismissButton" class="browser-control-dismiss" type="button" aria-label="Detach" title="Detach" data-i18n-aria-label="browser_control.detach" data-i18n-title="browser_control.detach">
-            <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-          </button>
-          <div class="browser-control-strip-actions">
-            <button id="browserControlAuthorizeButton" class="browser-control-action" type="button" hidden data-i18n="browser_control.authorize">Authorize control</button>
-            <button id="browserControlAttachButton" class="browser-control-action" type="button" hidden data-i18n-runtime data-i18n="ui.attach">Attach</button>
-            <button id="browserControlPauseButton" class="browser-control-action icon-only secondary" type="button" aria-label="Pause" title="Pause" data-i18n-aria-label="browser_control.pause" data-i18n-title="browser_control.pause">
-              <svg class="glyph-pause" viewBox="0 0 12 12" width="11" height="11" aria-hidden="true"><path d="M3.2 2h2.2v8H3.2zM6.6 2h2.2v8H6.6z" fill="currentColor"/></svg>
-              <svg class="glyph-play" viewBox="0 0 12 12" width="11" height="11" aria-hidden="true" hidden><path d="M3.2 2l7 4-7 4z" fill="currentColor"/></svg>
-            </button>
-            <button id="browserControlStopButton" class="browser-control-action icon-only secondary" type="button" hidden aria-label="Stop" title="Stop" data-i18n-aria-label="browser_control.stop" data-i18n-title="browser_control.stop">
-              <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true"><path d="M2.6 2.6h6.8v6.8H2.6z" fill="currentColor"/></svg>
-            </button>
-            <button id="browserControlApproveButton" class="browser-control-action" type="button" hidden data-i18n="browser_control.approve_once">Approve once</button>
-            <button id="browserControlRejectButton" class="browser-control-action secondary" type="button" hidden data-i18n="browser_control.reject">Reject</button>
-          </div>
-        </section>
-
         <section id="messages" class="messages" aria-live="polite"></section>
       </section>
 
@@ -452,22 +429,22 @@
             <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l9 9M10.5 1.5l-9 9"/></svg>
           </button>
         </div>
-        <div id="groupTypingIndicator" class="group-typing-bar" data-i18n-runtime hidden aria-live="polite">
-          <span class="group-typing-avatars" id="groupTypingAvatars"></span>
-          <span class="group-typing-dots" aria-hidden="true"><i></i><i></i><i></i></span>
-          <span class="group-typing-text" id="groupTypingText">Roxas is thinking…</span>
+        <div id="groupPresence" class="group-presence" data-i18n-runtime hidden>
+          <div class="group-presence-chips" id="groupPresenceChips" role="list"></div>
+          <div class="group-presence-status" id="groupPresenceStatus" aria-live="polite"></div>
         </div>
         <form id="composer" class="composer">
-          <div class="composer-header">
-            <label class="composer-label" id="composerLabel" for="promptInput" data-i18n="ui.ask.hermes.36d55d5a">ASK HERMES</label>
+          <button id="statusStackToggle" class="status-stack-toggle" type="button" aria-expanded="true" aria-controls="composerStatusStack" title="Show or hide status" aria-label="Show or hide status" data-i18n-title="ui.show.or.hide.status" data-i18n-aria-label="ui.show.or.hide.status"><svg viewBox="0 0 16 8" width="16" height="8" aria-hidden="true"><path d="M2 2l6 4 6-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <div class="composer-header" id="composerStatusStack">
+            <label class="composer-label sr-only" id="composerLabel" for="promptInput" data-i18n="ui.ask.hermes.36d55d5a">ASK HERMES</label>
+            <button id="contextChip" class="context-chip" type="button" aria-expanded="false">
+              <span id="contextChipLabel" data-i18n-runtime>📎 Loading...</span>
+              <strong data-i18n-runtime data-i18n="ui.preview.1aa787fe">preview</strong>
+            </button>
             <button id="contextScopeButton" class="context-scope-button" type="button" aria-haspopup="dialog" aria-expanded="false" title="Choose which tab Hermes reads and which open tabs appear in the prompt" data-i18n-title="ui.choose.which.tab.hermes.reads.and.which.open.tabs.appear.in.the.prompt">
               <span id="contextScopeLabel">Follow active tab</span>
             </button>
           </div>
-          <button id="contextChip" class="context-chip" type="button" aria-expanded="false">
-            <span id="contextChipLabel" data-i18n-runtime>📎 Loading...</span>
-            <strong data-i18n-runtime data-i18n="ui.preview.1aa787fe">preview</strong>
-          </button>
           <div id="contextPreview" class="context-preview" data-i18n-runtime hidden></div>
           <div id="explicitSiteCaptureWrap" class="context-explicit-capture-wrap" hidden>
             <button id="explicitSiteCaptureButton" class="context-explicit-capture" type="button" hidden>
@@ -598,7 +575,7 @@
             </div>
           </section>
           <div class="composer-actions">
-            <button id="refreshButton" class="secondary icon-refresh" type="button" title="Refresh page context" aria-label="Refresh page context" data-i18n-title="context.refresh_page" data-i18n-aria-label="context.refresh_page"><span class="refresh-glyph" aria-hidden="true">↻</span></button>
+            <button id="refreshButton" class="secondary icon-refresh" type="button" title="Refresh page context" aria-label="Refresh page context" data-i18n-title="context.refresh_page" data-i18n-aria-label="context.refresh_page"><svg class="refresh-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 8a7 7 0 0 1 11.55-2.6L20 8M4 16l2.35 2.6A7 7 0 0 0 17.9 16"/></svg></button>
                         <button type="button" id="activeProfileIndicator" class="active-profile-indicator" data-i18n-title="bot_mode.switch_profile" title="Switch profile" hidden aria-haspopup="menu" aria-expanded="false"></button>
             <button id="botModeThreadsButton" class="secondary bot-mode-threads-button" type="button" hidden aria-haspopup="dialog" aria-expanded="false" data-i18n="bot_mode.threads" data-i18n-title="bot_mode.threads_title" data-i18n-aria-label="bot_mode.threads_title">Threads</button>
             <button id="botModeNewThreadButton" class="secondary bot-mode-new-thread-button" type="button" hidden data-i18n-runtime title="Start a new thread in this group" aria-label="Start a new thread in this group">+ New Thread</button>
@@ -607,9 +584,21 @@
               <div id="pageCommentTrayList"></div>
               <button id="pageCommentTraySend" type="button" data-i18n="ui.send.comments">Send comments</button>
             </section>
+            <button id="browserControlMenuButton" class="secondary browser-control-launcher" type="button" hidden aria-haspopup="dialog" aria-expanded="false" aria-controls="browserControlDialog" title="Hermes Control" aria-label="Hermes Control" data-i18n-runtime data-i18n-title="browser_control.kicker" data-i18n-aria-label="browser_control.kicker">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 9.5h18M7 7.25h.01M10 7.25h.01"/><path d="m9 12 6 2.5-2.5 1-1 2.5z"/></svg>
+              <span class="browser-control-launcher-indicator" aria-hidden="true"></span>
+            </button>
             <button id="sendButton" type="submit" data-i18n="ui.ask.hermes">Ask Hermes</button>
           </div>
         </form>
+
+        <div id="roomMemberPopover" class="room-member-popover" role="dialog" aria-modal="false" aria-labelledby="roomMemberPopoverTitle" hidden>
+          <div class="room-member-popover-card">
+            <strong id="roomMemberPopoverTitle" class="room-member-popover-title" data-i18n="ui.room.bots.title">Bots in this room</strong>
+            <div id="roomMemberPopoverList" class="room-member-popover-list" role="list"></div>
+            <p class="room-member-popover-note" data-i18n="ui.room.model.note">Model changes apply to this room only.</p>
+          </div>
+        </div>
 
         <div class="desktop-bar">
           <button id="modelMenuButton" class="model-menu-button" type="button" aria-haspopup="dialog" aria-expanded="false">
@@ -887,6 +876,7 @@
               <span data-i18n="appearance.local_font_fallback">The browser uses a fallback when the local font family is unavailable.</span>
               <input id="customFontFamilyInput" type="text" maxlength="80" autocomplete="off" placeholder="Atkinson Hyperlegible" data-i18n-invariant />
             </label>
+            <p id="signatureFontFallbackNote" class="appearance-signature-font-fallback-note" data-i18n="appearance.font_fallback_note" hidden>Licensed signature font not installed — showing the bundled fallback face.</p>
             <p id="appearanceSaveStatus" class="appearance-save-status" role="status" aria-live="polite"></p>
           </div>
 
@@ -1139,6 +1129,7 @@
               <span id="activeUrl">Open a normal http/https tab, then refresh context.</span>
             </div>
             <div id="statusActions" class="status-actions" hidden>
+              <button id="statusRetryProbeButton" class="secondary tiny" type="button" hidden></button>
               <button id="statusCopyDiagnosticsButton" class="secondary tiny" type="button" data-i18n="ui.copy.diagnostics">Copy Diagnostics</button>
             </div>
           </section>
@@ -1171,7 +1162,7 @@
             </div>
             <div class="browser-control-card-actions">
               <button id="browserControlEnableButton" class="browser-control-action" type="button" data-i18n="browser_control.enable">Enable control</button>
-              <button id="browserControlDetachButton" class="browser-control-action secondary" type="button" hidden data-i18n="browser_control.detach">Detach</button>
+              <button id="browserControlDetachButton" class="browser-control-action secondary" type="button" hidden data-i18n="browser_control.turn_off">Turn off</button>
             </div>
             <p class="browser-control-note" data-i18n="browser_control.note">Chromium controller access was granted when this extension or update was installed. Hermes attaches only during an authorized leased action, never raises a browser window, and blocks credentials, MFA, payment fields, and secret text.</p>
           </section>
@@ -1182,6 +1173,15 @@
               <small data-i18n="ui.rename.a.fresh.browser.session.from.the.first.real.message">Rename a fresh browser session from the first real message.</small>
             </span>
             <input id="autoNameSessionsInput" class="settings-switch-input" type="checkbox" />
+            <span class="settings-switch" aria-hidden="true"></span>
+          </label>
+
+          <label class="settings-toggle-card auto-name-toggle">
+            <span class="settings-toggle-copy">
+              <strong data-i18n="ui.show.message.times">Show message times</strong>
+              <small data-i18n="ui.show.message.times.hint">Show the time on your messages when you hover or tap them.</small>
+            </span>
+            <input id="showMessageTimesInput" class="settings-switch-input" type="checkbox" />
             <span class="settings-switch" aria-hidden="true"></span>
           </label>
 
@@ -1312,7 +1312,7 @@
     </section>
 
     <section id="operationToast" class="operation-toast" role="status" aria-live="polite" aria-atomic="true" hidden>
-      <span class="operation-toast-signal" aria-hidden="true"></span>
+      <span class="operation-toast-signal" aria-hidden="true"><svg class="icon-ok" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><svg class="icon-warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v6M12 17h.01"/></svg><svg class="icon-error" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7l10 10M17 7L7 17"/></svg></span>
       <div>
         <strong id="operationToastTitle">Hermes Browser</strong>
         <span id="operationToastDetail"></span>
@@ -1321,11 +1321,69 @@
     </section>
 
     <template id="messageTemplate">
-      <article class="message">
-        <div class="message-role"></div>
-        <div class="message-content"></div>
-      </article>
+      <div class="message-row">
+        <article class="message" tabindex="0">
+          <div class="message-role"></div>
+          <div class="message-content"></div>
+        </article>
+      </div>
     </template>
+
+    <dialog id="browserControlDialog" class="browser-control-dialog" aria-labelledby="browserControlDialogTitle" aria-describedby="browserControlStripDetail">
+      <span class="browser-control-energy" aria-hidden="true"></span>
+      <span class="browser-control-flare" aria-hidden="true"></span>
+      <h2 id="browserControlDialogTitle" class="browser-control-dialog-title" tabindex="-1" autofocus data-i18n="browser_control.kicker">HERMES CONTROL</h2>
+        <section id="browserControlStrip" class="browser-control-strip" aria-live="polite" hidden>
+          <div class="browser-control-strip-copy">
+            <span class="browser-control-live-indicator" aria-hidden="true"></span>
+            <strong id="browserControlStripTitle" data-i18n-runtime data-i18n="browser_control.control_ready">Control ready</strong>
+            <span id="browserControlStripDetail" data-i18n-runtime data-i18n="browser_control.waiting">Waiting for Hermes.</span>
+          </div>
+          <button id="browserControlDismissButton" class="browser-control-dismiss" type="button" data-control-help="close" aria-label="Close" data-i18n-aria-label="ui.close">
+            <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          </button>
+          <div class="browser-control-strip-actions">
+            <button id="browserControlAuthorizeButton" class="browser-control-action" type="button" hidden data-i18n="browser_control.authorize">Authorize control</button>
+            <button id="browserControlAttachButton" data-control-help="attach" class="browser-control-action" type="button" hidden data-i18n-runtime data-i18n="ui.attach">Attach</button>
+            <button id="browserControlOffButton" data-control-help="off" class="browser-control-action secondary" type="button" data-i18n="browser_control.turn_off">Turn off</button>
+            <button id="browserControlPauseButton" class="browser-control-action secondary" type="button" data-control-help="pause" aria-label="Pause" data-i18n-aria-label="browser_control.pause">
+              <svg class="glyph-pause" viewBox="0 0 12 12" width="11" height="11" aria-hidden="true"><path d="M3.2 2h2.2v8H3.2zM6.6 2h2.2v8H6.6z" fill="currentColor"/></svg>
+              <svg class="glyph-play" viewBox="0 0 12 12" width="11" height="11" aria-hidden="true" hidden><path d="M3.2 2l7 4-7 4z" fill="currentColor"/></svg>
+              <span id="browserControlPauseLabel" data-i18n-runtime data-i18n="browser_control.pause">Pause</span>
+            </button>
+            <button id="browserControlStopButton" class="browser-control-action secondary" type="button" data-control-help="stop" hidden aria-label="Stop" data-i18n-aria-label="browser_control.stop">
+              <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true"><path d="M2.6 2.6h6.8v6.8H2.6z" fill="currentColor"/></svg>
+              <span data-i18n="browser_control.stop">Stop</span>
+            </button>
+            <button id="browserControlApproveButton" class="browser-control-action" type="button" hidden data-i18n="browser_control.approve_once">Approve once</button>
+            <button id="browserControlRejectButton" class="browser-control-action secondary" type="button" hidden data-i18n="browser_control.reject">Reject</button>
+          </div>
+          <div class="browser-control-dialog-config browser-control-config">
+            <label class="browser-control-field">
+              <span id="browserControlDialogScopeLabel" data-i18n="browser_control.scope">Control scope</span>
+              <select id="browserControlDialogScopeInput" aria-labelledby="browserControlDialogScopeLabel" aria-describedby="browserControlDialogScopeHint">
+                <option value="this-tab" data-i18n="browser_control.this_tab" data-control-help="scope_this_tab" data-i18n-title="browser_control.help_scope_this_tab" title="Control only the current tab. Other tabs are not included.">This tab</option>
+                <option value="selected-tabs" data-i18n="browser_control.selected_tabs" data-control-help="scope_selected_tabs" data-i18n-title="browser_control.help_scope_selected_tabs" title="Control only the tabs you choose below. Each tab is selected individually; all other tabs stay outside the scope.">Selected tabs</option>
+                <option value="task-set" data-i18n="browser_control.task_set" data-control-help="scope_task_set" data-i18n-title="browser_control.help_scope_task_set" title="Control only the tabs you choose below as one shared browser task. Unlike Selected tabs, these tabs share a task identity; this does not include every open tab.">Task set</option>
+              </select>
+              <small id="browserControlDialogScopeHint" role="status" data-i18n-runtime data-i18n="browser_control.scope_locked">Choose the scope here, then apply. Multiple tabs must be selected explicitly.</small>
+            </label>
+            <fieldset id="browserControlDialogTabs" class="browser-control-tabs" hidden>
+              <legend data-i18n="browser_control.scope_tabs">Tabs in this scope</legend>
+              <div id="browserControlDialogTabList" class="browser-control-tab-list"></div>
+            </fieldset>
+            <button id="browserControlDialogApplyScope" class="browser-control-action secondary browser-control-apply-scope" type="button" data-i18n="ui.apply">Apply</button>
+            <fieldset class="browser-control-view">
+              <legend data-i18n="browser_control.while_working">While Hermes works</legend>
+              <div>
+                <button id="browserControlDialogStayButton" data-control-help="stay" class="browser-control-action secondary" type="button" aria-pressed="true" data-i18n="browser_control.stay">Stay on my tab</button>
+                <button id="browserControlDialogFollowButton" data-control-help="follow" class="browser-control-action secondary" type="button" aria-pressed="false" data-i18n="browser_control.follow">Follow Hermes</button>
+              </div>
+            </fieldset>
+          </div>
+        </section>
+      <p id="browserControlTooltip" class="browser-control-tooltip" role="tooltip" popover="manual"></p>
+    </dialog>
 
     <section id="profileSwitchDialog" class="profile-switch-dialog" role="dialog" aria-modal="true" aria-labelledby="profileSwitchTitle" aria-describedby="profileSwitchDetail" tabindex="-1" hidden>
       <div class="profile-switch-card">

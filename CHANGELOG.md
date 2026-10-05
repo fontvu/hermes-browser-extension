@@ -1,5 +1,72 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Code blocks in messages are now syntax highlighted for common languages (Python, JavaScript, TypeScript, JSON, YAML, SQL, Bash, C#, CSS, HTML and Markdown) in the side panel and the full tab, in light and dark themes. Languages Hermes does not recognize stay plain. Thanks to @kidclone3 (#91).
+
+### Changed
+
+- Nous Light uses a white shell with Nous Blue (#0000F2) text, borders and buttons. The background art stays as a faint watermark, and the start screen is white with a blue logo.
+- Light-theme user messages are a soft tint of the theme colour with a clear outline, so "What Hermes saw" and code stay readable in every light theme. System notices sit on a solid surface.
+- The README is shorter: version-by-version notes point to the changelog and releases, and remote setup plus extended troubleshooting moved to guides/connection-guide.md and guides/troubleshooting.md. The visual tour has fresh Mono Dark screenshots, including Bot Mode group chats and profile editing.
+- The composer's DOM preview and Attached-tab controls share one row, and a slim handle on the composer border hides or shows them. The choice is remembered, the DOM preview always reopens closed, and hovering DOM explains what it is.
+- The chat intro banner now matches the Settings banner's spacing and keeps white text on blue in Nous Light.
+
+### Fixed
+
+- Approving local-document access on a tab that is still loading no longer leaks an uncaught error. Hermes Control shows a "Control not attached" notice instead. Thanks to @LeahyCC (#97).
+
+- Choosing Pin current tab or Follow active tab on a remote connection that has not approved page context sharing now explains why and offers an Open Settings button that goes straight to the approval switch, instead of silently staying on Chat only. Approval is never granted automatically. Thanks to @jdot-dev (#92, #93).
+
+## [0.3.4] - 2026-10-03
+
+### Added
+
+- Message action rails appear on hover, focus or click. Completed messages offer Copy with success/failure feedback; supported side-panel user turns also offer inline Edit and Restore checkpoint.
+- Editing a supported user turn reruns from that point with refreshed browser context. Restore checkpoint confirms before removing later turns from the branch. Rooms and transports without safe rewind addressing do not offer these actions.
+- User-message times in 1:1 chat use age-aware formatting and full-date tooltips; unknown timestamps stay unknown. Ordinary 1:1 assistant replies do not gain timestamps. Room messages have their own times.
+- Day dividers, consecutive-message grouping, dark-mode glass bubbles, opaque light-mode bubbles and restrained new-message motion improve transcript readability. The Settings timestamp toggle leaves actions and dividers intact.
+- Room replies carry a bot avatar, coloured name, accent bar and subtle tint. Consecutive replies from the same member collapse repeated identity headers; room avatars can be chosen from the bundled gallery.
+- Room presence shows queued, working, typing, tool-use, done, pass and failure states, with a readable summary of the active member and waiting members.
+- A streaming room bubble settles into the final reply in place. Mentions target selected members; Reply prepares a mention for the author of a bot message.
+- Per-room model controls show confirmed model/provider, change one member's model without changing its profile default, and reset that override to the default.
+- Required model-change/reset confirmations offer Confirm and Cancel, and retry the operation only after confirmation. An unverified pinned model blocks its member turn rather than silently using an unchecked model.
+- Model-change, reset, pass and failure notices persist across room reopening as display-only history.
+- Browser Control opens from a state-marked composer launcher. This tab, Selected tabs and Task set can be chosen directly in its dialog.
+- Scope choices have localized hover/focus explanations and accessible descriptions. A task set groups explicitly chosen tabs under a shared task identity, not every open tab.
+- Original-file attachments retain bytes locally, display bounded previews, and offer Open/Download cards in supported live and restored conversations. Browser-local retention does not promise cross-device storage or parsing of every Office/media format.
+- Supported session-upload gateways must acknowledge file storage before submission references the file. Missing capabilities, rejected uploads and unconfirmed responses preserve the draft and block the turn.
+- Large pastes are handled separately from the inline message limit with explicit retention and excerpt warnings; sending a pasted-text excerpt is not the same as uploading the original file.
+- Signature typography falls back to bundled Hermes display and UI faces before unrelated system fonts on installs without the licensed faces. Font assets are included in build verification.
+- Signature settings show an honest bundled-fallback note based on registered font loading. Switching away from Signature invalidates an in-flight probe so an old result cannot restore the note.
+- The model picker's provider strip scrolls sideways with the mouse wheel: wheel down moves right, wheel up moves left, and the page scrolls normally once the strip reaches either end.
+
+### Changed
+
+- Control actions explain their effects on hover/focus. Apply fills its row, the selected-tabs list uses the branded arrow-free scrollbar, and selected/hovered/focused scope options stay readable in light and dark.
+- Context receipts distinguish delivered tabs from the full selection when the turn budget applies, such as 12 of 20, while keeping the complete open-window count separate.
+- Newly added scope, message and room strings are maintained across all 21 locale catalogs.
+- MV3 startup regression coverage checks listener registration before pending hydration deterministically instead of using a short wall-clock timeout.
+
+### Fixed
+
+- Newly created rooms synchronize members at creation and read the result back. Failed synchronization no longer leaves a room that looks ready but never starts a member turn.
+- Room badges report Synced, Not synced or Sync failed from verified state, with retry behaviour. Projection persistence no longer gates member replies.
+- Open group rooms stay visible during an in-place roster synchronization.
+- Gateway failures explain the actual error and preserve drafts when turn delivery is uncertain (#115).
+- A gateway still running pre-update code after a Hermes update is now named plainly ("Hermes was updated, restart it") instead of a generic rejection, and the draft is kept. The message offers a confirmed **Restart Hermes** action with a two-step confirmation, live stopping and starting progress, and a finished state that replaces the prompt once the new process is running.
+- The restart prompt follows a restart done elsewhere, such as a terminal, and resolves itself when Hermes is back. It waits long enough for a multi-profile gateway to reconnect, offers **Check again** rather than a second restart if it is slow, and never reports success until a new process is actually running.
+- Steering messages show the user's words with a steer label rather than the runtime wrapper, including after history reload.
+- Profile-roster readiness reflects the authenticated roster actually loaded instead of stale or optimistic readiness (#113).
+- Windows setup respects HERMES_HOME when resolving the Hermes data directory, with clearer configuration-location documentation (#111, thanks @chrisworksai).
+- The model picker includes the Space Bunny Alpha context window.
+- GPT 6.1 Sol context windows resolve from Hermes Agent rules. Live catalog/session limits take precedence; display labels no longer silently opt a base model into a larger window.
+- Context fallback rules synchronize automatically from Hermes Agent at build/model refresh time, with bounded public metadata fetching and offline caching, rather than requiring individual Browser patches for each new model.
+- Local distribution signing keys are ignored by source control (#109, thanks @xxkingstuggle).
+- Hermes cores with a strict `prompt.submit` contract no longer reject chat messages with an "invalid params ... display_text" error. The turn is retried once without the optional display text and the extension stops sending it for that session.
+
 ## [0.3.3] - 2026-09-24
 
 ### Added

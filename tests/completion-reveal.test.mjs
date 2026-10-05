@@ -74,7 +74,10 @@ test('side panel message template satisfies the reveal selectors', () => {
   const dom = new JSDOM(html);
   const template = dom.window.document.querySelector('#messageTemplate');
   assert.ok(template, 'message template must exist');
-  const node = template.content.firstElementChild.cloneNode(true);
+  const row = template.content.firstElementChild.cloneNode(true);
+  assert.ok(row.matches('.message-row'), 'the message wrapper owns rail layout');
+  const node = row.querySelector('.message');
+  assert.ok(node, 'the focusable article stays inside the wrapper');
   node.classList.add('assistant');
   assert.ok(node.matches('.message.assistant'), 'reveal anchors on .message.assistant nodes');
   assert.ok(node.querySelector('.message-content'), 'reveal requires a .message-content slot');

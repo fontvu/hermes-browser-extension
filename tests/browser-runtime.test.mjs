@@ -280,6 +280,12 @@ function createBackgroundHarness({
   let runtimeMessageHandler = null;
   let storageChangedHandler = null;
   let releaseStorageGet = null;
+  const storageGetCalls = [];
+  // Deterministic hydration gate: resolves the moment the residency read is
+  // issued. That read happens only after every top-level listener is
+  // registered, so it replaces the old wall-clock race in the cold-start test.
+  let resolveResidencyRead;
+  const residencyReadStarted = new Promise((resolve) => { resolveResidencyRead = resolve; });
   const storageGetGate = blockStorageGet
     ? new Promise((resolve) => { releaseStorageGet = resolve; })
     : Promise.resolve();
@@ -294,7 +300,9 @@ function createBackgroundHarness({
     },
     storage: {
       local: {
-        get: async () => {
+        get: async (keys) => {
+          storageGetCalls.push(keys);
+          if (Array.isArray(keys) && keys.includes('panelResidencyMode')) resolveResidencyRead();
           await storageGetGate;
           return { hermesBrowserSettings: { panelResidencyMode } };
         },
@@ -371,26 +379,36 @@ function createBackgroundHarness({
     get contextMenuHandler() { return contextMenuHandler; },
     get runtimeMessageHandler() { return runtimeMessageHandler; },
     get storageChangedHandler() { return storageChangedHandler; },
+    storageGetCalls,
+    waitForResidencyRead() { return residencyReadStarted; },
     releaseStorageGet() { releaseStorageGet?.(); },
   };
 }
 
-test('background registers MV3 listeners before locale and residency storage hydration completes', async () => {
+test('background registers MV3 listeners before locale and residency storage hydration completes', { timeout: 10000 }, async () => {
   const originalChrome = globalThis.chrome;
   const harness = createBackgroundHarness({ blockStorageGet: true });
   globalThis.chrome = harness.chromeApi;
 
   try {
-    const imported = await Promise.race([
-      import(`../extension/background.js?cold-listener-registration=${Date.now()}`),
-      new Promise((resolve) => setTimeout(() => resolve('timed-out'), 100)),
-    ]);
-    assert.notEqual(imported, 'timed-out', 'module evaluation must not await storage hydration');
+    // Kick off module evaluation but never release the blocked hydration gate.
+    const importPromise = import(`../extension/background.js?cold-listener-registration=${Date.now()}`);
+    // The residency hydration read is issued synchronously on the last
+    // top-level line, after every listener below is registered, and the gate
+    // keeps it pending. Awaiting that deterministic checkpoint replaces the
+    // old 100ms Promise.race, which went RED under full-suite load even when
+    // the production ordering was correct.
+    await harness.waitForResidencyRead();
     assert.equal(typeof harness.installedHandler, 'function');
     assert.equal(typeof harness.startupHandler, 'function');
     assert.equal(typeof harness.actionHandler, 'function');
     assert.equal(typeof harness.contextMenuHandler, 'function');
     assert.equal(typeof harness.runtimeMessageHandler, 'function');
+
+    // Module evaluation must finish without awaiting the still-blocked
+    // hydration gate. The test timeout is only a regression hang-guard; the
+    // pass path never depends on wall-clock timing.
+    await importPromise;
 
     const result = await harness.contextMenuHandler({ menuItemId: 'invalid' }, harness.activeTab);
     assert.deepEqual(result, { ok: false, reason: 'unknown-menu-item' });

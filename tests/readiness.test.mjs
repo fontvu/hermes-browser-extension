@@ -164,6 +164,6 @@ test('sidepanel startup and conversation chrome use the compact branded shell', 
   assert.ok(heroIndex >= 0 && messagesIndex > heroIndex, 'hero should remain an intro before messages');
   assert.ok(statusCardIndex > browserBehaviorIndex, 'active-tab status belongs in Browser Behavior settings');
   assert.ok(contextScopeButtonIndex > composerStartIndex && contextScopeButtonIndex < composerEndIndex, 'tab-scope control belongs in the composer header');
-  assert.ok(contextScopeButtonIndex < html.indexOf('id="contextChip"'), 'tab-scope control should render above the context chip');
+  assert.ok(contextScopeButtonIndex > html.indexOf('id="contextChip"'), 'tab-scope control sits right of the context chip');
   assert.doesNotMatch(html.slice(heroIndex, messagesIndex), /<span>ACTIVE TAB<\/span>/);
 });

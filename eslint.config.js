@@ -17,6 +17,7 @@ export default [
         globalThis: 'readonly',
         location: 'readonly',
         navigator: 'readonly',
+        localStorage: 'readonly',
         fetch: 'readonly',
         Headers: 'readonly',
         Request: 'readonly',

@@ -47,6 +47,10 @@ function responseErrorDetail(body = '') {
   return redactSensitiveText(text.replace(/\s+/g, ' ')).slice(0, 900);
 }
 
+function staleRuntimeText(value = '') {
+  return /cannot import name .{1,80} from '(?:agent|hermes_cli|gateway|tools|tui_gateway|cron)(?:\.[\w.]+)?'/i.test(String(value || ''));
+}
+
 function modelOptionRejectionText(value = '') {
   return /reasoning[_ -]?effort|thinking.{0,60}(?:unsupported|must be one of)|unsupported.{0,60}reasoning/i.test(String(value || ''));
 }
@@ -100,6 +104,15 @@ export function turnRequestFailureState(error = {}) {
   const providerFailure = error?.turnFailureLayer === 'provider';
   if ((!error?.requestRejected && !providerFailure) || error?.fallbackSafe || [401, 403].includes(status)) return null;
   const detail = recoveryErrorText(error).replace(/^Error:\s*/, '').trim();
+  if (staleRuntimeText(detail)) {
+    return {
+      kind: 'hermes-update-restart',
+      title: 'Hermes was updated — restart it',
+      detail: 'The running Hermes gateway is still using files from before your update. Restart Hermes, then resend. Your message was kept as a draft.',
+      preserveDraft: true,
+      gatewayStatus: 'connected',
+    };
+  }
   const modelOptionRejected = modelOptionRejectionText(detail);
   const providerTitle = error?.errorSurface?.retryable === false
     ? 'Provider request rejected'
@@ -110,6 +123,30 @@ export function turnRequestFailureState(error = {}) {
     detail,
     preserveDraft: true,
     gatewayStatus: 'connected',
+  };
+}
+
+/**
+ * Decide what Browser may restore after a gateway failure.
+ *
+ * A turn that provably never reached Hermes is safe to keep as a draft for a
+ * manual resend. A turn Hermes already accepted, or one whose delivery is
+ * unconfirmed because the connection dropped mid-flight, must never be
+ * replayed; Browser never resends on its own either way, and the panel warns
+ * that a manual resend could duplicate the turn.
+ */
+export function gatewayFailureRecoveryPlan({ error = {}, diagnostic = {} } = {}) {
+  const accepted = error?.requestAccepted === true;
+  const deliveryUnknown = accepted || diagnostic.deliveryUnknown === true;
+  return {
+    kind: diagnostic.kind || 'unknown',
+    preserveDraft: !accepted,
+    resendSafe: !deliveryUnknown,
+    duplicateSendRisk: deliveryUnknown,
+    autoRetry: false,
+    recoveryAction: diagnostic.recovery || 'probe-health',
+    detail: diagnostic.detail || '',
+    userMessage: diagnostic.userMessage || '',
   };
 }
 
@@ -191,4 +228,11 @@ export function latestAssistantAfterUser(rows = [], userContent = '') {
     if (content) return content;
   }
   return '';
+}
+
+// Strict-contract cores answer 4000 "invalid params for prompt.submit: display_text: Extra inputs
+// are not permitted". display_text is optional cosmetics, so the turn is retried without it.
+export function isDisplayTextRejection(error) {
+  const text = String(error?.message || error || '');
+  return /invalid params for prompt\.submit/i.test(text) && /display_text/i.test(text);
 }

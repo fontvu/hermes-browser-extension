@@ -22,10 +22,16 @@ test('Phase 6 Hermes Control card is target-locked inside Browser Behavior after
   assert.match(html, /id="browserControlDetachButton"/);
 });
 
-test('Phase 6 live control strip stays above conversation and owns pause stop and approval decisions', () => {
+test('composer launcher opens centered control management outside the conversation', () => {
   const strip = html.indexOf('id="browserControlStrip"');
   const messages = html.indexOf('id="messages"');
-  assert.ok(strip >= 0 && strip < messages);
+  const dialog = html.indexOf('<dialog id="browserControlDialog"');
+  assert.ok(dialog > messages && strip > dialog);
+  assert.match(html, /id="browserControlMenuButton"[\s\S]*?<\/button>\s*<button id="sendButton"/);
+  assert.match(html, /id="browserControlMenuButton"[^>]*hidden[^>]*aria-haspopup="dialog"/);
+  assert.match(html, /id="browserControlOffButton"[^>]*data-i18n="browser_control.turn_off"/);
+  assert.match(css, /\.browser-control-dialog::backdrop/);
+  assert.match(source, /browserControlDialogUi\?\.render/);
   for (const id of [
     'browserControlPauseButton',
     'browserControlStopButton',
@@ -33,10 +39,11 @@ test('Phase 6 live control strip stays above conversation and owns pause stop an
     'browserControlRejectButton',
   ]) assert.match(html, new RegExp(`id="${id}"`));
   assert.match(html, /aria-live="polite"/);
-  // Pause and Stop are compact icon-only glyphs; Stop only renders while an action is running or queued.
-  assert.match(html, /id="browserControlPauseButton"[^>]*icon-only/);
+  // The centered dialog has readable action labels; Stop only renders while working.
+  assert.match(html, /id="browserControlPauseLabel"/);
   assert.match(html, /id="browserControlStopButton"[^>]*hidden/);
-  assert.match(html, /id="browserControlStopButton"[^>]*icon-only/);
+  assert.match(html, /id="browserControlDialogStayButton"/);
+  assert.match(html, /id="browserControlDialogFollowButton"/);
 });
 
 test('Phase 6 enable and detach use install-declared debugger access without runtime permission prompts', () => {
@@ -91,7 +98,15 @@ test('Hermes Control settings use a readable single-column hierarchy with propor
 
 test('Phase 6 approval reason remains fully readable in narrow Browser panels', () => {
   assert.match(css, /\.browser-control-strip-copy span\s*\{[^}]*white-space:\s*normal[^}]*overflow-wrap:\s*anywhere/s);
-  assert.match(css, /@media \(max-width:\s*560px\)[\s\S]*?\.browser-control-strip\s*\{[^}]*grid-template-columns:\s*8px minmax\(0,\s*1fr\)[^}]*\}[^}]*\.[\s\S]*?grid-column:\s*2/s);
+  assert.match(css, /@media \(max-width:\s*560px\)[\s\S]*?\.browser-control-strip\s*\{[^}]*grid-template-columns:\s*32px minmax\(0,\s*1fr\)[^}]*\}[^}]*\.[\s\S]*?grid-column:\s*2/s);
+});
+
+test('local document approval does not leak attach failures as uncaught rejections', () => {
+  const handler = source.match(/localDocumentApproveButton\?\.addEventListener\('click', async \(\) => \{[\s\S]*?\n {2}\}\);/)?.[0] || '';
+  assert.match(handler, /try \{/);
+  assert.match(handler, /attachBrowserControlToCurrentTab\(\)/);
+  assert.match(handler, /catch \(error\)/);
+  assert.match(handler, /Control not attached/);
 });
 
 test('startup Connect button uses the theme primary tokens so it stays readable in every theme and mode', () => {

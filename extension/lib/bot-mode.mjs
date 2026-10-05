@@ -303,7 +303,15 @@ function normalizeGroupChatMessages(value) {
 }
 
 export function groupProjectionMessagesForDisplay(row = {}) {
-  return normalizeGroupChatMessages(asObject(row).messages)
+  const raw = Array.isArray(asObject(row).messages) ? asObject(row).messages : [];
+  // Display-only room events (per-room model-change lines) are never part of
+  // the shared projection; drop them before normalization.
+  const projected = raw.filter((message) => {
+    const entry = asObject(message);
+    const kind = clean(entry.kind || entry.display_kind).toLowerCase();
+    return kind !== 'room-event' && kind !== 'room_event' && clean(entry.role).toLowerCase() !== 'system';
+  });
+  return normalizeGroupChatMessages(projected)
     .map((message) => ({
       role: message.from.kind === 'user' ? 'user' : 'assistant',
       content: message.text,
@@ -312,6 +320,9 @@ export function groupProjectionMessagesForDisplay(row = {}) {
       // labels are already normalized (never "default") by the normalizer.
       thread: message.thread,
       roleLabel: message.from.kind === 'user' ? message.from.name : capitalizeMemberName(message.from.name),
+      // The additive speaker is the real profile name (identity header / B1).
+      // User rows carry none.
+      ...(message.from.kind === 'user' ? {} : { speaker: message.from.name }),
     }));
 }
 

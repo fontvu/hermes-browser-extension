@@ -143,7 +143,7 @@ export function stepTextZoomPercent(value, direction) {
 }
 
 export function fontFamilyPreview(profile, customFontFamily = '') {
-  if (profile === 'signature') return '"Rules Gothic Compressed", "Rules Variable", sans-serif';
+  if (profile === 'signature') return '"Rules Gothic Compressed", "HermesDisplay", "Rules Variable", "Space Grotesk", sans-serif';
   if (profile === 'custom-local') {
     const family = sanitizeLocalFontFamily(customFontFamily);
     return family ? `"${family}", ${SYSTEM_SANS_STACK}` : SYSTEM_SANS_STACK;

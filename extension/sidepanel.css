@@ -118,12 +118,35 @@
   --danger: #ff4d72;
   --ok: var(--hermes-accent);
   --radius: 0px;
-  --hermes-font-ui: "Rules Variable", "Segoe UI", system-ui, sans-serif;
+  --hermes-font-ui: "Rules Variable", "Space Grotesk", "Segoe UI", system-ui, sans-serif;
   --hermes-font-mono: "HermesMono", "Courier Prime", "Cascadia Code", "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
-  --hermes-font-brand: "Rules Gothic Compressed", "Rules Variable", sans-serif;
-  --hermes-font-display: "Rules Gothic Compressed", "Rules Variable", sans-serif;
+  --hermes-font-brand: "Rules Gothic Compressed", "HermesDisplay", "Rules Variable", "Space Grotesk", sans-serif;
+  --hermes-font-display: "Rules Gothic Compressed", "HermesDisplay", "Rules Variable", "Space Grotesk", sans-serif;
   --hermes-text-zoom: 1;
+  /* Glass bubble tokens: the light default is fully opaque, zero blur. */
+  --hermes-bubble-user-alpha: 100%;
+  --hermes-bubble-assistant-alpha: 100%;
+  --hermes-bubble-blur: 0px;
+  --hermes-bubble-saturate: 1;
   font-family: var(--hermes-font-ui);
+}
+
+/* Dark mode shows the background art through the bubble fill. */
+html[data-hermes-mode="dark"] {
+  --hermes-bubble-user-alpha: 32%;
+  --hermes-bubble-assistant-alpha: 30%;
+  --hermes-bubble-blur: 3px;
+  --hermes-bubble-saturate: 1.04;
+}
+
+/* Accessibility: reduced transparency and forced colors restore opaque bubbles. */
+@media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  :root,
+  html[data-hermes-mode="dark"] {
+    --hermes-bubble-user-alpha: 100%;
+    --hermes-bubble-assistant-alpha: 100%;
+    --hermes-bubble-blur: 0px;
+  }
 }
 
 html[data-hermes-theme^="custom:"] {
@@ -149,7 +172,11 @@ html[data-hermes-theme^="custom:"] {
   --hermes-user-bg: var(--hermes-primary);
   --hermes-user-fg: var(--hermes-on-primary);
   --hermes-user-border: var(--hermes-line);
-  --hermes-card-bg: color-mix(in srgb, var(--hermes-canvas) 85%, transparent);
+  /* Opaque on purpose: the bubble alpha tokens own all translucency. A
+     pre-mixed translucent card compounded with --hermes-bubble-assistant-alpha
+     and made the effective assistant bubble far more transparent than the
+     dark/light recipes specify. */
+  --hermes-card-bg: var(--hermes-canvas);
   --hermes-system-bg: var(--hermes-paper);
   --hermes-system-fg: var(--hermes-ink);
   --hermes-pill-bg: var(--hermes-paper);
@@ -203,19 +230,47 @@ html[data-hermes-theme="nous"][data-hermes-mode="dark"] {
 }
 
 html[data-hermes-theme="nous"][data-hermes-mode="light"] {
-  --hermes-blue: #0505e8;
-  --hermes-blue-deep: #03038f;
+  /* White shell, Nous Blue (#0000F2) accents. The blue lives in ink, borders,
+     the user bubble and primary buttons; the page itself stays white with faint
+     blue tints (the Settings look), and the background art rides on top as a
+     watermark. */
+  --hermes-blue: #0000f2;
+  --hermes-blue-deep: #0000b4;
   --hermes-paper: #ffffff;
-  --hermes-fg: #f8faff;
-  --hermes-ink: #0505e8;
-  --hermes-accent: #dbe6ff;
-  --hermes-bg-rgb: 5, 5, 232;
-  --hermes-panel-rgb: 5, 5, 232;
+  --hermes-fg: #0000f2;
+  --hermes-ink: #0000f2;
+  --hermes-accent: #0000f2;
+  --hermes-bg-rgb: 0, 0, 242;
+  --hermes-panel-rgb: 255, 255, 255;
   --hermes-paper-rgb: 255, 255, 255;
-  --hermes-fg-rgb: 248, 250, 255;
-  --hermes-ink-rgb: 5, 5, 232;
-  --hermes-accent-rgb: 219, 230, 255;
-  --hermes-menu-bg: #03038f;
+  --hermes-fg-rgb: 0, 0, 242;
+  --hermes-ink-rgb: 0, 0, 242;
+  --hermes-accent-rgb: 0, 0, 242;
+  --hermes-menu-bg: #f6f8ff;
+  --hermes-app-bg: #ffffff;
+  --hermes-app-bg-deep: #eef2ff;
+  --hermes-panel-border: rgba(0, 0, 242, 0.16);
+  --hermes-line: rgba(0, 0, 242, 0.16);
+  --hermes-line-strong: rgba(0, 0, 242, 0.62);
+  --hermes-control-bg: rgba(0, 0, 242, 0.05);
+  --hermes-control-border: rgba(0, 0, 242, 0.55);
+  --hermes-primary-bg: #0000f2;
+  --hermes-primary-fg: #ffffff;
+  --hermes-primary-border: #0000f2;
+  --hermes-user-bg: #0000f2;
+  --hermes-user-fg: #ffffff;
+  --hermes-user-border: #0000f2;
+  --hermes-card-bg: #ffffff;
+  --hermes-system-bg: #f3f6ff;
+  --hermes-system-fg: #0a0a8c;
+  --hermes-pill-bg: rgba(0, 0, 242, 0.06);
+  --hermes-pill-fg: #0000f2;
+  --hermes-pill-border: rgba(0, 0, 242, 0.36);
+  --hermes-pill-ok-bg: rgba(0, 0, 242, 0.08);
+  --hermes-pill-ok-fg: #0000f2;
+  --hermes-pill-ok-border: #0000f2;
+  --hermes-meter-fill: rgba(0, 0, 242, 0.55);
+  --hermes-shadow-rgb: 0, 0, 120;
 }
 
 html[data-hermes-theme="midnight"][data-hermes-mode="dark"] {
@@ -534,6 +589,8 @@ button { text-transform: uppercase; letter-spacing: 0.14em; }
 .app-scroll::-webkit-scrollbar,
 .messages::-webkit-scrollbar,
 .settings-dialog::-webkit-scrollbar,
+.browser-control-dialog::-webkit-scrollbar,
+.browser-control-tab-list::-webkit-scrollbar,
 textarea::-webkit-scrollbar,
 .quick-more-menu::-webkit-scrollbar,
 .quick-command-list::-webkit-scrollbar,
@@ -569,6 +626,8 @@ textarea::-webkit-scrollbar,
 .app-scroll::-webkit-scrollbar-thumb,
 .messages::-webkit-scrollbar-thumb,
 .settings-dialog::-webkit-scrollbar-thumb,
+.browser-control-dialog::-webkit-scrollbar-thumb,
+.browser-control-tab-list::-webkit-scrollbar-thumb,
 textarea::-webkit-scrollbar-thumb,
 .quick-more-menu::-webkit-scrollbar-thumb,
 .quick-command-list::-webkit-scrollbar-thumb,
@@ -931,9 +990,10 @@ html[data-hermes-theme="cyberpunk"] .empty-state strong {
   position: relative;
   min-height: 150px;
   border: 1px solid rgba(var(--hermes-fg-rgb),0.62);
-  padding: 16px 12px 12px;
+  padding: 14px 12px 12px;
   overflow: hidden;
   flex: 0 0 auto;
+  color: var(--hermes-fg);
   background:
     linear-gradient(90deg, rgba(var(--hermes-panel-rgb),0.98) 0%, rgba(var(--hermes-panel-rgb),0.82) 55%, rgba(var(--hermes-panel-rgb),0.24) 100%),
     var(--sidecar-art, url("assets/img/hermes-browse.webp")) center / cover no-repeat,
@@ -977,14 +1037,14 @@ html[data-hermes-theme="cyberpunk"] .empty-state strong {
   display: block;
   width: min(205px, calc(100% - 62px));
   height: auto;
-  margin: 14px 0 0;
+  margin: 2px 0 0;
   overflow: visible;
   color: var(--hermes-fg);
   fill: currentColor;
 }
 .intro {
   max-width: 31ch;
-  margin: 10px 0 0;
+  margin: 8px 0 0;
   color: var(--hermes-fg);
   font-size: calc(12px * var(--hermes-text-zoom, 1));
   line-height: 1.42;
@@ -1392,6 +1452,15 @@ body.startup-active .startup-actions #startupConnectButton:not([hidden]):focus-v
   line-height: 0.96;
 }
 .status-copy span { margin-top: 4px; color: var(--hermes-muted); font-size: calc(11px * var(--hermes-text-zoom, 1)); line-height: 1.25; }
+/* Error diagnoses must remain readable without relying on a hover tooltip. */
+.status-card:has(.status-dot.error) .status-copy span,
+.status-card:has(.status-dot.warn) .status-copy span {
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  font-size: calc(12px * var(--hermes-text-zoom, 1));
+  line-height: 1.4;
+}
 .status-actions {
   margin-top: 2px;
   display: flex;
@@ -1405,6 +1474,113 @@ body.startup-active .startup-actions #startupConnectButton:not([hidden]):focus-v
   line-height: 1;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+.gateway-restart-action {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+.gateway-restart-note {
+  margin: 0;
+  max-width: 34ch;
+  font-size: calc(12px * var(--hermes-text-zoom, 1));
+  line-height: 1.45;
+  color: rgba(var(--hermes-ink-rgb), 0.72);
+}
+.gateway-restart-note:empty { display: none; }
+.gateway-restart-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+.gateway-restart-action .tiny {
+  min-height: 28px;
+  padding: 6px 12px;
+  font-size: calc(10px * var(--hermes-text-zoom, 1));
+  line-height: 1;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.gateway-restart-action[data-phase="armed"] .gateway-restart-primary {
+  border-color: rgba(var(--hermes-ink-rgb), 0.55);
+}
+.gateway-restart-action .tiny:disabled { opacity: 0.55; cursor: default; }
+.gateway-restart-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(100%, 260px);
+}
+.gateway-restart-progress[hidden],
+.gateway-restart-success[hidden],
+.gateway-restart-buttons[hidden] { display: none; }
+.gateway-restart-track {
+  position: relative;
+  flex: 1;
+  height: 2px;
+  overflow: hidden;
+  background: rgba(var(--hermes-ink-rgb), 0.16);
+}
+.gateway-restart-bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 38%;
+  background: rgb(var(--hermes-ink-rgb));
+  animation: gateway-restart-sweep 1.5s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+.gateway-restart-action[data-stage="starting"] .gateway-restart-bar {
+  width: 55%;
+  animation-duration: 0.95s;
+}
+.gateway-restart-timer {
+  min-width: 3ch;
+  font-size: calc(10px * var(--hermes-text-zoom, 1));
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+  color: rgba(var(--hermes-ink-rgb), 0.6);
+  text-align: right;
+}
+.gateway-restart-success {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  animation: gateway-restart-rise 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.gateway-restart-check { width: 26px; height: 26px; flex: none; }
+.gateway-restart-check-ring,
+.gateway-restart-check-tick {
+  fill: none;
+  stroke: rgb(var(--hermes-ink-rgb));
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.gateway-restart-check-ring {
+  stroke-dasharray: 63;
+  stroke-dashoffset: 63;
+  animation: gateway-restart-draw 0.55s cubic-bezier(0.65, 0, 0.35, 1) 0.05s forwards;
+}
+.gateway-restart-check-tick {
+  stroke-dasharray: 18;
+  stroke-dashoffset: 18;
+  animation: gateway-restart-draw 0.35s cubic-bezier(0.65, 0, 0.35, 1) 0.5s forwards;
+}
+.gateway-restart-success-text {
+  font-size: calc(11px * var(--hermes-text-zoom, 1));
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+@keyframes gateway-restart-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(263%); }
+}
+@keyframes gateway-restart-draw { to { stroke-dashoffset: 0; } }
+@keyframes gateway-restart-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gateway-restart-bar { animation: none; width: 100%; opacity: 0.5; }
+  .gateway-restart-success,
+  .gateway-restart-check-ring,
+  .gateway-restart-check-tick { animation: none; stroke-dashoffset: 0; }
 }
 .settings-active-tab {
   border-color: rgba(var(--hermes-ink-rgb),0.24);
@@ -1523,7 +1699,7 @@ body.startup-active .startup-actions #startupConnectButton:not([hidden]):focus-v
   letter-spacing: 0.03em;
   text-transform: uppercase;
 }
-.browser-control-field select {
+.browser-control-field select:not(.branded-select-native) {
   width: 100%;
   min-width: 0;
   height: 40px;
@@ -1575,71 +1751,348 @@ body.startup-active .startup-actions #startupConnectButton:not([hidden]):focus-v
 }
 
 .browser-control-strip[hidden] { display: none; }
+/* Attached-tab status: the same glass card language as the notification toast.
+   Tone (ok / warn / neutral) tints the icon tile and border; everything reads
+   from theme tokens so it holds on every theme in light and dark. */
 .browser-control-strip {
+  --strip-tone: var(--hermes-muted);
   position: relative;
   display: grid;
-  grid-template-columns: 8px minmax(0, 1fr) auto;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 9px;
+  gap: 4px 12px;
   margin: 0 0 10px;
-  padding: 9px 10px;
-  border: 1px solid var(--hermes-line-strong);
-  border-radius: var(--radius);
-  background: var(--hermes-paper);
+  padding: 11px 38px 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--strip-tone) 34%, var(--hermes-line-strong, var(--hermes-ink)));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--hermes-paper) 78%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  backdrop-filter: blur(14px) saturate(1.2);
   color: var(--hermes-ink);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16), 0 1px 0 color-mix(in srgb, var(--hermes-ink) 8%, transparent) inset;
 }
-.browser-control-strip-copy { padding-right: 18px; }
+.browser-control-strip[data-tone="ok"] { --strip-tone: var(--hermes-accent, var(--hermes-ink)); }
+.browser-control-strip[data-tone="warn"] { --strip-tone: #d5a43f; }
 .browser-control-dismiss {
   position: absolute;
-  top: 5px;
-  right: 5px;
-  width: 18px;
-  min-width: 18px;
-  height: 18px;
-  min-height: 18px;
+  top: 8px;
+  right: 8px;
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  min-height: 26px;
   padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: 0;
+  border-radius: 8px;
   background: transparent;
-  color: var(--hermes-ink);
+  color: color-mix(in srgb, var(--hermes-ink) 72%, transparent);
 }
 .browser-control-dismiss:hover,
 .browser-control-dismiss:focus-visible {
-  border: 1px solid var(--hermes-primary-fg, var(--hermes-paper));
-  background: var(--hermes-primary-bg, var(--hermes-ink));
-  color: var(--hermes-primary-fg, var(--hermes-paper));
+  border: 0;
+  background: color-mix(in srgb, var(--hermes-ink) 12%, transparent);
+  color: var(--hermes-ink);
+  outline: none;
 }
 .browser-control-signal {
-  width: 8px;
-  height: 8px;
-  border: 1px solid var(--hermes-ink);
-  border-radius: 999px;
-  background: transparent;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--strip-tone) 22%, transparent);
+  color: color-mix(in srgb, var(--strip-tone) 55%, var(--hermes-ink));
 }
-.browser-control-strip[data-tone="ok"] .browser-control-signal { border-color: var(--hermes-accent); background: var(--hermes-accent); }
-.browser-control-strip[data-tone="warn"] .browser-control-signal { background: var(--hermes-paper); }
-.browser-control-strip-copy { min-width: 0; }
+.browser-control-signal svg { width: 17px; height: 17px; }
+.browser-control-strip-copy { min-width: 0; padding-right: 0; }
 .browser-control-strip-copy strong,
 .browser-control-strip-copy span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.browser-control-strip-copy strong { font: 500 calc(13px * var(--hermes-text-zoom, 1))/1.15 var(--hermes-font-display); }
-.browser-control-strip-copy span { margin-top: 3px; color: var(--hermes-muted); font: calc(10px * var(--hermes-text-zoom, 1))/1.35 var(--hermes-font-mono); }
-.browser-control-strip-actions { justify-content: flex-end; }
-.browser-control-strip-actions .browser-control-action { min-height: 26px; padding: 5px 7px; }
+.browser-control-strip-copy strong {
+  font: 650 calc(13.5px * var(--hermes-text-zoom, 1))/1.25 var(--hermes-font-ui);
+  letter-spacing: 0;
+  color: var(--hermes-ink);
+}
+.browser-control-strip-copy span {
+  margin-top: 2px;
+  color: color-mix(in srgb, var(--hermes-ink) 74%, transparent);
+  font: 400 calc(12px * var(--hermes-text-zoom, 1))/1.4 var(--hermes-font-ui);
+}
+.browser-control-strip-actions { justify-content: flex-end; align-items: center; }
+.browser-control-strip-actions .browser-control-action {
+  min-height: 30px;
+  padding: 5px 12px;
+  border-radius: 10px;
+  font: 600 calc(12px * var(--hermes-text-zoom, 1))/1 var(--hermes-font-ui);
+  letter-spacing: 0;
+  text-transform: none;
+}
 .browser-control-strip-actions .browser-control-action.icon-only {
-  width: 26px;
-  min-width: 26px;
+  width: 30px;
+  min-width: 30px;
   padding: 5px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
-.browser-control-action.icon-only svg:not([hidden]) { display: block; }
+.browser-control-action svg:not([hidden]) { display: block; }
 /* Chromium does not hide SVGs via [hidden] by default; force it. */
-.browser-control-action.icon-only svg[hidden] { display: none !important; }
+.browser-control-action svg[hidden] { display: none !important; }
+
+/* Browser control: live state lighting, not a second source of controller truth. */
+.browser-control-dialog:not([open]) { display: none; }
+.browser-control-dialog {
+  --control-accent: var(--hermes-accent);
+  --control-energy: var(--hermes-muted);
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  width: min(440px, calc(100% - 32px));
+  max-height: calc(100dvh - 32px);
+  box-sizing: border-box;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding: 22px;
+  border: 1px solid color-mix(in srgb, var(--control-energy) 42%, var(--hermes-panel-border));
+  border-radius: 16px;
+  background:
+    radial-gradient(ellipse at 12% 0%, color-mix(in srgb, var(--control-energy) 10%, transparent), transparent 64%),
+    color-mix(in srgb, var(--hermes-paper) 92%, transparent);
+  color: var(--hermes-ink);
+  backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow: 0 18px 56px rgba(var(--hermes-shadow-rgb), 0.24),
+    0 0 28px color-mix(in srgb, var(--control-energy) 12%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--control-energy) 24%, transparent);
+}
+.browser-control-dialog:is([data-state="ready"], [data-state="active"]) { --control-energy: var(--control-accent); }
+html[data-hermes-mode="light"] .browser-control-dialog { --control-accent: color-mix(in srgb, var(--hermes-accent) 35%, var(--hermes-ink)); }
+.browser-control-dialog[data-state="approval"] { --control-energy: var(--danger); }
+.browser-control-flare {
+  position: absolute;
+  inset: 0 22% auto;
+  height: 110px;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(110deg, transparent 22%, color-mix(in srgb, var(--control-accent) 25%, transparent) 48%, transparent 72%);
+  transform: translateX(-35%);
+}
+.browser-control-flare::before, .browser-control-flare::after {
+  content: "";
+  position: absolute;
+  inset: 24px 38px auto auto;
+  width: 12px;
+  height: 12px;
+  background: var(--control-accent);
+  clip-path: polygon(50% 0%, 60% 38%, 100% 50%, 60% 60%, 50% 100%, 40% 60%, 0% 50%, 40% 38%);
+}
+.browser-control-flare::after { inset: 58px 68px auto auto; width: 7px; height: 7px; }
+.browser-control-dialog.is-energized .browser-control-flare { animation: control-flare 650ms cubic-bezier(0.23, 1, 0.32, 1) both; }
+@keyframes control-flare {
+  0% { opacity: 0; transform: translateX(-35%); }
+  25% { opacity: 0.85; }
+  100% { opacity: 0; transform: translateX(35%); }
+}
+.browser-control-dialog .browser-control-strip-copy { position: relative; padding-inline-start: 18px; }
+.browser-control-dialog .browser-control-live-indicator {
+  position: absolute;
+  inset-inline-start: 0;
+  top: 7px;
+  width: 7px;
+  height: 7px;
+  margin: 0;
+  border-radius: 50%;
+  background: var(--control-energy);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--control-energy) 45%, transparent);
+}
+.browser-control-dialog:is([data-state="ready"], [data-state="active"]) .browser-control-live-indicator { animation: control-heartbeat 2.8s ease-in-out infinite; }
+.browser-control-dialog[data-state="active"] .browser-control-live-indicator { animation-duration: 1.6s; }
+@keyframes control-heartbeat { 0%, 100% { opacity: 0.75; } 50% { opacity: 1; } }
+.browser-control-tabs { min-width: 0; margin: 0; padding: 0; border: 0; }
+.browser-control-tabs[hidden] { display: none; }
+.browser-control-tabs legend { margin-block-end: 8px; color: var(--hermes-muted); font-size: calc(12px * var(--hermes-text-zoom, 1)); }
+.browser-control-tab-list {
+  display: grid;
+  gap: 6px;
+  max-height: 152px;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--hermes-muted) transparent;
+}
+.browser-control-tab-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--hermes-line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--hermes-ink) 3%, transparent);
+  color: var(--hermes-ink);
+  font: 400 calc(12px * var(--hermes-text-zoom, 1))/1.4 var(--hermes-font-ui);
+  cursor: pointer;
+}
+.browser-control-tab-option:has(:checked) { border-color: color-mix(in srgb, var(--hermes-accent) 45%, var(--hermes-line)); background: color-mix(in srgb, var(--hermes-accent) 9%, var(--hermes-paper)); }
+.browser-control-tab-option:has(:focus-visible) { outline: 2px solid var(--hermes-accent); outline-offset: -2px; }
+.browser-control-tab-option input { flex: 0 0 16px; width: 16px; height: 16px; min-height: 0; margin: 0; accent-color: var(--control-accent); }
+.browser-control-tab-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browser-control-tab-list::-webkit-scrollbar-thumb {
+  background: rgba(var(--hermes-ink-rgb), 0.45);
+  border: 1px solid var(--hermes-line-strong);
+}
+.browser-control-tab-list::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+@supports selector(::-webkit-scrollbar) {
+  /* Chromium's standardized thin/color properties override branded pseudo-elements. */
+  .browser-control-tab-list { scrollbar-width: auto; scrollbar-color: auto; }
+}
+.browser-control-dialog .browser-control-apply-scope {
+  justify-self: stretch;
+  width: 100%;
+  min-width: 0;
+  justify-content: center;
+}
+.browser-control-apply-scope[aria-busy="true"] { opacity: 0.6; }
+.browser-control-dialog::backdrop {
+  background: rgba(var(--hermes-fg-rgb), 0.22);
+  backdrop-filter: blur(6px);
+}
+.browser-control-dialog.is-pointer-open[open] { animation: control-dialog-enter 180ms cubic-bezier(0.23, 1, 0.32, 1); }
+@keyframes control-dialog-enter { from { opacity: 0; transform: scale(0.98); } to { opacity: 1; transform: none; } }
+.browser-control-energy {
+  position: absolute;
+  inset: 0 18px auto;
+  height: 2px;
+  overflow: hidden;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--control-energy), transparent);
+  opacity: 0.65;
+}
+.browser-control-energy::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 32%;
+  background: linear-gradient(90deg, transparent, var(--hermes-ink), transparent);
+  opacity: 0;
+}
+.browser-control-dialog[data-state="active"] .browser-control-energy::after { animation: control-energy-pass 3.2s linear infinite; }
+@keyframes control-energy-pass {
+  0% { opacity: 0; transform: translateX(-110%); }
+  12% { opacity: 0.85; }
+  65% { opacity: 0.85; }
+  80%, 100% { opacity: 0; transform: translateX(420%); }
+}
+.browser-control-dialog-title {
+  margin: 0 30px 18px 0;
+  font: 500 calc(28px * var(--hermes-text-zoom, 1))/1.1 var(--hermes-font-display);
+  font-synthesis: none;
+  letter-spacing: 0.03em;
+  overflow-wrap: anywhere;
+  outline: none;
+}
+html[data-hermes-font-profile="signature"] .browser-control-dialog-title {
+  font-size: calc(34px * var(--hermes-text-zoom, 1));
+  letter-spacing: 0.04em;
+}
+.browser-control-dialog .browser-control-strip {
+  position: static;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 18px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+.browser-control-dialog .browser-control-strip-copy { gap: 6px; }
+.browser-control-dialog .browser-control-strip-copy strong,
+.browser-control-dialog .browser-control-strip-copy span {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.browser-control-dialog .browser-control-strip-copy strong { font-size: calc(15px * var(--hermes-text-zoom, 1)); }
+.browser-control-dialog .browser-control-strip-copy span { font-size: calc(12px * var(--hermes-text-zoom, 1)); line-height: 1.5; }
+.browser-control-dialog-config {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  padding-block: 16px;
+  border-block: 1px solid var(--hermes-line);
+}
+.browser-control-dialog-config small {
+  color: var(--hermes-muted);
+  font: 400 calc(12px * var(--hermes-text-zoom, 1))/1.45 var(--hermes-font-ui);
+}
+.browser-control-dialog-config .branded-select-button {
+  min-height: 40px;
+  border-radius: 8px;
+  padding-inline: 12px 36px;
+  font: 500 calc(13px * var(--hermes-text-zoom, 1))/1.4 var(--hermes-font-ui);
+  color: var(--hermes-ink);
+  background: rgba(var(--hermes-ink-rgb), 0.035);
+}
+.browser-control-dialog-config .branded-select-option:is([aria-selected="true"], :hover, :focus-visible) {
+  color: var(--hermes-ink);
+  background: color-mix(in srgb, var(--control-accent) 12%, var(--hermes-paper));
+}
+.browser-control-dialog .browser-control-strip-actions {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  justify-content: flex-start;
+  gap: 8px;
+}
+.browser-control-dialog .browser-control-action {
+  min-height: 38px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  gap: 7px;
+  font: 600 calc(13px * var(--hermes-text-zoom, 1))/1.3 var(--hermes-font-ui);
+  letter-spacing: 0;
+  text-transform: none;
+}
+.browser-control-dialog .browser-control-action[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--control-accent) 12%, var(--hermes-paper));
+  border-color: var(--control-accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--control-accent) 36%, transparent);
+}
+.browser-control-dialog .browser-control-action:not(.secondary) {
+  background: var(--hermes-primary-bg, var(--hermes-ink));
+  color: var(--hermes-primary-fg, var(--hermes-paper));
+}
+.browser-control-dialog .browser-control-dismiss { inset: 20px 18px auto auto; }
+.browser-control-dialog .browser-control-dismiss:focus-visible { outline: 2px solid var(--hermes-accent); outline-offset: 2px; }
+.browser-control-tooltip {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: min(300px, calc(100vw - 32px));
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border: 1px solid var(--hermes-line-strong);
+  border-radius: 10px;
+  background: var(--hermes-paper);
+  color: var(--hermes-ink);
+  box-shadow: 0 8px 28px rgba(var(--hermes-shadow-rgb), 0.24);
+  font: 400 calc(12px * var(--hermes-text-zoom, 1))/1.5 var(--hermes-font-ui);
+  letter-spacing: 0;
+  text-transform: none;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .browser-control-dialog.is-pointer-open[open],
+  .browser-control-dialog.is-energized .browser-control-flare,
+  .browser-control-dialog:is([data-state="ready"], [data-state="active"]) .browser-control-live-indicator,
+  .browser-control-dialog[data-state="active"] .browser-control-energy::after { animation: none; }
+}
 @media (max-width: 560px) {
-  .browser-control-strip { grid-template-columns: 8px minmax(0, 1fr); align-items: start; }
+  .browser-control-strip { grid-template-columns: 32px minmax(0, 1fr); align-items: start; }
   .browser-control-strip-copy span {
     overflow: visible;
     text-overflow: clip;
@@ -1962,16 +2415,22 @@ body.startup-active .startup-actions #startupConnectButton:not([hidden]):focus-v
   overflow-x: clip;
   overflow-y: visible;
   box-sizing: border-box;
-  background: color-mix(in srgb, var(--hermes-paper) 44%, transparent);
-  -webkit-backdrop-filter: blur(1.5px) saturate(0.92);
-  backdrop-filter: blur(1.5px) saturate(0.92);
 }
+/* Glass bubbles: one token-driven surface per role. Light stays opaque; dark
+   shows the background art through the fill (the v0.2.0 recipe). */
 .message.user {
-  background: color-mix(in srgb, var(--hermes-paper) 36%, transparent);
+  background: color-mix(in srgb, var(--hermes-user-bg, var(--hermes-blue, #0505e8)) var(--hermes-bubble-user-alpha), transparent);
+  -webkit-backdrop-filter: blur(var(--hermes-bubble-blur)) saturate(var(--hermes-bubble-saturate));
+  backdrop-filter: blur(var(--hermes-bubble-blur)) saturate(var(--hermes-bubble-saturate));
   color: var(--hermes-user-fg);
   border-color: var(--hermes-user-border);
 }
-.message.assistant { background: color-mix(in srgb, var(--hermes-paper) 42%, transparent); color: var(--hermes-ink); }
+.message.assistant {
+  background: color-mix(in srgb, var(--hermes-card-bg, var(--hermes-paper)) var(--hermes-bubble-assistant-alpha), transparent);
+  -webkit-backdrop-filter: blur(var(--hermes-bubble-blur)) saturate(var(--hermes-bubble-saturate));
+  backdrop-filter: blur(var(--hermes-bubble-blur)) saturate(var(--hermes-bubble-saturate));
+  color: var(--hermes-ink);
+}
 .message.system { background: color-mix(in srgb, var(--hermes-system-bg) 48%, transparent); color: var(--hermes-system-fg); border-color: rgba(var(--hermes-accent-rgb),0.46); }
 .message-role { opacity: 0.72; margin-bottom: 7px; }
 .message-content {
@@ -2938,6 +3397,72 @@ html[data-hermes-font-profile="signature"] .web-message-content ol {
 @media (hover: none) {
   .md-code-copy { opacity: 1; }
 }
+.message-content pre code.hljs {
+  --syntax-comment: #52606d;
+  --syntax-keyword: #741b78;
+  --syntax-string: #146b3a;
+  --syntax-number: #9a3b00;
+  --syntax-title: #074f9b;
+  --syntax-meta: #765400;
+  color: var(--hermes-ink);
+}
+html[data-hermes-effective-mode="dark"] .message-content pre code.hljs {
+  --syntax-comment: #aeb8c4;
+  --syntax-keyword: #e6a7ff;
+  --syntax-string: #b9f6ca;
+  --syntax-number: #ffb58a;
+  --syntax-title: #9ecbff;
+  --syntax-meta: #ffe082;
+  color: currentColor;
+}
+.message.user .message-content pre code.hljs {
+  --syntax-comment: color-mix(in srgb, currentColor 92%, var(--hermes-accent));
+  --syntax-keyword: color-mix(in srgb, currentColor 94%, var(--hermes-accent));
+  --syntax-string: color-mix(in srgb, currentColor 90%, var(--hermes-accent));
+  --syntax-number: color-mix(in srgb, currentColor 88%, var(--hermes-accent));
+  --syntax-title: color-mix(in srgb, currentColor 92%, var(--hermes-accent));
+  --syntax-meta: color-mix(in srgb, currentColor 90%, var(--hermes-accent));
+  color: currentColor;
+}
+html[data-hermes-theme^="custom:"] .message.user .message-content pre {
+  background: transparent;
+}
+html[data-hermes-theme^="custom:"] .message-content pre code.hljs,
+html[data-hermes-theme^="custom:"] .message.user .message-content pre code.hljs {
+  --syntax-comment: currentColor;
+  --syntax-keyword: currentColor;
+  --syntax-string: currentColor;
+  --syntax-number: currentColor;
+  --syntax-title: currentColor;
+  --syntax-meta: currentColor;
+}
+.message-content .hljs-comment,
+.message-content .hljs-quote { color: var(--syntax-comment); font-style: italic; }
+.message-content .hljs-keyword,
+.message-content .hljs-selector-tag,
+.message-content .hljs-doctag { color: var(--syntax-keyword); font-weight: 700; }
+.message-content .hljs-string,
+.message-content .hljs-regexp,
+.message-content .hljs-attribute,
+.message-content .hljs-attr { color: var(--syntax-string); }
+.message-content .hljs-number,
+.message-content .hljs-literal,
+.message-content .hljs-symbol,
+.message-content .hljs-bullet { color: var(--syntax-number); }
+.message-content .hljs-punctuation { color: var(--syntax-meta); }
+.message-content .hljs-title,
+.message-content .hljs-section,
+.message-content .hljs-function,
+.message-content .hljs-built_in,
+.message-content .hljs-type,
+.message-content .hljs-tag,
+.message-content .hljs-name { color: var(--syntax-title); }
+.message-content .hljs-meta,
+.message-content .hljs-meta-keyword,
+.message-content .hljs-selector-id,
+.message-content .hljs-selector-class { color: var(--syntax-meta); }
+.message-content .hljs-emphasis { font-style: italic; }
+.message-content .hljs-strong { font-weight: 700; }
 .message-content blockquote {
   margin: 0.7em 0;
   padding: 0.15em 0 0.15em 0.8em;
@@ -3006,6 +3531,55 @@ html[data-hermes-font-profile="signature"] .web-message-content ol {
   overflow: hidden;
 }
 .composer-header > * { min-width: 0; }
+.composer-header .context-chip { flex: 1 1 0; width: auto; margin-bottom: 0; min-height: 26px; }
+.composer-header .context-scope-button { flex: 0 1 auto; max-width: 52%; margin-left: auto; }
+.composer-header .context-chip[hidden] + .context-scope-button { margin-left: auto; }
+.composer { position: relative; }
+.status-stack-toggle {
+  position: absolute;
+  z-index: 5;
+  top: -15px;
+  left: 50%;
+  width: 56px;
+  height: 14px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  transform: translateX(-50%);
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.status-stack-toggle::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 30px;
+  height: 3px;
+  border-radius: 999px;
+  transform: translate(-50%, -50%);
+  background: rgba(var(--hermes-ink-rgb),0.42);
+  transition: background 120ms ease, width 120ms ease, height 120ms ease;
+}
+.status-stack-toggle:hover,
+.status-stack-toggle:focus-visible,
+.status-stack-toggle:active { background: transparent; border-color: transparent; color: inherit; transform: translateX(-50%); }
+.status-stack-toggle:hover::before,
+.status-stack-toggle:focus-visible::before { width: 38px; height: 4px; background: color-mix(in srgb, var(--hermes-ink) 72%, transparent); }
+.status-stack-toggle:active::before { width: 34px; }
+@keyframes statusStackPop {
+  0% { opacity: 0; transform: scale(0.92) translateY(6px); }
+  60% { opacity: 1; transform: scale(1.015) translateY(-1px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+.composer:not(.status-stack-collapsed) #composerStatusStack { animation: statusStackPop 220ms cubic-bezier(0.34, 1.4, 0.64, 1) both; transform-origin: bottom center; }
+@media (prefers-reduced-motion: reduce) { .composer:not(.status-stack-collapsed) #composerStatusStack { animation: none; } }
+.status-stack-toggle:focus-visible { outline: 2px solid var(--hermes-accent, var(--hermes-ink)); outline-offset: -2px; border-radius: 4px; }
+.status-stack-toggle svg { display: none; }
+.composer.status-stack-collapsed #composerStatusStack,
+.composer.status-stack-collapsed #contextPreview,
+.composer.status-stack-collapsed #contextScopeMenu { display: none !important; }
 .composer-label {
   flex: 0 0 auto;
   display: block;
@@ -3144,6 +3718,29 @@ html[data-hermes-font-profile="signature"] .web-message-content ol {
   flex: 0 0 auto;
   display: grid;
   gap: 2px;
+}
+.context-scope-consent-notice {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 5px;
+  margin-bottom: 6px;
+  padding: 8px;
+  border: 1px solid rgba(var(--hermes-accent-rgb),0.42);
+  border-radius: 5px;
+  background: rgba(var(--hermes-accent-rgb),0.1);
+  color: rgba(var(--hermes-fg-rgb),0.9);
+  font-size: 10px;
+  line-height: 1.35;
+}
+.context-scope-consent-notice strong { color: var(--hermes-ink); font-size: 11px; }
+.context-scope-consent-notice > span { color: rgba(var(--hermes-fg-rgb),0.72); }
+.context-scope-menu .context-scope-consent-action {
+  justify-content: center;
+  margin-top: 2px;
+  border: 1px solid rgba(var(--hermes-accent-rgb),0.4);
+  background: rgba(var(--hermes-accent-rgb),0.12);
+  color: var(--hermes-ink);
+  text-align: center;
 }
 .context-scope-search {
   flex: 0 0 auto;
@@ -3704,6 +4301,68 @@ textarea:focus, input:focus, select:focus { border-color: var(--hermes-accent); 
 }
 .composer-actions { margin-top: 8px; display: flex; align-items: center; justify-content: flex-start; gap: 8px; position: relative; flex-wrap: nowrap; min-width: 0; }
 .composer-actions #sendButton { margin-left: auto; flex: 0 0 auto; }
+.composer-actions #browserControlMenuButton {
+  position: relative;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  margin-left: auto;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  color: var(--hermes-ink);
+  background: transparent;
+  box-shadow: none;
+  line-height: 1;
+  transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1), background 120ms ease;
+}
+.composer-actions #browserControlMenuButton svg { display: block; width: 22px; height: 22px; }
+.composer-actions #browserControlMenuButton:hover,
+.composer-actions #browserControlMenuButton[aria-expanded="true"] { background: rgba(var(--hermes-ink-rgb), 0.06); }
+.composer-actions #browserControlMenuButton:active { transform: scale(0.97); }
+.composer-actions #browserControlMenuButton:focus-visible { outline: 2px solid var(--hermes-accent); outline-offset: 2px; }
+.composer-actions #browserControlMenuButton:not([hidden]) + #sendButton { margin-left: 0; }
+.composer-actions:has(.bot-mode-threads-button:not([hidden])) #browserControlMenuButton,
+.composer-actions:has(#pageCommentTrayButton:not([hidden])) #browserControlMenuButton { margin-left: 0; }
+.browser-control-launcher-indicator {
+  position: absolute;
+  inset: 5px 4px auto auto;
+  width: 6px;
+  height: 6px;
+  box-sizing: border-box;
+  border: 1px solid var(--hermes-muted);
+  border-radius: 50%;
+  background: var(--hermes-paper);
+}
+.browser-control-launcher:is([data-state="ready"], [data-state="active"]) .browser-control-launcher-indicator {
+  border-color: var(--ok);
+  background: var(--ok);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--ok) 40%, transparent);
+}
+.browser-control-launcher:is([data-state="unavailable"], [data-state="approval"]) .browser-control-launcher-indicator { border-color: var(--danger); background: var(--danger); }
+.browser-control-launcher[data-state="paused"] .browser-control-launcher-indicator {
+  border: 0;
+  border-radius: 0;
+  background: linear-gradient(to right, currentColor 0 35%, transparent 35% 65%, currentColor 65% 100%);
+}
+.browser-control-launcher.just-enabled::before {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border: 1px solid var(--hermes-accent);
+  border-radius: 50%;
+  pointer-events: none;
+  animation: control-enabled-ring 480ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+@keyframes control-enabled-ring { from { opacity: 0.5; transform: scale(0.8); } to { opacity: 0; transform: scale(1.2); } }
+@media (prefers-reduced-motion: reduce) {
+  .composer-actions #browserControlMenuButton { transition: none; }
+  .composer-actions #browserControlMenuButton:active { transform: none; }
+  .browser-control-launcher.just-enabled::before { display: none; }
+}
 .bot-mode-threads-button,
 .bot-mode-new-thread-button {
   min-width: 0;
@@ -3824,8 +4483,10 @@ button.active-profile-indicator {
   gap: 4px;
   overflow: visible;
   padding: 0 !important;
-  pointer-events: none;
-  cursor: default;
+  /* The room cluster is a control again (BUILD-B B3.4): it opens the room
+     member popover, so it must receive pointer events. */
+  pointer-events: auto;
+  cursor: pointer;
   box-sizing: border-box;
 }
 .profile-switch-menu {
@@ -4059,13 +4720,17 @@ button.active-profile-indicator {
   justify-content: center;
   width: 36px;
   min-width: 36px;
-  padding-inline: 0 !important;
-  font-size: calc(16px * var(--hermes-text-zoom, 1)) !important;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 !important;
   line-height: 1;
 }
 .refresh-glyph {
-  display: inline-block;
-  line-height: 1;
+  display: block;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  transform-box: fill-box;
   transform-origin: 50% 50%;
 }
 .icon-refresh.is-refreshing {
@@ -5314,66 +5979,89 @@ html[data-hermes-theme="nous"][data-hermes-mode="light"] .update-dialog-mark {
   background: var(--hermes-primary-fg, var(--hermes-paper));
   color: var(--hermes-primary-bg, var(--hermes-ink));
 }
+/* Notification toast: a floating glass card docked under the header. One
+   component for every refresh / enable / status message; all colors come from
+   theme tokens so it reads on every theme in light and dark. */
 .operation-toast {
+  --toast-tone: var(--hermes-accent, var(--hermes-ink));
   position: fixed;
   right: auto;
-  bottom: 12px;
+  top: 62px;
+  bottom: auto;
   left: 50%;
   z-index: 120;
   display: grid;
-  grid-template-columns: 6px minmax(0, 1fr) 28px;
+  grid-template-columns: 30px minmax(0, 1fr) 30px;
   align-items: center;
-  gap: 12px;
-  width: min(440px, calc(100% - 24px));
+  gap: 11px;
+  width: min(380px, calc(100% - 24px));
   margin: 0;
-  padding: 12px 14px;
-  border: 1px solid var(--hermes-line-strong);
-  border-radius: 0;
-  background: var(--hermes-paper);
+  padding: 10px 10px 10px 11px;
+  border: 1px solid color-mix(in srgb, var(--toast-tone) 38%, var(--hermes-line-strong, var(--hermes-ink)));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--hermes-paper) 90%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  backdrop-filter: blur(14px) saturate(1.2);
   color: var(--hermes-ink);
-  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.26), 0 1px 0 color-mix(in srgb, var(--hermes-ink) 8%, transparent) inset;
   transform: translateX(-50%);
-  animation: operationToastIn 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: operationToastIn 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
-.operation-toast-signal { width: 4px; height: 100%; min-height: 28px; background: var(--hermes-accent); }
-.operation-toast.warn .operation-toast-signal { background: #d5a43f; }
-.operation-toast.error .operation-toast-signal { background: #df5f56; }
+.operation-toast[hidden] { display: none; }
+.operation-toast.warn { --toast-tone: #d5a43f; }
+.operation-toast.error { --toast-tone: #df5f56; }
+.operation-toast-signal {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--toast-tone) 22%, transparent);
+  /* Mix toward ink so the glyph stays readable on pale accents in light themes. */
+  color: color-mix(in srgb, var(--toast-tone) 55%, var(--hermes-ink));
+}
+.operation-toast-signal svg { width: 17px; height: 17px; display: none; stroke-width: 2.8; }
+.operation-toast:not(.warn):not(.error) .operation-toast-signal .icon-ok,
+.operation-toast.warn .operation-toast-signal .icon-warn,
+.operation-toast.error .operation-toast-signal .icon-error { display: block; }
 .operation-toast strong,
-.operation-toast span { display: block; }
+.operation-toast span:not(.operation-toast-signal) { display: block; }
 .operation-toast strong {
-  font-family: var(--hermes-font-mono);
-  font-size: calc(10px * var(--hermes-text-zoom, 1));
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-family: var(--hermes-font-ui);
+  font-size: calc(13px * var(--hermes-text-zoom, 1));
+  font-weight: 650;
+  line-height: 1.25;
   color: var(--hermes-ink);
 }
 .operation-toast div > span {
-  margin-top: 3px;
-  color: var(--hermes-muted);
-  font-size: calc(11px * var(--hermes-text-zoom, 1));
+  margin-top: 2px;
+  color: color-mix(in srgb, var(--hermes-ink) 74%, transparent);
+  font-size: calc(11.5px * var(--hermes-text-zoom, 1));
   line-height: 1.4;
 }
 .operation-toast button {
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   padding: 0;
-  border: 1px solid var(--hermes-line);
+  border: 0;
+  border-radius: 8px;
   background: transparent;
-  color: var(--hermes-ink);
+  color: color-mix(in srgb, var(--hermes-ink) 72%, transparent);
   cursor: pointer;
   display: grid;
   place-items: center;
-  font-family: var(--hermes-font-mono);
+  font-family: var(--hermes-font-ui);
+  font-size: 18px;
+  line-height: 1;
 }
 .operation-toast button:hover,
 .operation-toast button:focus-visible {
-  background: var(--hermes-primary-bg, var(--hermes-ink));
-  color: var(--hermes-primary-fg, var(--hermes-paper));
-  border-color: var(--hermes-primary-fg, var(--hermes-paper));
+  background: color-mix(in srgb, var(--hermes-ink) 12%, transparent);
+  color: var(--hermes-ink);
+  outline: none;
 }
 @keyframes operationToastIn {
-  from { transform: translate(-50%, 10px); opacity: 0; }
+  from { transform: translate(-50%, -10px); opacity: 0; }
   to { transform: translate(-50%, 0); opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -5714,6 +6402,8 @@ html[data-hermes-theme="nous"][data-hermes-mode="light"] .update-dialog-mark {
 }
 .custom-font-family-field { display: grid; gap: 6px; }
 .custom-font-family-field[hidden] { display: none; }
+.appearance-signature-font-fallback-note { margin: 4px 0 0; color: var(--hermes-muted); font-size: 0.85em; line-height: 1.4; }
+.appearance-signature-font-fallback-note[hidden] { display: none; }
 .appearance-save-status {
   min-height: 1.35em;
   margin: 0;
@@ -7136,24 +7826,38 @@ details.bot-mode-cron-card summary::-webkit-details-marker { display: none; }
 .bot-mode-check-count { flex: 0 0 auto; font: calc(9px * var(--hermes-text-zoom, 1))/1 var(--hermes-font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--hermes-muted); white-space: nowrap; }
 /* Universal iMessage-style conversation. The shared renderer keeps markdown,
    streaming patches, tool activity, task stacks, and generated media intact. */
-.message.user { align-self: flex-end; border-radius: 18px 18px 4px 18px; background: var(--hermes-blue, #0505e8); background: var(--hermes-user-bg, var(--hermes-blue, #0505e8)); color: var(--hermes-user-fg, #fff); border: 1px solid var(--hermes-user-border, transparent); padding: 10px 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
-.message.assistant { align-self: flex-start; border-radius: 18px 18px 18px 4px; background: var(--hermes-card-bg, color-mix(in srgb, var(--hermes-paper) 80%, transparent)); color: var(--hermes-ink, #ffffff); border: 1px solid var(--hermes-line, rgba(255,255,255,0.15)); padding: 12px 16px; -webkit-backdrop-filter: blur(8px) saturate(1.06); backdrop-filter: blur(8px) saturate(1.06); box-shadow: 0 2px 10px rgba(var(--hermes-shadow-rgb, 0, 0, 0), 0.12); }
+.message.user { align-self: flex-end; border-radius: 18px 18px 4px 18px; color: var(--hermes-user-fg, #fff); border: 1px solid var(--hermes-user-border, transparent); padding: 10px 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+.message.assistant { align-self: flex-start; border-radius: 18px 18px 18px 4px; color: var(--hermes-ink, #ffffff); border: 1px solid var(--hermes-line, rgba(255,255,255,0.15)); padding: 12px 16px; box-shadow: 0 2px 10px rgba(var(--hermes-shadow-rgb, 0, 0, 0), 0.12); }
 .message.user .message-role { display: none; }
 /* Transcript transients: the queued-steer row (dashed, user-side) and the
    completion thinking row reuse the message shell so they read as part of the
    thread instead of a composer toast. */
+.message-row[data-role="pending-steer"] { align-items: flex-end; }
 .message.steer-pending-row {
   border-style: dashed;
   border-color: rgba(var(--hermes-accent-rgb), 0.72);
   box-shadow: none;
 }
+/* A steer that has landed: the user's own words, tagged so it reads as a
+   course-correction after the first message rather than a new turn. */
+.message.steer-sent {
+  border-left: 4px solid var(--hermes-accent, #fff);
+  border-radius: 6px 18px 4px 18px;
+}
+.message.steer-sent .message-role {
+  display: block; margin-bottom: 6px;
+  font: 700 calc(9px * var(--hermes-text-zoom, 1))/1 var(--hermes-font-mono);
+  letter-spacing: .14em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--hermes-user-fg, #fff) 78%, transparent);
+}
+.message.steer-sent .message-role::before { content: "\21AA"; margin-right: 6px; letter-spacing: 0; }
 .message.steer-pending-row .message-role {
   display: block;
   font: 700 calc(9px * var(--hermes-text-zoom, 1))/1.3 var(--hermes-font-mono);
-  letter-spacing: .12em;
+  letter-spacing: .14em;
   text-transform: uppercase;
   margin-bottom: 6px;
-  color: color-mix(in srgb, var(--hermes-user-fg, #fff) 76%, transparent);
+  color: color-mix(in srgb, var(--hermes-user-fg, #fff) 78%, transparent);
 }
 /* /btw side-question results: a persistent, dismissible card at the end of the
    transcript so answers outlive the operation toast. Transient — never written
@@ -7253,6 +7957,17 @@ details.bot-mode-cron-card summary::-webkit-details-marker { display: none; }
    compact tracked mono caps, subtle tint, no layout shift vs. the old label. */
 .message.assistant .message-role { font: 700 calc(9px * var(--hermes-text-zoom, 1))/1 var(--hermes-font-mono); letter-spacing: .14em; text-transform: uppercase; margin-bottom: 6px; color: color-mix(in srgb, var(--hermes-ink, #ffffff) 82%, transparent); }
 .message.assistant .message-role::before { content: ''; display: inline-block; width: 5px; height: 5px; margin-right: 6px; border-radius: 50%; background: var(--hermes-accent, var(--hermes-ink, #0505e8)); vertical-align: 1px; }
+/* Solo bot chats: avatar + name in the UI font, no dot, no per-bot color. */
+.message.assistant .message-role:has(.room-avatar) {
+  display: flex; align-items: center; gap: 7px;
+  font: 600 calc(12.5px * var(--hermes-text-zoom, 1))/1.2 var(--hermes-font-ui);
+  letter-spacing: 0; text-transform: none;
+}
+.message.assistant .message-role:has(.room-avatar)::before { content: none; }
+.message.assistant .message-role .room-avatar { width: 20px; height: 20px; flex: 0 0 20px; border-radius: 6px; overflow: hidden; display: inline-grid; place-items: center; }
+.message.assistant .message-role .room-avatar > * { width: 100%; height: 100%; }
+.message.assistant .message-role .room-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.bot-mode-compact .message.assistant .message-role .room-avatar { width: 16px; height: 16px; flex-basis: 16px; }
 /* Roster density (Settings → Agents & Bot Mode): compact shrinks rows and
    drops the preview line so large rosters stay scannable; comfortable keeps
    the 66px rows with preview text (default, no extra class needed). */
@@ -7873,3 +8588,410 @@ html[data-hermes-font-profile="signature"] .bot-mode-sheet-tab {
 @media (prefers-reduced-motion: reduce) {
   .page-annotation-panel * { transition: none; }
 }
+
+/* ---------------------------------------------------------------------------
+   Message rows: bubble plus a quiet action rail (time, restore, edit, copy).
+   The row is the layout wrapper; the article stays the focusable bubble.
+   --------------------------------------------------------------------------- */
+.message-row { position: relative; display: flex; flex-direction: column; min-width: 0; max-width: 100%; }
+.message-row[data-role="user"] { align-items: flex-end; }
+.message-row[data-role="assistant"] { align-items: flex-start; }
+.message-row > .message { align-self: auto; }
+
+.message-rail {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 24px;
+  margin-top: 3px;
+  font: 500 calc(10.5px * var(--hermes-text-zoom, 1))/1 var(--hermes-font-ui);
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--hermes-fg, #fff) 72%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease-out;
+  transition-delay: 150ms; /* grace period while the pointer travels to the rail */
+}
+.message-row[data-role="user"] > .message-rail { justify-content: flex-end; }
+.message-row:hover > .message-rail,
+.message-row:focus-within > .message-rail,
+.message-row.is-pinned > .message-rail { opacity: 1; pointer-events: auto; transition-delay: 0ms; }
+
+/* Left placement: the rail joins the bubble in layout flow, immediately before
+   it with the specified 8px gap. An absolutely pinned rail cannot be
+   bubble-adjacent in both states — measured in Chromium, a row-start pin left a
+   260px gap on a short bubble and a row-end pin overlapped it. The below state
+   keeps the rail's reserved 24px row height. */
+.message-row[data-actions="left"] { flex-direction: row; align-items: flex-end; }
+.message-row[data-role="assistant"][data-actions="left"] { align-items: flex-start; }
+.message-row[data-role="user"][data-actions="left"] { justify-content: flex-end; }
+.message-row[data-actions="left"] > .message-rail {
+  order: -1;
+  position: static;
+  margin: 0 8px 2px 0;
+  flex: 0 0 auto;
+}
+[dir="rtl"] .message-row[data-actions="left"] > .message-rail { margin: 0 0 2px 8px; }
+
+.message-time { padding: 0 6px 0 2px; white-space: nowrap; }
+body.hide-message-times .message-time { display: none; }
+
+.message-action {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+.message-action:hover,
+.message-action:focus-visible {
+  background: color-mix(in srgb, var(--hermes-fg, currentColor) 16%, transparent);
+  color: var(--hermes-fg, currentColor);
+  outline: none;
+}
+.message-action:focus-visible { box-shadow: 0 0 0 1px var(--hermes-accent, currentColor); }
+.message-action:disabled { opacity: .35; cursor: default; }
+.message-action-icon { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.message-action.is-copied { color: var(--hermes-success, #3ecf8e); }
+.message-action.is-copy-failed { color: var(--hermes-danger, #ff6b6b); }
+.message:focus-visible { outline: 1px solid color-mix(in srgb, var(--hermes-accent, #fff) 60%, transparent); outline-offset: 2px; }
+
+/* Day divider: hairline, muted, no pill, not sticky. */
+.message-day-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0;
+  font: 500 calc(10px * var(--hermes-text-zoom, 1))/1 var(--hermes-font-ui);
+  letter-spacing: .02em;
+  color: color-mix(in srgb, var(--hermes-fg, #fff) 66%, transparent);
+}
+.message-day-divider::before,
+.message-day-divider::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: color-mix(in srgb, var(--hermes-fg, #fff) 22%, transparent);
+}
+.message-day-divider-label { white-space: nowrap; }
+
+/* Polish: run grouping, tail corner only on the last bubble of a run, a dark
+   inner highlight on glass, and an entrance for freshly appended bubbles. */
+.message-row.is-run-continuation { margin-top: -6px; }
+.message-row.has-run-next > .message.user,
+.message-row.has-run-next > .message.assistant { border-radius: 18px; }
+html[data-hermes-mode="dark"] .message.user { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05), 0 2px 8px rgba(0, 0, 0, 0.15); }
+html[data-hermes-mode="dark"] .message.assistant { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05), 0 2px 10px rgba(var(--hermes-shadow-rgb, 0, 0, 0), 0.12); }
+@keyframes messageRowEnter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.message-row.is-entering { animation: messageRowEnter 160ms ease-out; }
+
+@media (hover: none) { .message-rail { transition-delay: 0ms; } }
+@media (prefers-reduced-motion: reduce) {
+  .message-rail { transition: none; }
+  .message-row.is-entering { animation: none; }
+}
+
+/* Inline editor (BUILD-A A3) and the restore confirm popover (A4). */
+.message-editor { display: grid; gap: 8px; width: 100%; min-width: 0; }
+.message-editor-input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  resize: none;
+  overflow: hidden;
+  padding: 8px 10px;
+  border: 1px solid var(--hermes-line-strong);
+  border-radius: 8px;
+  background: var(--hermes-input-bg, var(--hermes-paper));
+  color: var(--hermes-ink);
+  font: 400 calc(12px * var(--hermes-text-zoom, 1))/1.46 var(--hermes-font-ui);
+}
+.message-editor-input:focus-visible { outline: 1px solid var(--hermes-accent); outline-offset: 1px; }
+.message-editor-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.message-editor-cancel,
+.message-editor-send {
+  min-height: 28px;
+  padding: 0 12px;
+  border-radius: 6px;
+  border: 1px solid var(--hermes-line-strong);
+  background: transparent;
+  color: var(--hermes-ink);
+  font: 600 calc(11px * var(--hermes-text-zoom, 1))/1 var(--hermes-font-ui);
+  cursor: pointer;
+}
+.message-editor-send { background: var(--hermes-primary-bg); color: var(--hermes-primary-fg); border-color: var(--hermes-primary-bg); }
+.message-row.is-editing > .message-rail { display: none; }
+/* Editing: the bubble spans the row so the editor is never a narrow column. */
+.message-row.is-editing { flex-direction: column; align-items: stretch; }
+.message-row.is-editing > .message { width: 100%; max-width: 100%; align-self: stretch; box-sizing: border-box; }
+.message-row.is-editing .message-editor-input { min-height: 72px; font-size: calc(13px * var(--hermes-text-zoom, 1)); }
+
+/* While a turn is running the rewind actions are hidden (not merely disabled). */
+body.turn-running .message-action-edit,
+body.turn-running .message-action-restore { display: none; }
+
+.message-restore-popover {
+  position: absolute;
+  z-index: 40;
+  inset-inline-start: 0;
+  bottom: calc(100% + 6px);
+  min-width: 220px;
+  max-width: 280px;
+  padding: 10px 12px;
+  border: 1px solid var(--hermes-line-strong);
+  border-radius: 10px;
+  background: var(--hermes-menu-bg, var(--hermes-paper));
+  color: var(--hermes-ink);
+  box-shadow: 0 8px 24px rgba(var(--hermes-shadow-rgb, 0, 0, 0), 0.28);
+  display: grid;
+  gap: 8px;
+}
+.message-restore-popover[hidden] { display: none; }
+.message-restore-popover.is-below { bottom: auto; top: calc(100% + 6px); }
+.message-row[data-role="user"] .message-restore-popover { inset-inline-start: auto; inset-inline-end: 0; }
+.message-restore-text { font: 500 calc(11.5px * var(--hermes-text-zoom, 1))/1.4 var(--hermes-font-ui); }
+.message-restore-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.message-restore-cancel,
+.message-restore-confirm {
+  min-height: 28px;
+  padding: 0 12px;
+  border-radius: 6px;
+  border: 1px solid var(--hermes-line-strong);
+  background: transparent;
+  color: var(--hermes-ink);
+  font: 600 calc(11px * var(--hermes-text-zoom, 1))/1 var(--hermes-font-ui);
+  cursor: pointer;
+}
+.message-restore-confirm { background: var(--hermes-primary-bg); color: var(--hermes-primary-fg); border-color: var(--hermes-primary-bg); }
+
+/* ---------------------------------------------------------------------------
+   Bot Mode rooms: identity header, live presence strip, live bubble, popover.
+   --------------------------------------------------------------------------- */
+.message-row.room-message > .message.assistant {
+  position: relative;
+  padding-left: 16px;
+  /* Premium room card: a full-card hairline in the speaker colour (a color-mix
+     of --bot-bar, not a solid bar) plus a soft coloured glow on the leading
+     edge. No floating inset stripe: the border follows the card radius and the
+     colour fades across the edge instead of stopping at the text block. */
+  border-color: color-mix(in srgb, var(--bot-bar, var(--hermes-ink, #fff)) 42%, transparent);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--bot-bar, var(--hermes-ink, #fff)) 18%, transparent) 0, transparent 22%),
+    linear-gradient(color-mix(in srgb, var(--bot-tint, transparent) 7%, transparent), color-mix(in srgb, var(--bot-tint, transparent) 7%, transparent)),
+    color-mix(in srgb, var(--hermes-card-bg, var(--hermes-paper)) var(--hermes-bubble-assistant-alpha, 100%), transparent);
+  box-shadow:
+    0 2px 10px rgba(var(--hermes-shadow-rgb, 0, 0, 0), 0.12),
+    -10px 0 22px -17px color-mix(in srgb, var(--bot-bar, var(--hermes-ink, #fff)) 60%, transparent);
+}
+.message-row.room-message .message-role {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 6px;
+  font: 600 calc(12.5px * var(--hermes-text-zoom, 1))/1.2 var(--hermes-font-ui);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--bot-ink, var(--hermes-ink, #fff));
+}
+.message-row.room-message .message-role::before { content: none; }
+.message-row.room-message .room-avatar { width: 20px; height: 20px; flex: 0 0 20px; border-radius: 6px; overflow: hidden; display: inline-grid; place-items: center; }
+.message-row.room-message .room-avatar > * { width: 100%; height: 100%; }
+.message-row.room-message .room-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.message-row.room-message.is-run-continuation .message-role { display: none; }
+html[data-hermes-mode="light"] .message-row.room-message > .message.assistant {
+  border-color: color-mix(in srgb, var(--bot-bar, var(--hermes-ink, #fff)) 40%, transparent);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--bot-bar, var(--hermes-ink, #fff)) 13%, transparent) 0, transparent 22%),
+    linear-gradient(color-mix(in srgb, var(--bot-tint, transparent) 6%, transparent), color-mix(in srgb, var(--bot-tint, transparent) 6%, transparent)),
+    var(--hermes-card-bg, var(--hermes-paper));
+}
+
+.group-presence { display: grid; gap: 4px; padding: 6px 10px 4px; }
+.group-presence[hidden] { display: none; }
+.group-presence-chips { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; overflow: hidden; }
+.presence-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 2px 8px 2px 2px;
+  border-radius: 999px;
+  font: 500 calc(11px * var(--hermes-text-zoom, 1))/1 var(--hermes-font-ui);
+  color: var(--hermes-ink);
+  background: color-mix(in srgb, var(--hermes-ink) 6%, transparent);
+  transition: opacity 200ms ease-out;
+}
+.presence-chip[data-state="queued"] { opacity: .45; }
+.presence-chip[data-state="replied"] { opacity: .7; }
+.presence-chip[data-state="passed"] { opacity: .45; }
+.presence-chip[data-state="failed"] { color: var(--hermes-danger, #ff6b6b); }
+.presence-chip .presence-avatar { width: 22px; height: 22px; border-radius: 50%; overflow: hidden; box-shadow: 0 0 0 2px transparent; flex: 0 0 auto; display: inline-grid; place-items: center; }
+.presence-chip .presence-avatar > * { width: 100%; height: 100%; }
+.presence-chip .presence-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.presence-chip .presence-micro { font-size: calc(9px * var(--hermes-text-zoom, 1)); opacity: .7; }
+.presence-chip[data-state="working"] .presence-avatar,
+.presence-chip[data-state="typing"] .presence-avatar,
+.presence-chip[data-state="tool"] .presence-avatar { box-shadow: 0 0 0 2px var(--bot-bar); animation: presencePulse 1.4s ease-in-out infinite; }
+.group-presence-status { font: 500 calc(10.5px * var(--hermes-text-zoom, 1))/1.3 var(--hermes-font-ui); color: color-mix(in srgb, var(--hermes-ink) 62%, transparent); }
+
+/* Failure notice: a slim rounded inline alert that replaces the old cramped
+   bordered "NAME FAILED" chip. Amber-tinted, warning icon, the member's avatar
+   at chip size, the name in its own colour, and a short mapped reason. */
+.presence-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  padding: 5px 10px 5px 8px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--hermes-warning, #a96800) 38%, transparent);
+  background: color-mix(in srgb, var(--hermes-warning, #a96800) 14%, var(--hermes-card-bg, var(--hermes-paper)));
+  color: var(--hermes-ink);
+  font: 500 calc(11px * var(--hermes-text-zoom, 1))/1.15 var(--hermes-font-ui);
+  cursor: pointer;
+  transition: background 160ms ease-out;
+}
+.presence-notice:hover,
+.presence-notice:focus-visible { background: color-mix(in srgb, var(--hermes-warning, #a96800) 22%, var(--hermes-card-bg, var(--hermes-paper))); outline: none; }
+.presence-notice-icon { display: inline-grid; place-items: center; flex: 0 0 auto; color: var(--hermes-warning, #a96800); }
+.presence-notice .presence-avatar { width: 22px; height: 22px; border-radius: 50%; overflow: hidden; flex: 0 0 auto; display: inline-grid; place-items: center; box-shadow: 0 0 0 2px color-mix(in srgb, var(--hermes-warning, #a96800) 30%, transparent); }
+.presence-notice .presence-avatar > * { width: 100%; height: 100%; }
+.presence-notice-copy { display: inline-flex; flex-direction: column; min-width: 0; gap: 1px; }
+.presence-notice-line { font-weight: 700; color: var(--bot-ink, var(--hermes-ink)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.presence-notice-reason { font-size: calc(10px * var(--hermes-text-zoom, 1)); opacity: .72; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.presence-notice-retry {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--hermes-warning, #a96800) 55%, transparent);
+  background: color-mix(in srgb, var(--hermes-warning, #a96800) 16%, transparent);
+  color: var(--hermes-ink);
+  font: 700 calc(10.5px * var(--hermes-text-zoom, 1))/1 var(--hermes-font-ui);
+  cursor: pointer;
+  transition: background 140ms ease-out, opacity 140ms ease-out;
+}
+.presence-notice-retry:hover:not(:disabled),
+.presence-notice-retry:focus-visible { background: color-mix(in srgb, var(--hermes-warning, #a96800) 30%, transparent); outline: none; }
+.presence-notice-retry:disabled { opacity: .5; cursor: default; }
+@keyframes presencePulse {
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--bot-bar) 35%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .presence-chip .presence-avatar { animation: none !important; }
+}
+@media (max-width: 380px) {
+  .presence-chip .presence-name { display: none; }
+  .presence-chip { padding: 2px; }
+}
+
+.room-event-line {
+  align-self: center;
+  max-width: 100%;
+  margin: 2px auto;
+  text-align: center;
+  font: 500 calc(10.5px * var(--hermes-text-zoom, 1))/1.4 var(--hermes-font-ui);
+  color: color-mix(in srgb, var(--hermes-ink) 55%, transparent);
+}
+.message-row.is-live > .message { opacity: .96; }
+.room-live-dots { display: inline-flex; align-items: center; gap: 3px; }
+.room-live-dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--bot-bar, var(--hermes-accent));
+  display: inline-block;
+  animation: groupTypingBounce 1.2s infinite ease-in-out;
+}
+.room-live-dots i:nth-child(2) { animation-delay: 0.2s; }
+.room-live-dots i:nth-child(3) { animation-delay: 0.4s; }
+
+.room-member-popover {
+  position: absolute;
+  z-index: 74;
+  inset-inline-start: 0;
+  bottom: calc(100% + 8px);
+  width: min(320px, calc(100vw - 24px));
+  max-height: 60vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--hermes-line-strong);
+  border-radius: 12px;
+  background: var(--hermes-menu-bg, var(--hermes-paper));
+  color: var(--hermes-ink);
+  box-shadow: 0 -12px 30px rgba(var(--hermes-shadow-rgb), 0.26);
+}
+.room-member-popover[hidden] { display: none; }
+.room-member-popover-card { display: flex; flex-direction: column; min-height: 0; }
+.room-member-popover-title { padding: 10px 12px 8px; font: 700 calc(11px * var(--hermes-text-zoom, 1))/1 var(--hermes-font-ui); letter-spacing: .06em; text-transform: uppercase; color: var(--hermes-muted); }
+.room-member-popover-list { display: grid; gap: 2px; overflow-y: auto; padding: 2px 6px 6px; }
+.room-member-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: start;
+}
+.room-member-actions { display: inline-flex; align-items: center; gap: 6px; }
+.room-member-row:hover,
+.room-member-row:focus-visible { background: rgba(var(--hermes-fg-rgb), 0.08); outline: none; }
+.room-member-avatar { width: 24px; height: 24px; border-radius: 6px; overflow: hidden; display: inline-grid; place-items: center; }
+.room-member-avatar > * { width: 100%; height: 100%; }
+.room-member-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 calc(12px * var(--hermes-text-zoom, 1))/1.2 var(--hermes-font-ui); color: var(--bot-ink, var(--hermes-ink)); }
+.room-member-model { grid-column: 2; font: 400 calc(10px * var(--hermes-text-zoom, 1))/1.3 var(--hermes-font-mono); color: color-mix(in srgb, var(--hermes-ink) 62%, transparent); }
+.room-member-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--hermes-accent); }
+.room-member-change {
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--hermes-primary-bg);
+  background: var(--hermes-primary-bg);
+  color: var(--hermes-primary-fg);
+  font: 600 calc(10.5px * var(--hermes-text-zoom, 1))/1 var(--hermes-font-ui);
+  cursor: pointer;
+}
+.room-member-change:hover:not(:disabled),
+.room-member-change:focus-visible { background: var(--hermes-primary-fg); color: var(--hermes-primary-bg); border-color: var(--hermes-primary-bg); outline: none; }
+.room-member-change:disabled { opacity: .45; cursor: default; }
+.room-member-popover-note { margin: 0; padding: 8px 12px 10px; border-top: 1px solid rgba(var(--hermes-fg-rgb), 0.12); font: 400 calc(10px * var(--hermes-text-zoom, 1))/1.4 var(--hermes-font-ui); color: color-mix(in srgb, var(--hermes-ink) 62%, transparent); }
+
+/* Compact density (body.bot-mode-compact) shrinks room headers, chips, and rows. */
+body.bot-mode-compact .message-row.room-message .message-role { font-size: calc(11px * var(--hermes-text-zoom, 1)); }
+body.bot-mode-compact .message-row.room-message .room-avatar { width: 16px; height: 16px; flex-basis: 16px; }
+body.bot-mode-compact .presence-chip { font-size: calc(10px * var(--hermes-text-zoom, 1)); }
+body.bot-mode-compact .room-member-row { min-height: 32px; }
+
+/* Room @mentions: bot ink when known, theme accent otherwise; tinted chip so a
+   routed mention reads at a glance in every theme and mode. */
+.room-mention {
+  --_mention: var(--mention-ink, var(--hermes-accent, currentColor));
+  color: var(--_mention);
+  font-weight: 600;
+  padding: 0 .28em;
+  margin: 0 -.06em;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--_mention) 16%, transparent);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+html[data-hermes-mode="light"] .room-mention { background: color-mix(in srgb, var(--_mention) 12%, transparent); }
+.message.user .room-mention { color: inherit; background: color-mix(in srgb, currentColor 18%, transparent); }
+@media (forced-colors: active) { .room-mention { color: LinkText; background: transparent; } }

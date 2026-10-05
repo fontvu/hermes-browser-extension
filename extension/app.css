@@ -433,6 +433,9 @@ html[data-hermes-theme^="custom:"] [tabindex]:focus-visible {
 .web-message.assistant .web-message-role { color: var(--hermes-blue); }
 .web-message.user { align-self: flex-end; border-color: var(--hermes-blue); border-radius: 18px 18px 4px 18px; background: var(--hermes-blue); color: var(--hermes-white); }
 .web-message.user .web-message-role { display: none; }
+.web-message.user.steer-sent { border-left: 3px solid var(--hermes-white); border-radius: 6px 18px 4px 18px; }
+.web-message.user.steer-sent .web-message-role { display: block; margin-bottom: 6px; color: var(--hermes-white); opacity: .8; }
+.web-message.user.steer-sent .web-message-role::before { content: "\21AA"; font-size: 1.25em; letter-spacing: 0; }
 .web-message-content { min-width: 0; color: currentColor; font: calc(14px * var(--hermes-text-zoom, 1))/1.65 var(--hermes-font-ui); overflow-wrap: anywhere; }
 .web-message-content a { color: currentColor; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .web-message-content > :first-child { margin-top: 0; }
@@ -489,6 +492,75 @@ html[data-hermes-font-profile="cinzel"] .web-message-content :is(h1, h2, h3, h4,
   .md-code-copy { opacity: 1; }
 }
 .web-message-content code { font-family: var(--hermes-font-mono); }
+.web-message-content pre code.hljs {
+  --syntax-comment: #52606d;
+  --syntax-keyword: #741b78;
+  --syntax-string: #146b3a;
+  --syntax-number: #9a3b00;
+  --syntax-title: #074f9b;
+  --syntax-meta: #765400;
+  color: var(--hermes-ink);
+}
+html[data-hermes-effective-mode="dark"] .web-message-content pre code.hljs {
+  --syntax-comment: #aeb8c4;
+  --syntax-keyword: #e6a7ff;
+  --syntax-string: #b9f6ca;
+  --syntax-number: #ffb58a;
+  --syntax-title: #9ecbff;
+  --syntax-meta: #ffe082;
+  color: currentColor;
+}
+.web-message.user .web-message-content pre code.hljs {
+  --syntax-comment: color-mix(in srgb, currentColor 92%, var(--hermes-accent));
+  --syntax-keyword: color-mix(in srgb, currentColor 94%, var(--hermes-accent));
+  --syntax-string: color-mix(in srgb, currentColor 90%, var(--hermes-accent));
+  --syntax-number: color-mix(in srgb, currentColor 88%, var(--hermes-accent));
+  --syntax-title: color-mix(in srgb, currentColor 92%, var(--hermes-accent));
+  --syntax-meta: color-mix(in srgb, currentColor 90%, var(--hermes-accent));
+  color: currentColor;
+}
+html[data-hermes-theme^="custom:"] .web-message.user {
+  color: var(--hermes-on-primary);
+}
+html[data-hermes-theme^="custom:"] .web-message.user .web-message-content pre {
+  background: transparent;
+}
+html[data-hermes-theme^="custom:"] .web-message-content pre code.hljs,
+html[data-hermes-theme^="custom:"] .web-message.user .web-message-content pre code.hljs {
+  --syntax-comment: currentColor;
+  --syntax-keyword: currentColor;
+  --syntax-string: currentColor;
+  --syntax-number: currentColor;
+  --syntax-title: currentColor;
+  --syntax-meta: currentColor;
+}
+.web-message-content .hljs-comment,
+.web-message-content .hljs-quote { color: var(--syntax-comment); font-style: italic; }
+.web-message-content .hljs-keyword,
+.web-message-content .hljs-selector-tag,
+.web-message-content .hljs-doctag { color: var(--syntax-keyword); font-weight: 700; }
+.web-message-content .hljs-string,
+.web-message-content .hljs-regexp,
+.web-message-content .hljs-attribute,
+.web-message-content .hljs-attr { color: var(--syntax-string); }
+.web-message-content .hljs-number,
+.web-message-content .hljs-literal,
+.web-message-content .hljs-symbol,
+.web-message-content .hljs-bullet { color: var(--syntax-number); }
+.web-message-content .hljs-punctuation { color: var(--syntax-meta); }
+.web-message-content .hljs-title,
+.web-message-content .hljs-section,
+.web-message-content .hljs-function,
+.web-message-content .hljs-built_in,
+.web-message-content .hljs-type,
+.web-message-content .hljs-tag,
+.web-message-content .hljs-name { color: var(--syntax-title); }
+.web-message-content .hljs-meta,
+.web-message-content .hljs-meta-keyword,
+.web-message-content .hljs-selector-id,
+.web-message-content .hljs-selector-class { color: var(--syntax-meta); }
+.web-message-content .hljs-emphasis { font-style: italic; }
+.web-message-content .hljs-strong { font-weight: 700; }
 .web-message-content img { max-width: 100%; border: 1px solid currentColor; }
 .user-message-images {
   display: grid;
@@ -811,6 +883,8 @@ html[data-hermes-font-profile="cinzel"] .web-message-content :is(h1, h2, h3, h4,
 .web-settings-dialog #settingsCustomFontFamilyInput { width: 100%; min-width: 0; }
 .settings-custom-font-family-field { min-width: 0; }
 .settings-appearance-save-status { min-height: 1.45em; margin: 0; color: var(--hermes-muted); font: var(--fulltab-label-size)/1.45 var(--hermes-font-mono); }
+.settings-signature-font-fallback-note { margin: 4px 0 0; color: var(--hermes-muted); font: var(--fulltab-label-size)/1.45 var(--hermes-font-mono); }
+.settings-signature-font-fallback-note[hidden] { display: none; }
 
 .custom-theme-card-shell { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto; min-width: 0; border: 1px solid var(--hermes-line); background: var(--hermes-paper); }
 .custom-theme-card-shell.selected { border-color: var(--hermes-accent); box-shadow: inset 0 0 0 1px var(--hermes-accent); }
@@ -1148,3 +1222,167 @@ html[dir="rtl"] .bot-mode-rail .bot-mode-row { text-align: right; }
 .bot-mode-rail .face-stack > span { position: absolute; left: calc(var(--i) * 9px); top: calc(var(--i) * 2px); width: 24px; height: 24px; border-radius: 8px; background: #fff; box-shadow: 0 0 0 2px var(--hermes-app-bg); overflow: hidden; display: grid; place-items: center; }
 .bot-mode-rail .face-stack svg { width: 100%; height: 100%; display: block; }
 .bot-mode-rail .room-pill { padding: 2px 6px; border: 1px solid currentColor; font: calc(7px * var(--hermes-text-zoom, 1))/1 var(--hermes-font-mono); letter-spacing: .08em; text-transform: uppercase; border-radius: 2px; }
+
+/* ---------------------------------------------------------------------------
+   Full-tab message parity (M-A5). The full tab reuses the shared
+   message-thread-ui / message-actions / message-meta modules, so the row,
+   rail, time, day divider, run grouping, entrance, and dark glass mirror the
+   side panel's block. Edit and restore stay off here: the full tab does not
+   send through the dashboard WebSocket prompt.submit truncation path, so
+   canRewind stays false and those icons are never built.
+   --------------------------------------------------------------------------- */
+:root {
+  --hermes-bubble-user-alpha: 100%;
+  --hermes-bubble-assistant-alpha: 100%;
+  --hermes-bubble-blur: 0px;
+  --hermes-bubble-saturate: 1;
+}
+html[data-hermes-mode="dark"] {
+  --hermes-bubble-user-alpha: 32%;
+  --hermes-bubble-assistant-alpha: 30%;
+  --hermes-bubble-blur: 3px;
+  --hermes-bubble-saturate: 1.04;
+}
+@media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  :root,
+  html[data-hermes-mode="dark"] {
+    --hermes-bubble-user-alpha: 100%;
+    --hermes-bubble-assistant-alpha: 100%;
+    --hermes-bubble-blur: 0px;
+  }
+}
+
+/* Dark glass only: light mode keeps the theme's opaque card and bubble fills. */
+html[data-hermes-mode="dark"] .message-row > .message.user {
+  background: color-mix(in srgb, var(--hermes-user-bg, var(--hermes-blue)) var(--hermes-bubble-user-alpha), transparent);
+  -webkit-backdrop-filter: blur(var(--hermes-bubble-blur)) saturate(var(--hermes-bubble-saturate));
+  backdrop-filter: blur(var(--hermes-bubble-blur)) saturate(var(--hermes-bubble-saturate));
+}
+html[data-hermes-mode="dark"] .message-row > .message.assistant {
+  background: color-mix(in srgb, var(--hermes-card-bg, var(--hermes-paper)) var(--hermes-bubble-assistant-alpha), transparent);
+  -webkit-backdrop-filter: blur(var(--hermes-bubble-blur)) saturate(var(--hermes-bubble-saturate));
+  backdrop-filter: blur(var(--hermes-bubble-blur)) saturate(var(--hermes-bubble-saturate));
+}
+html[data-hermes-mode="dark"] .message-row > .message.system {
+  background: color-mix(in srgb, var(--hermes-paper) 48%, transparent);
+}
+html[data-hermes-mode="dark"] .message-row > .message.user,
+html[data-hermes-mode="dark"] .message-row > .message.assistant {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
+}
+
+.message-row { position: relative; display: flex; flex-direction: column; min-width: 0; max-width: 100%; }
+.message-row[data-role="user"] { align-items: flex-end; }
+.message-row[data-role="assistant"] { align-items: flex-start; }
+.message-row > .message { align-self: auto; }
+
+.message-rail {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 24px;
+  margin-top: 3px;
+  font: 500 calc(10.5px * var(--hermes-text-zoom, 1))/1 var(--hermes-font-ui);
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--hermes-fg, #fff) 72%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease-out;
+  transition-delay: 150ms; /* grace period while the pointer travels to the rail */
+}
+.message-row[data-role="user"] > .message-rail { justify-content: flex-end; }
+.message-row:hover > .message-rail,
+.message-row:focus-within > .message-rail,
+.message-row.is-pinned > .message-rail { opacity: 1; pointer-events: auto; transition-delay: 0ms; }
+
+.message-row[data-actions="left"] { flex-direction: row; align-items: flex-end; }
+.message-row[data-role="assistant"][data-actions="left"] { align-items: flex-start; }
+.message-row[data-role="user"][data-actions="left"] { justify-content: flex-end; }
+.message-row[data-actions="left"] > .message-rail {
+  order: -1;
+  position: static;
+  margin: 0 8px 2px 0;
+  flex: 0 0 auto;
+}
+[dir="rtl"] .message-row[data-actions="left"] > .message-rail { margin: 0 0 2px 8px; }
+
+.message-time { padding: 0 6px 0 2px; white-space: nowrap; }
+body.hide-message-times .message-time { display: none; }
+
+.message-action {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+.message-action:hover,
+.message-action:focus-visible {
+  background: color-mix(in srgb, var(--hermes-fg, currentColor) 16%, transparent);
+  color: var(--hermes-fg, currentColor);
+  outline: none;
+}
+.message-action:focus-visible { box-shadow: 0 0 0 1px var(--hermes-accent, currentColor); }
+.message-action:disabled { opacity: .35; cursor: default; }
+.message-action-icon { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.message-action.is-copied { color: var(--hermes-success, #3ecf8e); }
+.message-action.is-copy-failed { color: var(--hermes-danger, #ff6b6b); }
+.message:focus-visible { outline: 1px solid color-mix(in srgb, var(--hermes-accent, #fff) 60%, transparent); outline-offset: 2px; }
+
+/* Day divider: hairline, muted, no pill, not sticky. */
+.message-day-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0;
+  font: 500 calc(10px * var(--hermes-text-zoom, 1))/1 var(--hermes-font-ui);
+  letter-spacing: .02em;
+  color: color-mix(in srgb, var(--hermes-fg, #fff) 66%, transparent);
+}
+.message-day-divider::before,
+.message-day-divider::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: color-mix(in srgb, var(--hermes-fg, #fff) 22%, transparent);
+}
+.message-day-divider-label { white-space: nowrap; }
+
+/* Polish: run grouping, tail corner only on the last bubble of a run, entrance. */
+.message-row.is-run-continuation { margin-top: -6px; }
+.message-row.has-run-next > .message.user,
+.message-row.has-run-next > .message.assistant { border-radius: 18px; }
+@keyframes messageRowEnter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.message-row.is-entering { animation: messageRowEnter 160ms ease-out; }
+
+@media (hover: none) { .message-rail { transition-delay: 0ms; } }
+@media (prefers-reduced-motion: reduce) {
+  .message-rail { transition: none; }
+  .message-row.is-entering { animation: none; }
+}
+
+/* Room @mentions: bot ink when known, theme accent otherwise; tinted chip so a
+   routed mention reads at a glance in every theme and mode. */
+.room-mention {
+  --_mention: var(--mention-ink, var(--hermes-accent, currentColor));
+  color: var(--_mention);
+  font-weight: 600;
+  padding: 0 .28em;
+  margin: 0 -.06em;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--_mention) 16%, transparent);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+html[data-hermes-mode="light"] .room-mention { background: color-mix(in srgb, var(--_mention) 12%, transparent); }
+.message.user .room-mention { color: inherit; background: color-mix(in srgb, currentColor 18%, transparent); }
+@media (forced-colors: active) { .room-mention { color: LinkText; background: transparent; } }
