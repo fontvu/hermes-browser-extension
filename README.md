@@ -20,12 +20,16 @@ Browser-native side panel for [Hermes Agent](https://hermes-agent.nousresearch.c
 
 Hermes Browser Extension is not a browser chatbot. It is a Chrome/Edge/Chromium side panel for the real Hermes Agent runtime. Choose a local gateway, attach to a signed-in Hermes Cloud agent tab, or connect to a self-hosted remote API/dashboard. Local and remote API connections can use the models, tools, skills, sessions, memory, and MCP servers already configured in Hermes; Cloud and dashboard-ticket connections are intentionally Chat-only.
 
-- **Bot Mode** brings your Hermes agent roster into the panel: switch agents, edit profiles, and run group chats where several agents reply in one room.
+- **Bot Mode** brings your Hermes agent roster into the panel: switch agents, edit profiles, and run group chats where several agents reply in one room. **Current group-chat limitation:** page-context delivery is not yet reliable; do not assume group bots can see the active page. Hermes Control is not shown in group chats. Individual bot chats retain their existing page-context and control behavior. Chat-only and remote group turns do not capture page context.
+- **File attachments** show one card per file per message. Open previews the file, Open on computer reveals the original file's containing folder through local Hermes, and Save downloads a copy.
+- **Tab screenshot** stages the visible, approved page as an image attachment when you choose it from the attachment menu. Screenshots are never captured automatically.
 - **Browser Control** changes which tabs a turn reads from the composer: This tab, Selected tabs, or a Task set of tabs you pick explicitly.
 - **Message tools**: Copy, Edit, and Restore checkpoint on supported turns, with day dividers, message times, and theme-aware bubbles.
+- **Reasoning effort**: a slider with tick marks, or buttons if you prefer. The choice is remembered. In a group chat each bot keeps its own effort.
 - **Hermes Assist** drafts beside supported text composers and never sends, posts, or submits for you.
 - **Page comments**: pick an element, write a note, and queue pins beside Ask Hermes.
-- **Appearance**: Light, Dark, or System mode, nine themes, text zoom, and a font list. Nous Light is a white theme with Nous Blue accents.
+- **Settings**: a category home opens one section at a time, with Back navigation, edited-category markers, and direct links from related controls.
+- **Appearance**: Light, Dark, or System mode, twelve themes, text zoom, and a font list. Everforest has forest greens and warm parchment; Classic Hermes has amber gold and navy; Anti-Nous has crimson, navy reading panels, and fine gold trim. Nous Light keeps its white shell and Nous Blue accents. Centered background artwork changes when you open the panel and scales with its width; sidecar illustrations rotate independently.
 
 
 The full list of changes per version lives in the [changelog](./CHANGELOG.md) and the [releases](https://github.com/abundantbeing/hermes-browser-extension/releases).
@@ -38,7 +42,7 @@ Screenshots use the Mono theme in Dark mode.
 | --- | --- | --- |
 | <img src="./assets/readme/hermes-browser-sidepanel.png" alt="Hermes Browser side panel in Mono Dark, answering a question about the attached page" width="300" /> | <img src="./assets/readme/hermes-browser-bot-chats.png" alt="Bot Mode group chat with four demo agents replying in one room" width="300" /> | <img src="./assets/readme/hermes-browser-bot-profile.png" alt="Bot Mode profile editor with avatar, display title, and description" width="300" /> |
 | Theme settings | Local agents | Hermes Control |
-| <img src="./assets/readme/hermes-browser-theme-settings.png" alt="Appearance settings with color mode, text zoom, and the nine theme previews" width="300" /> | <img src="./assets/readme/hermes-browser-local-agents.png" alt="Agent Profile settings listing the verified agents from the connected gateway" width="300" /> | <img src="./assets/readme/hermes-browser-control.png" alt="Hermes Control dialog with scope, stay or follow, and turn off controls" width="300" /> |
+| <img src="./assets/readme/hermes-browser-theme-settings.png" alt="Appearance settings with color mode, text zoom, and built-in theme previews" width="300" /> | <img src="./assets/readme/hermes-browser-local-agents.png" alt="Agent Profile settings listing the verified agents from the connected gateway" width="300" /> | <img src="./assets/readme/hermes-browser-control.png" alt="Hermes Control dialog with scope, stay or follow, and turn off controls" width="300" /> |
 
 ## Requirements
 
@@ -180,6 +184,12 @@ Fix:
 3. On the Hermes Browser Extension card, click **Reload**.
 4. If it still shows an older version, click **Remove**, then **Load unpacked** again and select the fresh v0.3.4 `dist/` folder.
 5. Click **service worker** / **Inspect views** only for debugging; it is not the version source.
+
+### Skills or profiles do not load
+
+Startup shows Skills and Profiles separately. If either catalog stalls, the panel reports a fallback instead of waiting indefinitely; chat still requires a working connection and session binding. A connected gateway does not guarantee that its catalog routes are working.
+
+After the Hermes backend is responding again, reopen the panel or use **Test connection** to retry. Existing skills and profiles are not deleted by a catalog timeout.
 
 ### Filing a support issue
 

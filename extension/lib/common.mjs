@@ -14,7 +14,9 @@ import { CONNECTION_SCHEMA_VERSION, CONNECTION_TRANSPORTS } from './connection-m
 import { canFlushQueuedTurn } from './run-control-lifecycle.mjs';
 import { hermesContextForModel, HERMES_DEFAULT_FALLBACK_CONTEXT } from './hermes-context-windows.mjs';
 import { contextFromHermesRegistry } from './hermes-context-sync.mjs';
-export { redactSensitiveText };
+import { shouldAttachBrowserContextToBotTurn, resolveBotBrowserContext, prepareTabScreenshotAttachment, screenshotAttachParams } from './bot-browser-bridge.mjs';
+import { formatGroupTurnWithBrowserContext } from './group-turn-context.mjs';
+export { redactSensitiveText, shouldAttachBrowserContextToBotTurn, resolveBotBrowserContext, prepareTabScreenshotAttachment, screenshotAttachParams, formatGroupTurnWithBrowserContext };
 
 export const GATEWAY_MODES = Object.freeze([
   {
@@ -1485,6 +1487,49 @@ export function resolveCatalogModelIdForBinding({ binding = null, models = [] } 
   return String(match?.id || normalized.modelId || normalized.rawModelId || '').trim();
 }
 
+// The catalog row a stored model choice resolves to after a catalog render.
+// Catalog order is presentation, not preference (#119): an explicit choice is
+// kept even when this catalog does not list it, because the startup cache
+// never stores gateway alias rows and one profile's catalog can omit a model
+// another verified. Only an empty choice, or a discovery-only row Hermes
+// cannot route, falls back: to the gateway's own default row, else the first
+// routable row.
+export function resolveStoredModelSelection({ selectedId = '', binding = null, models = [] } = {}) {
+  const catalog = Array.isArray(models) ? models.filter((model) => model && typeof model === 'object') : [];
+  const id = String(selectedId || '').trim();
+  const pinned = normalizeBrowserModelBinding(binding);
+  const gatewayDefault = catalog.find((model) => model.gatewayDefault === true && isModelRuntimeSelectable(model));
+  const fallback = () => {
+    const row = gatewayDefault || catalog.find((model) => isModelRuntimeSelectable(model));
+    return { modelId: String(row?.id || DEFAULT_SETTINGS.model), listed: Boolean(row), fallback: true };
+  };
+  if (!id) return fallback();
+  const row = catalog.find((model) => model.id === id);
+  if (row && row.source !== 'selected' && isModelRuntimeSelectable(row)) return { modelId: id, listed: true, fallback: false };
+  const rawMatch = catalog.find((model) => model.rawModelId === id
+    && isModelRuntimeSelectable(model)
+    && (!pinned?.provider || model.provider === pinned.provider || model.owner === pinned.provider));
+  if (rawMatch) return { modelId: String(rawMatch.id), listed: true, fallback: false };
+  if (id === DEFAULT_SETTINGS.model || (pinned?.gatewayDefault === true && pinned.modelId === id)) {
+    // The gateway resolves its default alias itself; a named profile advertises it under its own id.
+    return gatewayDefault
+      ? { modelId: String(gatewayDefault.id), listed: true, fallback: false }
+      : { modelId: id, listed: false, fallback: false };
+  }
+  if (row?.source === 'external') return fallback();
+  return { modelId: id, listed: Boolean(row && row.source !== 'selected'), fallback: false };
+}
+
+// session.create and config.set on the dashboard socket take a literal model.
+// The gateway default alias is not one: leaving the model out is what runs the
+// profile's own default there.
+export function dashboardSessionModelParams({ model = '', provider = '', gatewayDefault = false } = {}) {
+  const modelId = String(model || '').trim();
+  if (!modelId || gatewayDefault === true || modelId === DEFAULT_SETTINGS.model) return {};
+  const providerId = String(provider || '').trim();
+  return providerId ? { model: modelId, provider: providerId } : { model: modelId };
+}
+
 export function updateBrowserModelScope({ selectedModel = null, sessionId = '', sessionModelBindings = {} } = {}) {
   const binding = normalizeBrowserModelBinding(selectedModel);
   const nextBindings = { ...(sessionModelBindings && typeof sessionModelBindings === 'object' ? sessionModelBindings : {}) };
@@ -1640,6 +1685,14 @@ const MODEL_CONTEXT_FALLBACKS = Object.freeze([
   ['mythos-5', 1_000_000],
   ['claude-opus-5', 1_000_000],
   ['opus-5', 1_000_000],
+  ['claude-sonnet-5.5', 1_000_000],
+  ['claude-sonnet-5-5', 1_000_000],
+  ['sonnet-5.5', 1_000_000],
+  ['sonnet-5-5', 1_000_000],
+  ['claude-haiku-5.5', 1_000_000],
+  ['claude-haiku-5-5', 1_000_000],
+  ['haiku-5.5', 1_000_000],
+  ['haiku-5-5', 1_000_000],
   ['claude-sonnet-5', 1_000_000],
   ['sonnet-5', 1_000_000],
   ['claude-opus-4.8', 1_000_000],
@@ -1718,8 +1771,17 @@ function modelProviderIdentity(model = {}) {
 }
 
 function fallbackModelContextTokens(model = {}) {
-  return contextFromHermesRegistry({ ...model, provider: modelProviderIdentity(model) })
-    || hermesContextForModel(model) || HERMES_DEFAULT_FALLBACK_CONTEXT;
+  const fromRegistry = contextFromHermesRegistry({ ...model, provider: modelProviderIdentity(model) });
+  const fromTable = hermesContextForModel(model);
+  // The bundled Hermes table still has no Haiku 5.5 key, so its generic
+  // "claude-haiku" catch-all resolves 200k. A versioned Haiku alias wins
+  // that one conflict. Other families keep the registry (Codex OAuth caps
+  // are lower than the direct-API window on purpose).
+  const identity = String(model.rawModelId || model.raw_model_id || model.model || model.id || model.label || '').toLowerCase();
+  if (fromTable && /haiku/.test(identity) && /\d+(?:[.-]\d+)+/.test(identity) && fromTable !== fromRegistry) {
+    return fromTable;
+  }
+  return fromRegistry || fromTable || HERMES_DEFAULT_FALLBACK_CONTEXT;
 }
 
 export function normalizeReasoningEffort(value = DEFAULT_SETTINGS.reasoningEffort) {

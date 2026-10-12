@@ -1,5 +1,5 @@
 /* Generated from extension/lib/content-extraction-core.mjs, extension/lib/appearance-themes.mjs, extension/lib/site-adapters.mjs, extension/lib/inline-draft-policy.mjs, extension/lib/page-annotation-content.mjs. Do not edit directly. */
-/* extension/lib/content-extraction-core.mjs · SHA-256 1802426d815d267b */
+/* extension/lib/content-extraction-core.mjs · SHA-256 d4533fe293cb7c8f */
 (function hermesContentExtractorRuntime(hermesGlobal) {
   'use strict';
 
@@ -782,7 +782,7 @@ const CONTENT_EXTRACTION_API = Object.freeze({
   hermesGlobal.HermesContentExtractor = CONTENT_EXTRACTION_API;
 })(globalThis);
 
-/* extension/lib/appearance-themes.mjs · SHA-256 7f80382b764f41b8 */
+/* extension/lib/appearance-themes.mjs · SHA-256 7f168bee787d3a77 */
 (function hermesAppearanceRuntime(hermesGlobal) {
   'use strict';
 
@@ -841,6 +841,24 @@ const APPEARANCE_THEMES = Object.freeze([
     description: 'Quiet graphite with sun-warmed brass',
     preview: { bg: '#181715', panel: '#25211b', text: '#f1dfbc', muted: '#c4a77c', accent: '#e5b96c' },
   },
+  {
+    value: 'everforest',
+    name: 'Everforest',
+    description: 'Forest greens, warm parchment, and soft sage',
+    preview: { bg: '#2d353b', panel: '#373e42', text: '#d3c6aa', muted: '#a4ada1', accent: '#a7c080' },
+  },
+  {
+    value: 'classic',
+    name: 'Classic Hermes',
+    description: 'Original amber gold, bronze, and midnight navy',
+    preview: { bg: '#1a1a2e', panel: '#232335', text: '#fff8dc', muted: '#b8860b', accent: '#ffbf00' },
+  },
+  {
+    value: 'anti-nous',
+    name: 'Anti-Nous',
+    description: 'Blood red and berry, navy reading surfaces, and fine gold trim',
+    preview: { bg: '#8a1a2d', panel: '#101b30', text: '#f5ece6', muted: '#d4af6c', accent: '#ff4d4d' },
+  },
 ]);
 
 const INLINE_ASSIST_THEME_TOKENS = Object.freeze({
@@ -879,6 +897,18 @@ const INLINE_ASSIST_THEME_TOKENS = Object.freeze({
   solstice: Object.freeze({
     dark: Object.freeze({ surface: '#181715', panel: '#28231b', ink: '#f0dfbb', fg: '#f7ebd7', accent: '#e2b366', primary: '#6b4d22' }),
     light: Object.freeze({ surface: '#6b4d22', panel: '#fffbf3', ink: '#58401f', fg: '#58401f', accent: '#bd7d2d', primary: '#6b4d22' }),
+  }),
+  everforest: Object.freeze({
+    dark: Object.freeze({ surface: '#2d353b', panel: '#2d353b', ink: '#d3c6aa', fg: '#d3c6aa', accent: '#a7c080', primary: '#586b35' }),
+    light: Object.freeze({ surface: '#586b35', panel: '#fdf6e3', ink: '#5c6a72', fg: '#fdf6e3', accent: '#586b35', primary: '#586b35' }),
+  }),
+  classic: Object.freeze({
+    dark: Object.freeze({ surface: '#1a1a2e', panel: '#232335', ink: '#fff8dc', fg: '#fff8dc', accent: '#ffbf00', primary: '#825d02' }),
+    light: Object.freeze({ surface: '#825d02', panel: '#f0f0ef', ink: '#2b2109', fg: '#fff8dc', accent: '#825d02', primary: '#825d02' }),
+  }),
+  'anti-nous': Object.freeze({
+    dark: Object.freeze({ surface: '#8a1a2d', panel: '#101b30', ink: '#f5ece6', fg: '#f5ece6', accent: '#ff4d4d', primary: '#d42a40' }),
+    light: Object.freeze({ surface: '#d4182d', panel: '#ffffff', ink: '#d4182d', fg: '#fff7f0', accent: '#d4182d', primary: '#d42a40' }),
   }),
 });
 
@@ -926,7 +956,7 @@ const APPEARANCE_RUNTIME_API = Object.freeze({
   hermesGlobal.HermesAppearance = APPEARANCE_RUNTIME_API;
 })(globalThis);
 
-/* extension/lib/site-adapters.mjs · SHA-256 df802f1455383c28 */
+/* extension/lib/site-adapters.mjs · SHA-256 25c151d2a977ea62 */
 (function hermesSiteAdapterRuntime(hermesGlobal) {
   'use strict';
 
@@ -1721,7 +1751,7 @@ const SITE_ADAPTER_API = Object.freeze({
   hermesGlobal.HermesSiteAdapters = SITE_ADAPTER_API;
 })(globalThis);
 
-/* extension/lib/inline-draft-policy.mjs · SHA-256 a7f2ea8704f9a610 */
+/* extension/lib/inline-draft-policy.mjs · SHA-256 abde7418446df5a1 */
 (function hermesInlineDraftRuntime(hermesGlobal) {
   'use strict';
 
@@ -2289,7 +2319,7 @@ const INLINE_DRAFT_API = Object.freeze({
   hermesGlobal.HermesInlineDraft = INLINE_DRAFT_API;
 })(globalThis);
 
-/* extension/lib/page-annotation-content.mjs · SHA-256 662cdd4742444f46 */
+/* extension/lib/page-annotation-content.mjs · SHA-256 b97ab46ad11b8032 */
 (function hermesPageAnnotationRuntime(hermesGlobal) {
   'use strict';
 

@@ -619,6 +619,79 @@ export function dashboardModelOptionsUrl(baseUrl = '', refresh = false, profile 
   }
 }
 
+// GPT-Live voice chat (see lib/voice-live.mjs). The Hermes dashboard creates the
+// live session so the OpenAI key stays on the host. The status probe lives here,
+// beside dashboard transcription, so checking it never loads the voice module.
+export const VOICE_LIVE_STATUS_PATH = '/api/audio/voice-live/status';
+export const VOICE_LIVE_SESSION_PATH = '/api/audio/voice-live/session';
+
+export function normalizeVoiceLiveStatus(payload = null) {
+  if (!payload || typeof payload !== 'object' || payload.ok === false) return null;
+  const mode = String(payload.mode || '').trim().toLowerCase().replace(/_/g, '-') === 'gpt-live' ? 'gpt-live' : 'chained';
+  return {
+    mode,
+    available: payload.available === true,
+    reason: payload.reason ? String(payload.reason) : '',
+    model: String(payload.model || 'gpt-live-1'),
+    voice: String(payload.voice || ''),
+  };
+}
+
+function dashboardEndpointUrl(baseUrl = '', pathname = '/', profile = '') {
+  const url = new URL(String(baseUrl || '').trim());
+  url.hash = '';
+  url.search = '';
+  url.pathname = pathname;
+  const profileName = String(profile || '').trim();
+  if (profileName) url.searchParams.set('profile', profileName);
+  return url.toString();
+}
+
+/** JSON call to a session-token route on the Hermes dashboard. Throws with the server's detail. */
+export async function dashboardAudioJson({
+  baseUrl = '',
+  path: pathname = '/',
+  profile = '',
+  method = 'GET',
+  body = null,
+  fetchFn = globalThis.fetch?.bind(globalThis),
+  timeoutMs = 8000,
+} = {}) {
+  const dashboardUrl = String(baseUrl || '').trim().replace(/\/+$/, '');
+  if (!dashboardUrl) throw new Error('The Hermes dashboard is not reachable from this panel.');
+  const token = await fetchDashboardSessionToken({ baseUrl: dashboardUrl, fetchFn });
+  if (!token) throw new Error('The Hermes dashboard did not provide a session token.');
+  const response = await fetchWithTimeout(fetchFn, dashboardEndpointUrl(dashboardUrl, pathname, profile), {
+    method,
+    headers: {
+      Accept: 'application/json',
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+      'X-Hermes-Session-Token': token,
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+    credentials: 'include',
+    cache: 'no-store',
+  }, timeoutMs);
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    const detail = payload?.detail;
+    const error = new Error(String((typeof detail === 'string' && detail) || payload?.error?.message || payload?.error || `Hermes dashboard request failed (${response.status}).`));
+    error.status = response.status;
+    throw error;
+  }
+  return payload;
+}
+
+/** Which voice chat mode the profile selected and whether GPT-Live can start. Null when unknown. */
+export async function fetchVoiceLiveStatus({ baseUrl = '', profile = '', fetchFn } = {}) {
+  try {
+    return normalizeVoiceLiveStatus(await dashboardAudioJson({ baseUrl, path: VOICE_LIVE_STATUS_PATH, profile, fetchFn, timeoutMs: 4000 }));
+  } catch {
+    // An older Hermes without the route, or no dashboard: no live voice.
+    return null;
+  }
+}
+
 export function dashboardAudioTranscriptionUrl(baseUrl = LOCAL_DASHBOARD_URL, profile = '') {
   try {
     const url = new URL(String(baseUrl || LOCAL_DASHBOARD_URL).trim());

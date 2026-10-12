@@ -23,6 +23,7 @@ import {
 } from './lib/common.mjs';
 import { createUserFileAttachment, appendUserFileAttachments, stageUserFiles, attachmentFileContext, attachmentSourceKey, rememberUserFileAttachments, restoreUserFileAttachments, openUserFileAttachment, downloadUserFileAttachment } from './lib/user-file-attachments.mjs';
 import { renderMarkdownSafe } from './lib/sanitizer.mjs';
+import { createEffortControl } from './lib/effort-control.mjs';
 import { highlightCodeBlocks } from './lib/code-highlighting.mjs';
 import { enhanceMarkdownCodeBlocks } from './lib/markdown-code-copy.mjs';
 import {
@@ -133,6 +134,7 @@ import {
   SUBAGENT_STEER_ICON,
   SUBAGENT_STOP_ICON,
   subagentControlPayload,
+  subagentGatewayEventFromSse,
   subagentStackSummary,
   subagentsFromListResult,
 } from './lib/subagent-stack.mjs';
@@ -1582,8 +1584,30 @@ async function runSelectedSubagentControl(action, text = '') {
     subagentId: subagentSelectedId,
     text,
   });
-  if (!connection?.client || !payload.session_id || !payload.subagent_id) return;
+  if (!payload.session_id || !payload.subagent_id) return;
   if (action === 'steer' && !payload.text) return;
+  if (!connection?.client) {
+    subagentControlBusy = true;
+    subagentControlError = '';
+    renderSubagentStack();
+    try {
+      const path = action === 'steer' ? 'steer' : 'interrupt';
+      const response = await client.fetch(
+        `/api/sessions/${encodeURIComponent(payload.session_id)}/subagents/${encodeURIComponent(payload.subagent_id)}/${path}`,
+        { method: 'POST', body: JSON.stringify(action === 'steer' ? { text: payload.text } : {}) },
+      );
+      const body = await client.readJson(response);
+      if (!response.ok) throw new Error(body?.error?.message || 'Subagent control failed');
+      if (action === 'steer' && body?.status === 'rejected') throw new Error('Subagent is no longer accepting a steer.');
+      if (action === 'steer') subagentSteerDraft = '';
+    } catch (error) {
+      subagentControlError = String(error?.message || error || 'Subagent control failed');
+    } finally {
+      subagentControlBusy = false;
+      renderSubagentStack();
+    }
+    return;
+  }
   subagentControlBusy = true;
   subagentControlError = '';
   renderSubagentStack();
@@ -2660,6 +2684,10 @@ function renderComposerRuntimeControl() {
 
 function renderModelRuntimeOptions() {
   if (!els.modelOptionsList) return;
+  const restoreRangeFocus = els.modelOptionsList.contains(document.activeElement)
+    && document.activeElement?.matches('.effort-control-range');
+  const renderTarget = modelSelectionTarget;
+  const renderSessionId = activeSessionId;
   const assistTarget = modelSelectionTarget === 'assist';
   const options = assistTarget ? inlineAssistRuntimeOptions() : activeModelRuntimeOptions();
   const selectedAssistModel = availableModels.find((model) => model.id === (settings.inlineAssistModel || settings.model));
@@ -2683,7 +2711,26 @@ function renderModelRuntimeOptions() {
       button.textContent = option.label;
       effort.append(button);
     }
-    els.modelOptionsList.append(effort);
+    els.modelOptionsList.append(createEffortControl({
+      value: options.reasoningEffort,
+      buttons: effort,
+      storage: browserApi.storage,
+      translate: translateUiText,
+      effortLabel: (option) => t(`settings.models.effort.${option.value}`),
+      surface: 'web',
+      onCommit: (value) => {
+        if (renderTarget !== modelSelectionTarget || renderSessionId !== activeSessionId || els.modelPicker.hidden) return;
+        if (assistTarget) {
+          settings.inlineAssistReasoningEffort = value;
+          browserApi.storage.local.set({ hermesBrowserSettings: settings });
+          renderModelRuntimeOptions();
+        } else {
+          setModelRuntimeOptions({ reasoningEffort: value }).catch((error) => {
+            els.composerStatus.textContent = `Runtime option save failed: ${error?.message || String(error)}`;
+          });
+        }
+      },
+    }));
   }
 
   const toggles = document.createElement('div');
@@ -2715,6 +2762,7 @@ function renderModelRuntimeOptions() {
     els.modelOptionsList.append(unavailable);
   }
   renderComposerRuntimeControl();
+  if (restoreRangeFocus) els.modelOptionsList.querySelector('.effort-control-range')?.focus({ preventScroll: true });
 }
 
 async function setModelRuntimeOptions(partial = {}) {
@@ -5361,6 +5409,10 @@ async function sendPrompt(text) {
         activeRunControl = withRunControlId(activeRunControl, activeRunId);
         if (liveRun) liveRun.seed = activeRunId || liveRun.seed;
         updateBusyControls();
+      },
+      onSubagent: (event) => {
+        const mapped = subagentGatewayEventFromSse(event, activeSessionId);
+        if (mapped) ingestSubagentGatewayEvent(mapped);
       },
       onRuntime: (runtime) => {
         if (!runControlGenerationMatches(turnRunControlGeneration, runControlGeneration)) return;

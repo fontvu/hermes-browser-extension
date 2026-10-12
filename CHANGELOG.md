@@ -4,6 +4,12 @@
 
 ### Added
 
+- Everforest, Classic Hermes, and Anti-Nous themes, each with light and dark palettes. Anti-Nous combines crimson and berry accents with navy reading panels and fine gold trim; its light palette uses white panels and crimson controls.
+- Settings now opens to a category grid. Each category has its own view and Back navigation, edited categories are marked, and related controls open the section they belong to. Models has a runtime summary and opens the model picker above Settings.
+- A Tab screenshot action in the attachment menu captures the current tab only when you ask, and Bot Mode group turns on a local Hermes connection can include approved, redacted page context. Chat-only and remote group turns never capture page context.
+- `scripts/enable-bot-companion-tools.mjs` previews, and with `--apply` enables, the optional companion tools for a profile you choose.
+- Voice dictation has a glow that rises from the bottom edge of the message box while you speak. It follows your voice, takes its colours from your theme, and a light sweeps along the edge while Hermes transcribes. Nothing runs while you are not dictating, and on a slower computer the glow lowers its own resolution instead of slowing the panel down. With reduced motion on it holds still, and it is hidden in high contrast mode.
+- Live voice chat with GPT-Live. When your Hermes profile sets the voice chat mode to GPT-Live and the Hermes host has an OpenAI API key, a live voice button appears next to the mic. Talk naturally and interrupt whenever you like; when you ask for real work, Hermes does it with your selected model, tools and memory, and the voice tells you the answer. Your request and the reply also appear in the chat. Say "stop" or press the button again to end. The key stays on the Hermes host, OpenAI bills the voice by the minute, and nothing loads until you start a session. Needs a local connection and Hermes v2026.9.14 or newer.
 - Code blocks in messages are now syntax highlighted for common languages (Python, JavaScript, TypeScript, JSON, YAML, SQL, Bash, C#, CSS, HTML and Markdown) in the side panel and the full tab, in light and dark themes. Languages Hermes does not recognize stay plain. Thanks to @kidclone3 (#91).
 
 ### Changed
@@ -13,9 +19,26 @@
 - The README is shorter: version-by-version notes point to the changelog and releases, and remote setup plus extended troubleshooting moved to guides/connection-guide.md and guides/troubleshooting.md. The visual tour has fresh Mono Dark screenshots, including Bot Mode group chats and profile editing.
 - The composer's DOM preview and Attached-tab controls share one row, and a slim handle on the composer border hides or shows them. The choice is remembered, the DOM preview always reopens closed, and hovering DOM explains what it is.
 - The chat intro banner now matches the Settings banner's spacing and keeps white text on blue in Nous Light.
+- The Voice Dictation tab, which opens when the side panel cannot use the microphone, now looks like the side panel: the Hermes banner, a dictation timer, the same glow, and a short status instead of paragraphs of setup notes. It uses your theme, including custom themes.
+- The dictation meter beside the message box updates without recalculating the panel layout.
 
 ### Fixed
 
+- The background picture no longer changes every time you switch tabs and come back. Each Hermes panel picks one when it opens and keeps it until you close it, and panels open in different tabs at the same time each get a different picture.
+- In Firefox, the Hermes toolbar button now closes the sidebar when it is already open, so one click puts it away on every tab. Firefox keeps an add-on sidebar open across all tabs in a window, so Settings now says that instead of offering a per-tab choice that Firefox cannot apply.
+- New tabs keep the model you picked in the side panel, including Gateway default, instead of switching to the first model in the list, which could be a provider with no credits left. A saved model the list does not show yet stays selected with its provider, and on dashboard and remote connections Gateway default starts chats on your profile's own default model. Thanks to @Prediction6767 for the report and root cause (#119).
+- The message box grows as you type, and once it is as tall as it can get your latest text stays in view above the commands button instead of sliding under it. The same happens after voice dictation.
+- Scrolling back up through a long draft shows the lines passing under the composer controls through a tinted glass band instead of a hard cutoff. The band only appears while text sits below the visible area, the controls stay solid, and the message box can still be dragged taller.
+- Open on computer now reveals the original file in its folder on a local connection instead of downloading a second copy, and refuses on remote connections. Save remains a separate download.
+- A file mentioned more than once in the same reply shows a single file card; later replies can still show it.
+- Media files report their full size when the server answers with a ranged response.
+- Hermes signature chat headlines now use the signature display face, the same condensed face shown on the font menu, instead of a serif stand-in. Code and monospace use Aeonik Fono when that face is installed, and fall back to the bundled mono face otherwise.
+- Leaving Bot Mode while a group chat is still replying no longer waits for every member to finish. Regular Sessions opens immediately, and that group chat keeps running in the background.
+- Subagents started from a browser chat now show up in the live dock while they work. You can steer or stop them from that session, including on a local API connection.
+
+- The reasoning effort control is now a slider with tick marks and a Slider or Buttons choice that is remembered. Max and Ultra glow while selected. In a group chat, each bot shows and saves its own effort, so changing one never changes the others.
+- Model menus use the same square on/off switch as Settings, and hovering a control in any theme keeps its label readable.
+- Anti-Nous reds are brighter in both modes, and the effort slider in Anti-Nous Dark is red instead of pink. Light themes keep paper banners with faint artwork, and the Anti-Nous Dark top bar title is white.
 - Approving local-document access on a tab that is still loading no longer leaks an uncaught error. Hermes Control shows a "Control not attached" notice instead. Thanks to @LeahyCC (#97).
 
 - Choosing Pin current tab or Follow active tab on a remote connection that has not approved page context sharing now explains why and offers an Open Settings button that goes straight to the approval switch, instead of silently staying on Chat only. Approval is never granted automatically. Thanks to @jdot-dev (#92, #93).

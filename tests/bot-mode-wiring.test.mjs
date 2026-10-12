@@ -141,13 +141,34 @@ test('Bot Mode profile sheet owns the editor surface with avatar/general tabs an
 
 test('Bot Mode exposes a session-menu Threads control and clears stale bot session identity before default pinning', () => {
   assert.match(sidepanelHtml, /id="botModeThreadsButton"[^>]*hidden/);
-  assert.match(sidepanelHtml, /id="botModeThreadsButton"[^>]*data-i18n="bot_mode\.threads"/);
+  assert.match(sidepanelHtml, /id="botModeThreadsButton"[^>]*data-i18n-aria-label="bot_mode\.threads_title"/);
   assert.match(sidepanelSource, /groupThreadMenuEntries\(activeGroupProjection\)/);
   assert.match(sidepanelSource, /bot_mode\.group_threads/);
   assert.match(sidepanelSource, /data-group-thread-id/);
   assert.match(sidepanelSource, /sessionId:\s*''/);
   assert.match(sidepanelSource, /!pinnedModel\.provider \|\| model\.provider === pinnedModel\.provider/);
   assert.match(sidepanelCss, /\.bot-mode-threads-button/);
+});
+
+test('leaving Bot Mode during a group reply detaches the turn instead of waiting or aborting it', () => {
+  const leave = sidepanelSource.slice(
+    sidepanelSource.indexOf('async function leaveBotModeForRegularSession('),
+    sidepanelSource.indexOf('function renderActiveProfileIndicator('),
+  );
+  assert.match(leave, /botModeLeaveDecision\(/);
+  assert.match(leave, /detachActiveGroupTurnForBackground\(/);
+  assert.ok(leave.indexOf('detachActiveGroupTurnForBackground') < leave.indexOf('abortAttachedGroupTurn'));
+  assert.doesNotMatch(leave, /activeGroupAbortController\?\.abort/);
+  const send = sidepanelSource.slice(
+    sidepanelSource.indexOf('async function sendActiveGroupMessage('),
+    sidepanelSource.indexOf('async function retryFailedGroupMember('),
+  );
+  assert.match(send, /claimGroupComposer\(/);
+  assert.match(send, /backgroundGroupTurn\?\.abortController === abortController/);
+  assert.doesNotMatch(send, /sending = false;/);
+  assert.match(sidepanelSource, /function reattachBackgroundGroupTurn\(/);
+  assert.match(sidepanelSource, /abortAttachedGroupTurn\(\)/);
+  assert.match(sidepanelSource, /abortBackgroundGroupTurn\(\)/);
 });
 
 test('regular profile changes show a context choice and panel boot does not resurrect Bot Chats', () => {

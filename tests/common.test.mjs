@@ -1100,7 +1100,7 @@ test('model selection stays pending until runtime metadata confirms or warns', (
 
 test('model selection stays local while the active Browser draft is unsaved', () => {
   const source = readFileSync(new URL('../extension/sidepanel.js', import.meta.url), 'utf8');
-  const lockSync = source.match(/async function syncSessionModelLock\([\s\S]*?\r?\n\}\r?\n\r?\nasync function ensureActiveSessionModelLockOrThrow/)?.[0] || '';
+  const lockSync = source.match(/async function syncSessionModelLock\([\s\S]*?\cM?\n\}\cM?\n\cM?\nasync function ensureActiveSessionModelLockOrThrow/)?.[0] || '';
 
   assert.match(lockSync, /isUnsavedBrowserDraftSession\(\{ sessionId: settings\.sessionId, sessions: availableSessions \}\)/);
   assert.match(lockSync, /Hermes model requested/);
@@ -1166,7 +1166,7 @@ test('model runtime ack helper distinguishes pending confirmed and mismatch stat
 
 test('custom model source rows are discovery-only until Hermes exposes them through the runtime', () => {
   const source = readFileSync(new URL('../extension/sidepanel.js', import.meta.url), 'utf8');
-  assert.match(source, /selectedModel\?\.source === 'external'/);
+  assert.match(source, /listed\?\.source === 'external'/);
   assert.match(source, /button\.disabled = true/);
   assert.match(source, /Custom model source is discovery-only/);
   assert.match(source, /normalizeExternalModelSourceList\(settings\.customModelSources/);
@@ -1614,7 +1614,7 @@ test('speech silent-start watchdog treats started-but-mute recognition as a fail
   assert.equal(common.speechRecognitionSilentlyFailed({ elapsedMs: 12000, sawEnd: true }), false);
 
   const source = readFileSync(new URL('../extension/sidepanel.js', import.meta.url), 'utf8');
-  assert.match(source, /dictating = true;\r?\n\s+updateVoiceButtonState\(\);\r?\n\s+armSpeechWatchdog\(\)/, 'sidepanel must arm the silent-start watchdog after starting web speech');
+  assert.match(source, /dictating = true;\cM?\n\s+updateVoiceButtonState\(\);\cM?\n\s+armSpeechWatchdog\(\)/, 'sidepanel must arm the silent-start watchdog after starting web speech');
   assert.match(source, /function armSpeechWatchdog\(\)/, 'sidepanel must define armSpeechWatchdog');
   assert.match(source, /function clearSpeechWatchdog\(\)/, 'sidepanel must define clearSpeechWatchdog');
   assert.doesNotMatch(source, /recognition\.onstart = \(\) => \{ clearSpeechWatchdog\(\); \};/, 'onstart must not cancel the watchdog — Comet fires start with no audio');
@@ -1622,7 +1622,7 @@ test('speech silent-start watchdog treats started-but-mute recognition as a fail
   assert.match(source, /speechRecognitionSilentlyFailed/, 'sidepanel must use the silent-failure contract from common.mjs');
   assert.match(source, /never delivered audio/, 'the watchdog must surface a real error instead of a fake ON state');
   assert.match(source, /void openVoiceDictationPage\('Browser speech started but never delivered audio/, 'the watchdog must route to the granted-tab voice page that posts hermesVoiceDraft');
-  assert.match(source, /clearSpeechWatchdog\(\);\r?\n\s+dictating = false;/, 'the watchdog must clear the fake ON state before falling back');
+  assert.match(source, /clearSpeechWatchdog\(\);\cM?\n\s+dictating = false;/, 'the watchdog must clear the fake ON state before falling back');
 });
 
 test('connect and startup sync Hermes models, sessions, skills, and profiles from the gateway', () => {
@@ -1825,6 +1825,27 @@ test('normalizeHermesModels does not keep default hermes-agent fallback when rea
 test('normalizeHermesModels applies curated context fallback when provider rows omit limits', () => {
   const models = normalizeHermesModels({ data: [{ id: 'minimax:MiniMax-M3', name: 'MiniMax-M3', context_length: 0 }] }, 'minimax:MiniMax-M3');
   assert.equal(models[0].contextTokens, 1000000);
+});
+
+test('normalizeHermesModels keeps Haiku 5.5 at 1M across provider spellings and Haiku 4.5 at 200k', () => {
+  const rows = [
+    { id: 'anthropic::claude-haiku-5.5', rawModelId: 'claude-haiku-5.5', label: 'Haiku 5.5', provider: 'anthropic', context_length: 0 },
+    { id: 'anthropic::claude-haiku-5-5', rawModelId: 'claude-haiku-5-5', label: 'Haiku 5.5', provider: 'anthropic', context_length: 0 },
+    { id: 'nous::anthropic/claude-haiku-5.5', rawModelId: 'anthropic/claude-haiku-5.5', label: 'Claude Haiku 5.5', provider: 'nous', context_length: 0 },
+    { id: 'claude-subscription-directsdk-experimental::claude-haiku-5-5[1m]', rawModelId: 'claude-haiku-5-5[1m]', label: 'Claude Haiku 5.5', provider: 'claude-subscription-directsdk-experimental', context_length: 0 },
+    { id: 'anthropic::claude-haiku-4-5', rawModelId: 'claude-haiku-4-5', label: 'Haiku 4.5', provider: 'anthropic', context_length: 0 },
+    { id: 'anthropic::claude-sonnet-5.5', rawModelId: 'claude-sonnet-5.5', label: 'Sonnet 5.5', provider: 'anthropic', context_length: 0 },
+  ];
+  const models = normalizeHermesModels({ data: rows }, rows[0].id);
+  for (const id of ['claude-haiku-5.5', 'claude-haiku-5-5', 'anthropic/claude-haiku-5.5', 'claude-haiku-5-5[1m]', 'claude-sonnet-5.5']) {
+    assert.equal(models.find((model) => model.rawModelId === id)?.contextTokens, 1_000_000, id);
+  }
+  assert.equal(models.find((model) => model.rawModelId === 'claude-haiku-4-5')?.contextTokens, 200_000);
+});
+
+test('a live gateway context window still wins over the Haiku 5.5 display alias', () => {
+  const rows = [{ id: 'anthropic::claude-haiku-5.5', rawModelId: 'claude-haiku-5.5', provider: 'anthropic', context_length: 200_000 }];
+  assert.equal(normalizeHermesModels({ data: rows }, rows[0].id)[0].contextTokens, 200_000);
 });
 
 test('normalizeHermesModels pairs Claude, Grok, and Nous rows with Hermes windows instead of requestable', () => {
@@ -3877,22 +3898,19 @@ test('loopback discovery may use the stored bearer after Hermes health identity 
 
 test('settings dialog render path refreshes appearance theme cards on open', () => {
   const source = readFileSync(new URL('../extension/sidepanel.js', import.meta.url), 'utf8');
-  const match = source.match(/function openSettingsDialog\(\) \{([\s\S]*?)\n\}/);
+  const match = source.match(/function openSettingsDialog\(arg\) \{([\s\S]*?)\n\}/);
   assert.ok(match, 'openSettingsDialog should exist');
   assert.match(match[1], /syncSettingsForm\(\)/, 'opening settings should refresh form controls, including theme cards');
   assert.ok(
     match[1].indexOf('syncSettingsForm()') < match[1].indexOf('settingsDialog.hidden = false'),
     'appearance controls should render before the dialog is shown'
   );
-  assert.match(match[1], /settingsDialog\.scrollTo\(\{\s*top:\s*0,\s*left:\s*0/s, 'opening settings should reset the dialog to the top');
   assert.ok(
-    match[1].indexOf('settingsDialog.hidden = false') < match[1].indexOf('settingsDialog.scrollTo'),
-    'settings must reset scroll after the dialog is visible'
+    match[1].indexOf('settingsDialog.hidden = false') < match[1].indexOf('showSettingsPane('),
+    'the category view is chosen after the dialog is visible'
   );
-  assert.ok(
-    match[1].indexOf('settingsDialog.scrollTo') < match[1].indexOf("mode === 'cloud' ? els.connectButton : els.gatewayUrlInput"),
-    'settings must reset scroll before focusing an input can move it'
-  );
+  const show = source.match(/function showSettingsPane\([\s\S]*?\n\}/)?.[0] || '';
+  assert.match(show, /settingsDialog\.scrollTo\(\{\s*top:\s*0,\s*left:\s*0/s, 'switching category should reset the dialog to the top');
 });
 
 test('settings appearance defaults pin the zoom/font schema and keep textSize only for legacy compat', () => {
@@ -4027,7 +4045,7 @@ test('side panel imports and delegates to the shared appearance-preferences modu
 
 test('a single render function synchronizes preset selection, numeric output, custom-field visibility, and status copy', () => {
   const source = readFileSync(new URL('../extension/sidepanel.js', import.meta.url), 'utf8');
-  const render = source.match(/function renderAppearanceControls\(\) \{([\s\S]*?)\r?\n\}\r?\n\r?\n(?:async )?function persistAppearanceSettings/)?.[1] || '';
+  const render = source.match(/function renderAppearanceControls\(\) \{([\s\S]*?)\cM?\n\}\cM?\n\cM?\n(?:async )?function persistAppearanceSettings/)?.[1] || '';
   assert.ok(render, 'renderAppearanceControls should exist');
   assert.match(render, /textZoomPresetGrid/, 'render must select the matching preset button');
   assert.match(render, /aria-checked/, 'preset selection must stay accessible');

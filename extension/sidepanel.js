@@ -91,6 +91,8 @@ import {
   resolveBrowserEffectiveModel,
   resolveBrowserEffectiveModelOptions,
   resolveCatalogModelIdForBinding,
+  resolveStoredModelSelection,
+  dashboardSessionModelParams,
   skillSuggestionsForInput,
   restSkillsFallbackAllowed,
   shouldRecoverSkillsFromDashboard,
@@ -191,6 +193,7 @@ import {
   withAppearancePreferenceUpdate,
 } from './lib/appearance-preferences.mjs';
 import { mountBrandedSelect } from './lib/branded-select.mjs';
+import { createEffortControl } from './lib/effort-control.mjs';
 import { probeSignatureFonts } from './lib/font-availability.mjs';
 import { refreshHermesContextRegistry } from './lib/hermes-context-sync.mjs';
 import {
@@ -222,8 +225,12 @@ import { createUserFileAttachment, appendUserFileAttachments, stageUserFiles, at
 import { mediaDisplayName, mediaSourcePlan, probeArtifactFileSource, resolveArtifactDownloadSource, resolveArtifactFileSource } from './lib/media-source.mjs';
 import { classifyMediaKind, resolveMediaFetchPlan } from './lib/media-persistence.mjs';
 import { artifactActionPlan, artifactFailureNotice } from './lib/artifact-actions.mjs';
+import { revealArtifactOnComputer } from './lib/artifact-folder.mjs';
+import { captureBotTabScreenshot, collectBotPageContext } from './lib/bot-browser-capture.mjs';
+import { prepareBotBrowserTurn } from './lib/bot-browser-turn.mjs';
 import { hydrateArtifactCards, setArtifactCardBusy, setArtifactCardNote } from './lib/artifact-card.mjs';
 import { pickSidecarArt, sidecarArtCssValue } from './lib/sidecar-art.mjs';
+import { createBackgroundArtRotation } from './lib/background-art.mjs';
 import {
   activeSubagentView,
   applySubagentEvent,
@@ -235,6 +242,7 @@ import {
   SUBAGENT_STEER_ICON,
   SUBAGENT_STOP_ICON,
   subagentControlPayload,
+  subagentGatewayEventFromSse,
   subagentStackSummary,
   subagentsFromListResult,
 } from './lib/subagent-stack.mjs';
@@ -253,9 +261,11 @@ import {
 } from './lib/gateway-ws.mjs';
 import { createDashboardStreamWatchdog, dashboardWatchdogTimeoutAction, isDashboardIdleTimeout, matchesDashboardSessionEvent, shouldReattachDashboardStream } from './lib/dashboard-stream-watchdog.mjs';
 import { clearComposerDraft, loadComposerDraft, persistComposerDraft } from './lib/composer-draft.mjs';
+import { bindComposerFrame } from './lib/composer-autogrow.mjs';
 import {
   BOT_CHAT_TITLE,
   botModeExitStateForRegularSession,
+  botModeLeaveDecision,
   botModeRouteKey,
   botProfileRowsToHermesProfiles,
   canSwitchBotProfile,
@@ -360,6 +370,7 @@ import {
 import {
   transcribeAudioViaDashboard,
   resolveDashboardTranscriptionBaseUrl,
+  fetchVoiceLiveStatus,
   dashboardFileStreamUrl,
   dashboardModelDiscoveryBaseUrl,
   fetchDashboardMediaDataUrl,
@@ -505,6 +516,12 @@ import {
   normalizePanelResidencyMode,
   parseSidePanelParams,
 } from './lib/panel-residency.mjs';
+import {
+  SETTINGS_PANES,
+  changedPanes,
+  resolveSettingsTarget,
+  snapshotControls,
+} from './lib/settings-panes.mjs';
 import {
   INLINE_DRAFT_ROUTES,
   buildInlineDraftPrompt,
@@ -753,6 +770,7 @@ const els = {
   stopButton: $('#stopButton'),
   wakeButton: $('#wakeButton'),
   voiceButton: $('#voiceButton'),
+  liveVoiceButton: $('#liveVoiceButton'),
   voiceActivity: $('#voiceActivity'),
   voiceActivityLabel: $('#voiceActivityLabel'),
   voiceActivityTimer: $('#voiceActivityTimer'),
@@ -1144,6 +1162,12 @@ let activeGroupRuntime = null;
 let activeGroupGeneration = 0;
 let activeGroupMessages = [];
 let activeGroupAbortController = null;
+// A group turn the user left behind. The room keeps replying on the shared
+// dashboard socket; navigation must not abort this controller or paint into
+// the regular session that replaced the room.
+let backgroundGroupTurn = null;
+let groupComposerSerial = 0;
+let activeComposerLease = null;
 // Desktop-parity threading: the room log groups by `thread` id. The strip
 // renders collapsed rows (first message + reply count + recency); clicking a
 // row expands it into the iMessage stream. '' = show the flat room view.
@@ -1208,6 +1232,15 @@ let voiceRecorder = null;
 let voiceRecorderStream = null;
 let voiceRecorderChunks = [];
 let voiceCaptureSession = null;
+let voiceWingbeat = null;
+let voiceWingbeatLoading = null;
+// GPT-Live voice chat (see startLiveVoice). The module loads on demand.
+const VOICE_LIVE_STATUS_TTL_MS = 10 * 60_000;
+let voiceLiveModuleLoading = null;
+let voiceLiveStatus = null;
+let voiceLiveStatusLoading = null;
+let voiceLiveStatusTimer = null;
+let liveVoice = null;
 let dictating = false;
 let transcribingVoice = false;
 let voiceTransitionInFlight = false;
@@ -1378,18 +1411,69 @@ async function hydrateSubagentSnapshot(client, sessionId = '') {
   }
 }
 
+async function hydrateRestSubagentSnapshot(sessionId = settings.sessionId) {
+  const sid = String(sessionId || '').trim();
+  if (!sid || usesDashboardWsChatTransport()) return;
+  try {
+    const response = await apiFetch(`/api/sessions/${encodeSessionId(sid)}/subagents`, { method: 'GET' });
+    if (!response.ok) return;
+    const payload = await readJsonResponse(response);
+    subagentState = reconcileSubagentSnapshot(subagentState, sid, subagentsFromListResult(payload));
+    renderSubagentStack();
+  } catch {
+    // Older gateways have no session subagent roster. Live SSE events still paint the dock.
+  }
+}
+
+async function restSubagentControl(action, payload) {
+  const path = action === 'steer' ? 'steer' : 'interrupt';
+  const response = await apiFetch(
+    `/api/sessions/${encodeSessionId(payload.session_id)}/subagents/${encodeURIComponent(payload.subagent_id)}/${path}`,
+    {
+      method: 'POST',
+      body: JSON.stringify(action === 'steer' ? { text: payload.text } : {}),
+    },
+  );
+  const body = await readJsonResponse(response);
+  if (!response.ok) {
+    throw new Error(body?.error?.message || body?.error || 'Subagent control failed');
+  }
+  if (action === 'steer' && body?.status === 'rejected') {
+    throw new Error('Subagent is no longer accepting a steer.');
+  }
+  if (action === 'interrupt' && body?.found === false) {
+    throw new Error('Subagent is no longer running.');
+  }
+  return body;
+}
+
 async function runSelectedSubagentControl(action, text = '') {
-  const connection = await ensureActiveDashboardWsConnection().catch(() => null);
-  if (!connection?.client) return;
   if (action === 'steer' && !String(text || '').trim()) return;
+  const durableSessionId = String(settings.sessionId || '').trim();
+  const payload = subagentControlPayload(action, {
+    sessionId: durableSessionId,
+    subagentId: subagentSelectedId,
+    text,
+  });
+  if (!payload.session_id || !payload.subagent_id) return;
   subagentControlBusy = true;
   subagentControlError = '';
   renderSubagentStack();
   try {
+    if (!usesDashboardWsChatTransport()) {
+      await restSubagentControl(action, payload);
+      if (action === 'steer') subagentSteerDraft = '';
+      return;
+    }
+    const connection = await ensureActiveDashboardWsConnection().catch(() => null);
+    if (!connection?.client) {
+      await restSubagentControl(action, payload);
+      if (action === 'steer') subagentSteerDraft = '';
+      return;
+    }
     // Steering authority requires an ATTACHED live runtime. The session-scoped
     // subagent.* RPCs fail with 4001 "session not found" when the stored id has
     // been reaped, so resume the durable session first to mint a fresh live id.
-    const durableSessionId = String(settings.sessionId || '').trim();
     const { liveId } = await establishGatewaySession({
       client: connection.client,
       storedSessionId: durableSessionId,
@@ -1398,14 +1482,13 @@ async function runSelectedSubagentControl(action, text = '') {
     connection.wsSessionId = liveId;
     connection.wsStoredSessionId = durableSessionId;
     connection.profile = safeActiveProfile();
-    const payload = subagentControlPayload(action, {
+    const livePayload = subagentControlPayload(action, {
       sessionId: liveId,
       subagentId: subagentSelectedId,
       text,
     });
-    if (!payload.session_id || !payload.subagent_id) return;
     const method = action === 'steer' ? WS_METHODS.subagentSteer : WS_METHODS.subagentInterrupt;
-    const result = await connection.client.request(method, payload);
+    const result = await connection.client.request(method, livePayload);
     if (action === 'interrupt' && result && result.found === false) {
       throw new Error('Subagent is no longer running.');
     }
@@ -1966,6 +2049,10 @@ function markConnectionProbe(status, detail = '', diagnostic = null) {
   if (connectionProbeDiagnostic) lastGatewayDiagnostic = connectionProbeDiagnostic;
   if (status === 'connected') lastGatewayDiagnostic = null;
   updateConnectionPrompt();
+  // Live voice is offered per connection: hide it when the link drops, look
+  // again (cached per connection and profile) when it comes back.
+  updateLiveVoiceButtonState();
+  if (status === 'connected') scheduleVoiceLiveStatusRefresh();
 }
 
 function setStatus(kind, title, detail, { translateTitle = true, translateDetail = true } = {}) {
@@ -2015,7 +2102,166 @@ function applyRemoteDiagnostic(diagnostic, { statusKind = 'error' } = {}) {
   return true;
 }
 
-function openSettingsDialog() {
+let settingsActivePane = '';
+let settingsBaseline = null;
+let settingsReturnFocus = null;
+
+function settingsControlEntries() {
+  const entries = [];
+  for (const paneEl of els.settingsForm.querySelectorAll('[data-settings-pane]')) {
+    const pane = paneEl.dataset.settingsPane;
+    paneEl.querySelectorAll('input, select, textarea').forEach((control, index) => {
+      if (control.type === 'file' || control.type === 'button' || control.type === 'search') return;
+      const key = control.id || control.name || `${control.type}-${index}`;
+      const value = control.type === 'checkbox' || control.type === 'radio' ? String(control.checked) : control.value;
+      entries.push([pane, `${key}:${control.type === 'radio' ? control.value : ''}`, value]);
+    });
+  }
+  return entries;
+}
+
+function captureSettingsBaseline() {
+  settingsBaseline = snapshotControls(settingsControlEntries());
+  renderSettingsEditedMarkers();
+}
+
+function renderSettingsEditedMarkers() {
+  const dirty = settingsBaseline ? changedPanes(settingsBaseline, settingsControlEntries()) : new Set();
+  for (const card of els.settingsForm.querySelectorAll('[data-settings-category]')) {
+    const edited = dirty.has(card.dataset.settingsCategory);
+    card.classList.toggle('is-edited', edited);
+    card.querySelector('.settings-category-edited')?.toggleAttribute('hidden', !edited);
+  }
+  for (const paneEl of els.settingsForm.querySelectorAll('[data-settings-pane]')) {
+    paneEl.querySelector('.settings-pane-edited')?.toggleAttribute('hidden', !dirty.has(paneEl.dataset.settingsPane));
+  }
+}
+
+function renderSettingsModelSummary() {
+  const nameEl = document.getElementById('settingsCurrentModel');
+  if (!nameEl) return;
+  const selected = availableModels.find((model) => model.id === settings.model || model.rawModelId === settings.model) || null;
+  const label = selected ? modelDisplayName(selected) : String(settings.model || '').trim();
+  nameEl.textContent = label || t('settings.models.none');
+  const meta = [];
+  const provider = selected ? modelProviderLabel(selected) : '';
+  if (provider) meta.push(provider);
+  const contextTokens = Number(selected?.contextTokens || settings.modelContextTokens || 0);
+  if (contextTokens > 0) meta.push(`${formatTokens(contextTokens).replace(' tokens', '')} ${t('ui.context.window').toLowerCase()}`);
+  const metaEl = document.getElementById('settingsCurrentModelMeta');
+  if (metaEl) {
+    metaEl.textContent = meta.join(' · ');
+    metaEl.hidden = !meta.length;
+  }
+  const thinking = settings.thinkingEnabled !== false;
+  const fast = normalizeFastMode(settings.fastMode);
+  const effort = normalizeReasoningEffort(settings.reasoningEffort);
+  for (const toggle of document.querySelectorAll('[data-runtime-toggle]')) {
+    toggle.setAttribute('aria-checked', String(toggle.dataset.runtimeToggle === 'fast' ? fast : thinking));
+  }
+  for (const card of document.querySelectorAll('[data-runtime-effort]')) {
+    card.setAttribute('aria-checked', String(card.dataset.runtimeEffort === effort));
+  }
+  const countEl = document.getElementById('settingsModelCatalogCount');
+  if (countEl) countEl.textContent = t('settings.models.catalog_count', { count: availableModels.filter(isModelRuntimeSelectable).length });
+}
+
+function handleSettingsRuntimeClick(event) {
+  const toggle = event.target.closest?.('[data-runtime-toggle]');
+  const effort = event.target.closest?.('[data-runtime-effort]');
+  if (toggle) {
+    if (toggle.dataset.runtimeToggle === 'fast') setModelRuntimeOption('fastMode', !normalizeFastMode(settings.fastMode));
+    else setModelRuntimeOption('thinkingEnabled', settings.thinkingEnabled === false);
+  } else if (effort) {
+    setModelRuntimeOption('reasoningEffort', normalizeReasoningEffort(effort.dataset.runtimeEffort));
+  } else {
+    return;
+  }
+  renderSettingsModelSummary();
+}
+
+function updateSettingsBackToTop() {
+  const button = document.getElementById('settingsBackToTop');
+  const dialog = els.settingsDialog;
+  if (!button || !dialog) return;
+  const scrollable = dialog.scrollHeight > dialog.clientHeight + 24;
+  button.hidden = dialog.hidden || !(scrollable && dialog.scrollTop > 24);
+}
+
+function scrollSettingsToTop() {
+  const reduce = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+  els.settingsDialog.scrollTo({ top: 0, left: 0, behavior: reduce ? 'auto' : 'smooth' });
+  const title = settingsActivePane ? document.querySelector(`#settingsPane-${settingsActivePane} .settings-pane-title`) : null;
+  (title || els.settingsForm.querySelector('[data-settings-category]'))?.focus({ preventScroll: true });
+}
+
+function positionSettingsModelMenu(anchor) {
+  const viewport = globalThis.innerHeight || document.documentElement.clientHeight || 800;
+  const rect = anchor.getBoundingClientRect();
+  const below = viewport - rect.bottom - 12;
+  const above = rect.top - 12;
+  const openBelow = below >= 300 || below >= above;
+  const room = Math.max(240, Math.min(560, openBelow ? below : above));
+  els.modelMenu.style.maxHeight = `${Math.floor(room)}px`;
+  if (openBelow) {
+    els.modelMenu.style.top = `${Math.round(rect.bottom + 6)}px`;
+    els.modelMenu.style.bottom = 'auto';
+  } else {
+    els.modelMenu.style.top = 'auto';
+    els.modelMenu.style.bottom = `${Math.round(viewport - rect.top + 6)}px`;
+  }
+}
+
+function openSettingsModelPicker(event) {
+  event.stopPropagation();
+  const anchor = event.currentTarget;
+  const wasOpen = !els.modelMenu.hidden && els.modelMenu.dataset.floating === 'settings';
+  closeFloatingPanels();
+  if (wasOpen) return;
+  setModelSelectionTarget('chat');
+  document.body.append(els.modelMenu);
+  els.modelMenu.dataset.floating = 'settings';
+  if (els.modelMenuTitle) els.modelMenuTitle.textContent = t('ui.choose.hermes.model');
+  els.modelMenu.hidden = false;
+  positionSettingsModelMenu(anchor);
+  els.modelMenuButton.setAttribute('aria-expanded', 'true');
+  els.modelSearchInput.focus();
+}
+
+function showSettingsPane(pane, { field = '', focus = true } = {}) {
+  const home = document.getElementById('settingsCategoryHome');
+  const release = els.settingsForm.querySelector('.release-settings');
+  settingsActivePane = SETTINGS_PANES.includes(pane) ? pane : '';
+  home.hidden = Boolean(settingsActivePane);
+  if (release) release.hidden = Boolean(settingsActivePane);
+  for (const paneEl of els.settingsForm.querySelectorAll('[data-settings-pane]')) {
+    paneEl.hidden = paneEl.dataset.settingsPane !== settingsActivePane;
+  }
+  els.settingsDialog.dataset.settingsView = settingsActivePane || 'home';
+  els.settingsDialog.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  if (settingsActivePane === 'models') renderSettingsModelSummary();
+  renderSettingsEditedMarkers();
+  requestAnimationFrame(updateSettingsBackToTop);
+  if (!focus) return;
+  if (!settingsActivePane) {
+    const origin = settingsReturnFocus && home.contains(settingsReturnFocus) ? settingsReturnFocus : home.querySelector('[data-settings-category]');
+    origin?.focus({ preventScroll: true });
+    return;
+  }
+  const paneEl = document.getElementById(`settingsPane-${settingsActivePane}`);
+  const fieldEl = field ? document.getElementById(field) : null;
+  if (fieldEl && paneEl.contains(fieldEl)) {
+    requestAnimationFrame(() => {
+      fieldEl.scrollIntoView({ block: 'center', behavior: 'auto' });
+      fieldEl.focus({ preventScroll: true });
+    });
+    return;
+  }
+  paneEl.querySelector('.settings-pane-title')?.focus({ preventScroll: true });
+}
+
+function openSettingsDialog(arg) {
+  const target = resolveSettingsTarget(arg);
   renderVersionInfo();
   syncSettingsForm();
   renderCompatibilityPanel();
@@ -2029,15 +2275,30 @@ function openSettingsDialog() {
   if (isConnected()) void loadCronJobs({ quiet: true });
   els.settingsDialog.hidden = false;
   els.settingsDialog.setAttribute('aria-hidden', 'false');
-  els.settingsDialog.scrollTo({ top: 0, left: 0, behavior: 'auto' });
-  const mode = normalizeConnectionMode(settings.connectionMode);
-  (mode === 'cloud' ? els.connectButton : els.gatewayUrlInput)?.focus({ preventScroll: true });
+  settingsReturnFocus = null;
+  showSettingsPane(target.pane, { field: target.field, focus: false });
+  captureSettingsBaseline();
+  if (target.pane) {
+    showSettingsPane(target.pane, { field: target.field });
+    return;
+  }
+  els.settingsForm.querySelector('[data-settings-category]')?.focus({ preventScroll: true });
 }
 
 function closeSettingsDialog() {
   els.settingsDialog.hidden = true;
   els.settingsDialog.setAttribute('aria-hidden', 'true');
   els.settingsButton.focus();
+}
+
+function handleSettingsCategoryNavigation(event) {
+  const card = event.target.closest?.('[data-settings-category]');
+  if (card) {
+    settingsReturnFocus = card;
+    showSettingsPane(card.dataset.settingsCategory);
+    return;
+  }
+  if (event.target.closest?.('[data-settings-back]')) showSettingsPane('');
 }
 
 function browserControlMessage(type, payload = {}) {
@@ -2426,6 +2687,22 @@ function currentBrowserPlatformSnapshot() {
   };
 }
 
+// Firefox and Opera dock Hermes in the browser's own sidebar, which the
+// browser keeps open on every tab of a window. Per-tab attachment only exists
+// for the Chromium side panel, so those browsers get an honest note instead
+// of a choice that would do nothing.
+function panelUsesWindowSidebar() {
+  return !browserApi?.sidePanel && Boolean(globalThis.opr?.sidebarAction || browserApi?.sidebarAction);
+}
+
+function renderPanelResidencyHost() {
+  const sidebarHost = panelUsesWindowSidebar();
+  const note = document.getElementById('panelResidencySidebarNote');
+  if (note) note.hidden = !sidebarHost;
+  const grid = document.getElementById('panelResidencyOptions')?.querySelector('.settings-choice-grid');
+  if (grid) grid.hidden = sidebarHost;
+}
+
 function currentGatewaySummary(overrides = {}) {
   return gatewayConnectionSummary({
     gatewayMode: overrides.gatewayMode ?? settings.gatewayMode,
@@ -2717,6 +2994,44 @@ function ensureSidepanelInstanceId() {
 
 let composerDraftSaveTimer = 0;
 let restoringComposerDraft = false;
+let composerFrame = null;
+
+function bindComposerResize(area) {
+  const grip = area.parentElement?.querySelector('.composer-resize span');
+  if (!grip || grip.dataset.bound) return;
+  grip.dataset.bound = '1';
+  grip.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = area.getBoundingClientRect().height;
+    const styles = area.ownerDocument.defaultView.getComputedStyle(area);
+    const min = Number.parseFloat(styles.minHeight) || 0;
+    const max = Number.parseFloat(styles.maxHeight);
+    grip.setPointerCapture(event.pointerId);
+    const move = (moveEvent) => {
+      const next = startHeight + (moveEvent.clientY - startY);
+      const clamped = Math.max(min, Number.isFinite(max) ? Math.min(next, max) : next);
+      area.style.height = `${Math.round(clamped)}px`;
+      area.style.overflowY = area.scrollHeight > area.clientHeight + 1 ? 'auto' : 'hidden';
+    };
+    const stop = () => {
+      grip.removeEventListener('pointermove', move);
+      grip.removeEventListener('pointerup', stop);
+      grip.removeEventListener('pointercancel', stop);
+    };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', stop);
+    grip.addEventListener('pointercancel', stop);
+  });
+}
+
+function syncComposerFrame(options = {}) {
+  if (!els.input) return;
+  composerFrame ||= bindComposerFrame(els.input);
+  bindComposerResize(els.input);
+  composerFrame.sync(options);
+}
 
 function composerDraftStorage() {
   return globalThis.sessionStorage || null;
@@ -2759,6 +3074,7 @@ function restoreComposerDraft() {
   try {
     if (els.input && !String(els.input.value || '').trim() && draft.text) {
       els.input.value = draft.text;
+      els.input.setSelectionRange(els.input.value.length, els.input.value.length);
     }
     if (!attachments.length && draft.attachments.length) {
       attachments = draft.attachments;
@@ -2770,6 +3086,7 @@ function restoreComposerDraft() {
     return true;
   } finally {
     restoringComposerDraft = false;
+    syncComposerFrame({ followCaret: true });
   }
 }
 
@@ -3647,6 +3964,7 @@ async function unlockContextScope() {
 
 function setGatewayCapabilities(caps) {
   gatewayCapabilities = caps || { ...DEFAULT_GATEWAY_CAPABILITIES };
+  scheduleVoiceLiveStatusRefresh();
   const nextDeveloperMode = gatewayCapabilities.browserControlDeveloperMode === true;
   const nextArtifactTransport = gatewayCapabilities.browserControlArtifactTransport === true;
   if (settings.browserControlDeveloperMode !== nextDeveloperMode
@@ -4292,6 +4610,7 @@ function updateComposerBusyState() {
   renderQueueNotice();
   renderSteerNotice();
   renderCompletionPendingRow();
+  syncComposerFrame();
 }
 
 function activeBotProfileName() {
@@ -5079,7 +5398,7 @@ async function executeNativeBrowserCommand(parsedCommand) {
     return true;
   }
   if (action === 'provider-settings') {
-    openSettingsDialog();
+    openSettingsDialog({ pane: 'models' });
     setStatus('ok', 'Provider settings opened', 'Connection and model provider controls are available in Settings.');
     return true;
   }
@@ -5206,6 +5525,8 @@ function insertExternalVoiceTranscript(transcript = '', source = 'voice dictatio
   if (!spoken) return false;
   const current = els.input.value.trim();
   els.input.value = [current, spoken].filter(Boolean).join(current && spoken ? ' ' : '');
+  els.input.setSelectionRange(els.input.value.length, els.input.value.length);
+  syncComposerFrame({ followCaret: true });
   renderContextWindow();
   renderSkillSuggestions();
   els.input.focus();
@@ -5395,7 +5716,7 @@ function updateVoiceButtonState() {
   const dedicatedPage = canOpenVoiceDictationPage();
   const browserSpeech = canUseBrowserSpeechFallback();
   const supported = directRecorder || browserSpeech || dedicatedPage;
-  els.voiceButton.disabled = !supported || voiceTransitionInFlight;
+  els.voiceButton.disabled = !supported || voiceTransitionInFlight || Boolean(liveVoice);
   els.voiceButton.classList.toggle('recording', dictating);
   els.voiceButton.classList.toggle('active', dictating);
   const mode = canUseHermesVoiceTranscription()
@@ -5408,6 +5729,7 @@ function updateVoiceButtonState() {
     : (dictating ? `Stop voice dictation (${mode})` : `Start voice dictation (${mode})`);
   els.voiceButton.setAttribute('aria-label', els.voiceButton.title);
   els.voiceButton.setAttribute('aria-busy', String(voiceTransitionInFlight || transcribingVoice));
+  updateLiveVoiceButtonState();
   renderVoiceActivity();
 }
 
@@ -5415,29 +5737,355 @@ function renderVoiceActivity() {
   const meter = els.voiceActivity;
   if (!meter) return;
   const session = voiceCaptureSession;
+  const live = liveVoice;
   const recording = Boolean(dictating && session && !session.stopRequested);
   const transcribing = Boolean(transcribingVoice);
-  meter.hidden = !(recording || transcribing);
-  meter.classList.toggle('recording', recording);
-  meter.classList.toggle('transcribing', transcribing);
+  syncVoiceGlow();
+  // This runs four times a second while dictating. Write only what changed, and
+  // move the level bars with transforms, so the meter never re-lays out the panel.
+  const hidden = !(recording || transcribing || live);
+  if (meter.hidden !== hidden) meter.hidden = hidden;
+  meter.classList.toggle('live', Boolean(live));
+  meter.classList.toggle('recording', live ? !live.delegationId : recording);
+  meter.classList.toggle('transcribing', live ? Boolean(live.delegationId) : transcribing);
   if (els.voiceActivityLabel) {
-    els.voiceActivityLabel.textContent = transcribing ? 'Transcribing' : 'Dictating';
+    const label = live ? liveVoiceStatusLabel(live) : (transcribing ? 'Transcribing' : 'Dictating');
+    if (els.voiceActivityLabel.textContent !== label) els.voiceActivityLabel.textContent = label;
   }
   if (els.voiceActivityTimer) {
-    const startedAt = Number(session?.startedAt || 0);
-    const seconds = startedAt ? (Date.now() - startedAt) / 1000 : 0;
-    els.voiceActivityTimer.textContent = formatVoiceElapsed(seconds);
+    const startedAt = Number((live ? live.startedAt : session?.startedAt) || 0);
+    const elapsed = formatVoiceElapsed(startedAt ? (Date.now() - startedAt) / 1000 : 0);
+    if (els.voiceActivityTimer.textContent !== elapsed) els.voiceActivityTimer.textContent = elapsed;
   }
   const bars = els.voiceActivityBars?.querySelectorAll('i') || [];
-  const heights = voiceLevelBarHeights(Number(session?.level || 0), { active: recording && !transcribing });
+  const level = live ? Number(live.session?.level?.() || 0) : Number(session?.level || 0);
+  const heights = voiceLevelBarHeights(level, { active: live ? live.phase === 'live' : recording && !transcribing });
   bars.forEach((bar, index) => {
-    bar.style.height = `${Math.round((heights[index] || 0.25) * 100)}%`;
+    const scale = `scaleY(${(heights[index] || 0.25).toFixed(2)})`;
+    if (bar.style.transform !== scale) bar.style.transform = scale;
   });
+}
+
+// The glow module loads on first use, or as the pointer heads for the mic, so
+// opening the panel never parses it. It is decorative: if it fails to load,
+// dictation carries on without it.
+function loadVoiceWingbeat() {
+  voiceWingbeatLoading ||= import('./lib/voice-wingbeat.mjs').then(({ createVoiceWingbeat }) => {
+    const host = document.getElementById('composerDropZone');
+    if (!voiceWingbeat && host) {
+      voiceWingbeat = createVoiceWingbeat(host, {
+        level: () => Number((liveVoice ? liveVoice.session?.level?.() : voiceCaptureSession?.level) || 0),
+        analyser: () => (liveVoice ? liveVoice.session?.analyser?.() : voiceCaptureSession?.analyser) || null,
+      });
+    }
+    return voiceWingbeat;
+  }, () => null);
+  return voiceWingbeatLoading;
+}
+
+function syncVoiceGlow() {
+  const active = Boolean(dictating || transcribingVoice || liveVoice);
+  const processing = Boolean(transcribingVoice || liveVoice?.delegationId);
+  if (voiceWingbeat) voiceWingbeat.set({ active, processing });
+  else if (active) loadVoiceWingbeat().then((glow) => { if (glow) syncVoiceGlow(); });
+}
+
+function prewarmVoiceWingbeat() {
+  loadVoiceWingbeat().then((glow) => glow?.prepare?.());
+}
+
+// GPT-Live voice chat: a full-duplex voice that delegates real work to Hermes.
+// The profile opts in with voice.voice_chat_mode: gpt-live and the Hermes host
+// holds the OpenAI key, so the button only shows up for those profiles. The
+// module loads on demand; the panel pays nothing until it is used.
+function loadVoiceLiveModule() {
+  voiceLiveModuleLoading ||= import('./lib/voice-live.mjs').catch((error) => {
+    voiceLiveModuleLoading = null;
+    throw error;
+  });
+  return voiceLiveModuleLoading;
+}
+
+function voiceLiveScopeKey() {
+  return [normalizeGatewayMode(settings.gatewayMode), settings.gatewayUrl || '', safeActiveProfile() || ''].join('|');
+}
+
+// The live session is created by the local Hermes dashboard, like dashboard
+// transcription, so it needs a local connection and WebRTC in this panel.
+function voiceLiveSupported() {
+  return normalizeGatewayMode(settings.gatewayMode) === 'local-api'
+    && typeof globalThis.RTCPeerConnection === 'function'
+    && Boolean(globalThis.navigator?.mediaDevices?.getUserMedia);
+}
+
+function voiceLiveDashboardBaseUrl() {
+  return resolveDashboardTranscriptionBaseUrl({
+    desktopDashboardUrl,
+    gatewayMode: normalizeGatewayMode(settings.gatewayMode),
+    gatewayUrl: settings.gatewayUrl,
+    discover: () => ensureDesktopDashboardUrl({ timeoutMs: 2_500 }),
+  });
+}
+
+function currentVoiceLiveStatus() {
+  return voiceLiveStatus?.scopeKey === voiceLiveScopeKey() ? voiceLiveStatus : null;
+}
+
+function refreshVoiceLiveStatus({ force = false } = {}) {
+  if (!voiceLiveSupported() || !isConnected()) {
+    updateLiveVoiceButtonState();
+    return Promise.resolve(null);
+  }
+  const cached = currentVoiceLiveStatus();
+  if (!force && cached && Date.now() - cached.checkedAt < VOICE_LIVE_STATUS_TTL_MS) return Promise.resolve(cached);
+  voiceLiveStatusLoading ||= (async () => {
+    const scopeKey = voiceLiveScopeKey();
+    let status = null;
+    try {
+      status = await fetchVoiceLiveStatus({ baseUrl: await voiceLiveDashboardBaseUrl(), profile: safeActiveProfile() });
+    } catch {
+      status = null;
+    } finally {
+      voiceLiveStatusLoading = null;
+    }
+    // Remember "not offered" too, so a reconnect burst never turns into polling.
+    voiceLiveStatus = { ...(status || { mode: 'unknown', available: false, reason: '' }), scopeKey, checkedAt: Date.now() };
+    updateLiveVoiceButtonState();
+    return currentVoiceLiveStatus();
+  })();
+  return voiceLiveStatusLoading;
+}
+
+// Capabilities load on connect and reconnect; the probe waits for an idle moment
+// so it never competes with startup work. A pending probe is never pushed back,
+// so frequent connection checks cannot starve it.
+function scheduleVoiceLiveStatusRefresh(delayMs = 1_500) {
+  if (voiceLiveStatusTimer) return;
+  voiceLiveStatusTimer = setTimeout(() => {
+    voiceLiveStatusTimer = null;
+    const run = () => { void refreshVoiceLiveStatus(); };
+    if (typeof globalThis.requestIdleCallback === 'function') globalThis.requestIdleCallback(run, { timeout: 5_000 });
+    else run();
+  }, delayMs);
+}
+
+function updateLiveVoiceButtonState() {
+  if (!els.liveVoiceButton) return;
+  const live = Boolean(liveVoice);
+  const status = currentVoiceLiveStatus();
+  els.liveVoiceButton.hidden = !(live || (status?.mode === 'gpt-live' && isConnected()));
+  els.liveVoiceButton.disabled = !live && (!status?.available || dictating || voiceTransitionInFlight);
+  els.liveVoiceButton.classList.toggle('active', live);
+  els.liveVoiceButton.classList.toggle('live', live);
+  els.liveVoiceButton.setAttribute('aria-pressed', String(live));
+  els.liveVoiceButton.title = live
+    ? 'End live voice chat'
+    : (status?.available
+      ? 'Start live voice chat (GPT-Live)'
+      : `Live voice chat is unavailable: ${status?.reason || 'GPT-Live needs an OpenAI API key on the Hermes host.'}`);
+  els.liveVoiceButton.setAttribute('aria-label', els.liveVoiceButton.title);
+}
+
+function liveVoiceStatusLabel(state = liveVoice) {
+  if (!state) return '';
+  if (state.phase === 'starting') return 'Live voice · Connecting';
+  if (state.speaking) return 'Live voice · Speaking';
+  if (state.delegationId) return 'Live voice · Hermes is working';
+  return 'Live voice · Listening';
+}
+
+function liveVoiceErrorDetail(error) {
+  const name = String(error?.name || '');
+  if (name === 'NotAllowedError' || name === 'SecurityError') {
+    return 'Microphone access is blocked for Hermes. Start voice dictation once to allow the microphone, then try live voice again.';
+  }
+  if (name === 'NotFoundError') return 'No microphone was found.';
+  return String(error?.message || error || 'GPT-Live did not start.');
+}
+
+function liveVoiceSeedHistory(module) {
+  return module.toLiveHistory(messages
+    .filter((message) => message.role === 'user' || message.role === 'assistant')
+    .map((message) => ({ role: message.role, text: typeof message.content === 'string' ? message.content : '' })));
+}
+
+function finishLiveVoiceState(state) {
+  if (!state || liveVoice !== state) return;
+  liveVoice = null;
+  clearInterval(state.tick);
+  clearTimeout(state.utteranceTimer);
+  state.tick = null;
+  state.utteranceTimer = null;
+  updateVoiceButtonState();
+}
+
+function endLiveVoice({ spokenStop = false, quiet = false } = {}) {
+  const state = liveVoice;
+  if (!state) return;
+  finishLiveVoiceState(state);
+  state.session?.close();
+  if (!quiet) setStatus('ok', 'Live voice ended', spokenStop ? 'Ended when you said stop.' : 'The live voice chat is closed.', { translateDetail: false });
+}
+
+async function runLiveVoiceDelegation(state, module, delegationId, prompt, voiceContext) {
+  // Claim the turn first: replies still arriving for an older request are dropped.
+  state.delegationId = delegationId;
+  state.spokenLength = 0;
+  state.lastTool = '';
+  renderVoiceActivity();
+  // A newer request supersedes one still running, so the voice answers what was asked last.
+  if (sending) {
+    await stopCurrentTurn().catch(() => false);
+    for (let waited = 0; sending && waited < 5_000; waited += 100) await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  const current = () => liveVoice === state && state.delegationId === delegationId;
+  if (!current()) return;
+  let spoke = false;
+  const speakFrom = (text, settled) => {
+    if (!current()) return;
+    const spoken = module.speakableText(text === '(empty response)' ? '' : text);
+    const { chunk, next } = module.nextSpeakableChunk(spoken, state.spokenLength, { settled });
+    if (!chunk) return;
+    state.session?.speak(delegationId, chunk);
+    state.spokenLength = next;
+    spoke = true;
+  };
+  let sent = false;
+  try {
+    sent = await askHermes(prompt, [], {
+      preserveComposer: true,
+      disableCommandParsing: true,
+      voiceLive: { context: voiceContext, note: module.voiceLiveTurnNote(voiceContext) },
+      onDelta: (text) => speakFrom(text, false),
+      onTool: (activity) => {
+        const label = String(activity?.label || activity?.rawName || '').trim();
+        if (!label || label === state.lastTool || !current()) return;
+        state.lastTool = label;
+        state.session?.think(delegationId, `Hermes is working: ${label}. Not done yet.`);
+      },
+      onComplete: (answer) => speakFrom(answer, true),
+    });
+  } catch {
+    sent = false;
+  }
+  if (!current()) return;
+  if (!sent) state.session?.speak(delegationId, 'Sorry, I could not reach Hermes for that request.');
+  else if (!spoke) state.session?.think(delegationId, 'Hermes finished that request without a spoken result.');
+  state.delegationId = '';
+  renderVoiceActivity();
+}
+
+function liveVoiceHandlers(state, module) {
+  return {
+    // The voice answers a bare "stop" itself and never delegates it, so the
+    // stop phrase is judged on the user's transcript once the utterance settles.
+    onTranscript: (fragment) => {
+      if (liveVoice !== state || fragment.speaker !== 'user') return;
+      state.utterance += fragment.text;
+      clearTimeout(state.utteranceTimer);
+      state.utteranceTimer = setTimeout(() => {
+        state.utteranceTimer = null;
+        const utterance = state.utterance;
+        state.utterance = '';
+        if (liveVoice === state && module.isVoiceStopCommand(utterance)) endLiveVoice({ spokenStop: true });
+      }, 1_500);
+    },
+    onDelegation: (delegationId, context) => {
+      if (liveVoice !== state) return;
+      const { prompt, context: voiceContext } = module.delegationPrompt(context);
+      if (prompt && module.isVoiceStopCommand(prompt)) {
+        endLiveVoice({ spokenStop: true });
+        return;
+      }
+      void runLiveVoiceDelegation(state, module, delegationId, prompt, voiceContext);
+    },
+    onSpeakingChange: (speaking) => {
+      if (liveVoice !== state) return;
+      state.speaking = speaking;
+      renderVoiceActivity();
+    },
+    onError: (message) => {
+      if (liveVoice === state) setStatus('warn', 'Live voice', message, { translateDetail: false });
+    },
+    onClosed: (reason, usageSeconds) => {
+      if (liveVoice !== state) return;
+      finishLiveVoiceState(state);
+      if (reason === 'close_requested') return;
+      const detail = reason === 'connection_lost'
+        ? 'The connection to GPT-Live was lost.'
+        : (reason && reason !== 'closed' ? reason : 'GPT-Live ended the session.');
+      const seconds = Number.isFinite(usageSeconds) ? ` (${Math.round(usageSeconds)}s)` : '';
+      setStatus('warn', 'Live voice ended', `${detail}${seconds}`, { translateDetail: false });
+    },
+  };
+}
+
+async function startLiveVoice() {
+  if (liveVoice || dictating || voiceTransitionInFlight) return;
+  const state = {
+    phase: 'starting',
+    startedAt: Date.now(),
+    speaking: false,
+    delegationId: '',
+    spokenLength: 0,
+    lastTool: '',
+    utterance: '',
+    utteranceTimer: null,
+    tick: null,
+    session: null,
+  };
+  liveVoice = state;
+  state.tick = setInterval(renderVoiceActivity, 250);
+  updateVoiceButtonState();
+  try {
+    if (!isConnected()) throw new Error('Connect to Hermes first.');
+    if (!voiceLiveSupported()) throw new Error('Live voice needs a local Hermes connection and a browser with WebRTC.');
+    const module = await loadVoiceLiveModule();
+    const status = await refreshVoiceLiveStatus({ force: true });
+    if (liveVoice !== state) return;
+    if (status?.mode !== 'gpt-live' || !status.available) {
+      throw new Error(status?.reason || 'Choose GPT-Live as the voice chat mode in Hermes and give the Hermes host an OpenAI API key.');
+    }
+    const baseUrl = await voiceLiveDashboardBaseUrl();
+    const profile = safeActiveProfile();
+    state.session = new module.VoiceLiveSession(liveVoiceHandlers(state, module), {
+      createSession: ({ sdp, history }) => module.requestVoiceLiveSession({ baseUrl, profile, sdp, history }),
+    });
+    await state.session.start(liveVoiceSeedHistory(module));
+    if (liveVoice !== state) {
+      state.session.close();
+      return;
+    }
+    state.phase = 'live';
+    setStatus('ok', 'Live voice on', 'Talk to Hermes. Say "stop", or press the live voice button, to end.', { translateDetail: false });
+  } catch (error) {
+    const wasCurrent = liveVoice === state;
+    finishLiveVoiceState(state);
+    state.session?.close();
+    if (wasCurrent) setStatus('warn', 'Live voice could not start', liveVoiceErrorDetail(error), { translateDetail: false });
+  } finally {
+    if (liveVoice === state) renderVoiceActivity();
+  }
+}
+
+function toggleLiveVoice() {
+  if (liveVoice) {
+    endLiveVoice();
+    return Promise.resolve();
+  }
+  return startLiveVoice();
+}
+
+function prewarmLiveVoice() {
+  loadVoiceLiveModule().catch(() => null);
+  prewarmVoiceWingbeat();
 }
 
 function applyDictationTranscript(transcript = '') {
   const spoken = String(transcript || '').trim();
   els.input.value = [dictationBaseText, spoken].filter(Boolean).join(dictationBaseText && spoken ? ' ' : '');
+  els.input.setSelectionRange(els.input.value.length, els.input.value.length);
+  syncComposerFrame({ followCaret: true });
   renderContextWindow();
   renderSkillSuggestions();
 }
@@ -7388,6 +8036,38 @@ async function reconcileInlineAssistModelBinding(models = availableModels) {
   return true;
 }
 
+// Display row for a stored choice the current catalog does not list (yet). The
+// startup cache never stores gateway alias rows, so the saved Gateway default
+// shows as itself instead of as whichever row happens to come first.
+function unlistedModelSelectionRow(binding = null, modelId = settings.model) {
+  const pinned = binding && (binding.modelId === modelId || binding.rawModelId === modelId) ? binding : null;
+  if (modelId === DEFAULT_SETTINGS.model || pinned?.gatewayDefault === true) {
+    return {
+      id: modelId,
+      rawModelId: pinned?.rawModelId || modelId,
+      label: translateUiText('Gateway default'),
+      provider: '',
+      providerLabel: 'Hermes gateway',
+      contextTokens: pinned?.contextTokens || 0,
+      gatewayAlias: true,
+      gatewayDefault: true,
+      source: 'gateway',
+      runtimeSelectable: true,
+    };
+  }
+  return {
+    id: modelId,
+    rawModelId: pinned?.rawModelId || modelId,
+    label: pinned?.rawModelId || modelId,
+    provider: pinned?.provider || '',
+    providerLabel: pinned?.provider || '',
+    contextTokens: pinned?.contextTokens || 0,
+    ...(pinned?.gatewayAlias ? { gatewayAlias: true } : {}),
+    source: 'selected',
+    runtimeSelectable: true,
+  };
+}
+
 function renderModelOptions(models = availableModels) {
   const effectiveBinding = currentEffectiveModelBinding();
   const effectiveModelId = resolveCatalogModelIdForBinding({ binding: effectiveBinding, models });
@@ -7400,18 +8080,9 @@ function renderModelOptions(models = availableModels) {
   }
   const normalized = models.length ? models : normalizeHermesModels([], settings.model);
   availableModels = normalized;
-  const selectedIsDefaultFallback =
-    settings.model === DEFAULT_SETTINGS.model &&
-    normalized.length > 1 &&
-    normalized[0]?.id !== settings.model;
-  const selectedModel = normalized.find((model) => model.id === settings.model);
-  if (selectedModel?.source === 'external') {
-    const runtimeModel = normalized.find((model) => isModelRuntimeSelectable(model));
-    settings.model = runtimeModel?.id || DEFAULT_SETTINGS.model;
-  } else if (selectedIsDefaultFallback || !selectedModel) {
-    settings.model = normalized[0]?.id || DEFAULT_SETTINGS.model;
-  }
-  const selected = normalized.find((model) => model.id === settings.model) || normalized[0];
+  settings.model = resolveStoredModelSelection({ selectedId: settings.model, binding: effectiveBinding, models: normalized }).modelId;
+  const listed = normalized.find((model) => model.id === settings.model);
+  const selected = listed && listed.source !== 'selected' ? listed : unlistedModelSelectionRow(effectiveBinding, settings.model);
   if (selected) {
     settings.modelContextTokens = selected.contextTokens || 0;
     const providerLabel = modelProviderLabel(selected);
@@ -7446,7 +8117,12 @@ async function applyAssistSelectedModel(model) {
 
 function modelForSelectionTarget(target = modelSelectionTarget) {
   if (target === 'room-member') {
-    return availableModels.find(isModelRuntimeSelectable)
+    // Start on the member's own model/provider when it is known.
+    const own = roomModelPickTarget?.model
+      ? availableModels.find((model) => model.id === roomModelPickTarget.model || model.rawModelId === roomModelPickTarget.model)
+      : null;
+    return own
+      || availableModels.find(isModelRuntimeSelectable)
       || availableModels[0]
       || null;
   }
@@ -7498,13 +8174,19 @@ function setModelSelectionTarget(target = 'chat') {
     // session only, never the 1:1 chat model.
     if (els.modelMenu.parentElement !== document.body) document.body.append(els.modelMenu);
     els.modelMenu.dataset.selectionTarget = 'room-member';
+    delete els.modelMenu.dataset.floating;
+    // Placement is CSS-owned for room picks; drop inline offsets left by an
+    // earlier Assist open so they can not push the picker off-screen.
+    els.modelMenu.style.removeProperty('top');
+    els.modelMenu.style.removeProperty('bottom');
+    els.modelMenu.style.removeProperty('max-height');
     if (els.modelMenuTitle) els.modelMenuTitle.textContent = `${t('ui.room.bots.title')} · ${roomMemberModelLabel()}`;
-    positionAssistModelMenu();
   } else {
     if (modelMenuHome.parent && els.modelMenu.parentElement !== modelMenuHome.parent) {
       modelMenuHome.parent.insertBefore(els.modelMenu, modelMenuHome.next);
     }
     delete els.modelMenu.dataset.selectionTarget;
+    delete els.modelMenu.dataset.floating;
     els.modelMenu.style.removeProperty('top');
     els.modelMenu.style.removeProperty('bottom');
     els.modelMenu.style.removeProperty('max-height');
@@ -7625,27 +8307,75 @@ function renderModelMenu(query = els.modelSearchInput?.value || '') {
 
 function renderModelRuntimeOptions() {
   if (!els.modelOptionsList) return;
+  const restoreRangeFocus = els.modelOptionsList.contains(document.activeElement)
+    && document.activeElement?.matches('.effort-control-range');
+  const renderTarget = modelSelectionTarget;
+  const renderSessionId = settings.sessionId;
   const assistTarget = modelSelectionTarget === 'assist';
+  const roomTarget = modelSelectionTarget === 'room-member';
   const assistOptions = inlineAssistRuntimeOptions();
-  const thinkingEnabled = assistTarget ? assistOptions.thinkingEnabled : settings.thinkingEnabled !== false;
-  const fastMode = assistTarget ? assistOptions.fastMode : normalizeFastMode(settings.fastMode);
-  const effort = assistTarget ? assistOptions.reasoningEffort : normalizeReasoningEffort(settings.reasoningEffort);
+  // A room member shows its OWN session options. Until they are read they are
+  // shown as unavailable, never borrowed from the 1:1 chat.
+  const memberOptions = roomTarget ? currentRoomMemberRuntimeOptions() : null;
+  const memberReady = Boolean(memberOptions && memberOptions.state === 'ok');
+  const thinkingEnabled = roomTarget
+    ? (memberReady ? memberOptions.thinkingEnabled : true)
+    : assistTarget ? assistOptions.thinkingEnabled : settings.thinkingEnabled !== false;
+  const fastMode = roomTarget
+    ? (memberReady && memberOptions.fastMode === true)
+    : assistTarget ? assistOptions.fastMode : normalizeFastMode(settings.fastMode);
+  const memberEffortListed = memberReady && MODEL_EFFORTS.some((item) => item.value === memberOptions.reasoningEffort);
+  const effort = roomTarget
+    ? (memberEffortListed ? memberOptions.reasoningEffort : 'medium')
+    : assistTarget ? assistOptions.reasoningEffort : normalizeReasoningEffort(settings.reasoningEffort);
+  const roomLocked = roomTarget && !memberReady;
+  const showSelectedEffort = !roomTarget || (memberReady && memberEffortListed && thinkingEnabled);
+  const roomStatusText = !roomTarget ? ''
+    : !memberOptions ? translateUiText('Reading this bot’s settings…')
+      : memberOptions.state === 'no-session' ? translateUiText('This bot has no active session in this room yet. Its settings apply once it has replied.')
+        : memberOptions.state !== 'ok' ? translateUiText('Could not read this bot’s settings.')
+          : (!memberEffortListed && thinkingEnabled ? `${translateUiText('Effort')}: ${memberOptions.reasoningEffort}` : '');
   const effortRows = MODEL_EFFORTS.map((item) => `
-    <button class="model-effort-option ${item.value === effort ? 'selected' : ''}" type="button" data-effort="${item.value}">
-      <span>${item.label}</span><strong>${item.value === effort ? '✓' : ''}</strong>
+    <button class="model-effort-option ${showSelectedEffort && item.value === effort ? 'selected' : ''}" type="button" data-effort="${item.value}"${roomLocked ? ' disabled' : ''}>
+      <span>${item.label}</span><strong>${showSelectedEffort && item.value === effort ? '✓' : ''}</strong>
     </button>
   `).join('');
   els.modelOptionsList.innerHTML = `
-    <div class="model-options-heading">${assistTarget ? 'Hermes Assist options' : 'Options'}</div>
-    <button class="model-toggle-option" type="button" data-toggle="thinking" aria-pressed="${String(thinkingEnabled)}">
+    <div class="model-options-heading">${assistTarget ? 'Hermes Assist options' : roomTarget ? 'Bot options' : 'Options'}</div>
+    ${roomStatusText ? `<p class="model-options-note" role="status">${roomStatusText}</p>` : ''}
+    <button class="model-toggle-option" type="button" data-toggle="thinking" aria-pressed="${String(thinkingEnabled)}"${roomLocked ? ' disabled' : ''}>
       <span>Thinking</span><strong class="toggle-switch ${thinkingEnabled ? 'on' : ''}" aria-hidden="true"></strong>
     </button>
-    <button class="model-toggle-option" type="button" data-toggle="fast" aria-pressed="${String(fastMode)}">
+    <button class="model-toggle-option" type="button" data-toggle="fast" aria-pressed="${String(fastMode)}"${roomLocked ? ' disabled' : ''}>
       <span>Fast</span><strong class="toggle-switch ${fastMode ? 'on' : ''}" aria-hidden="true"></strong>
     </button>
-    <div class="model-options-heading effort-heading">Effort</div>
     <div class="model-effort-list">${effortRows}</div>
   `;
+  const effortButtons = els.modelOptionsList.querySelector('.model-effort-list');
+  const control = createEffortControl({
+    value: effort,
+    buttons: effortButtons,
+    storage: browserApi.storage,
+    translate: translateUiText,
+    effortLabel: (option) => t(`settings.models.effort.${option.value}`),
+    disabled: roomLocked,
+    onCommit: (value) => {
+      if (renderTarget !== modelSelectionTarget || renderSessionId !== settings.sessionId || els.modelMenu.hidden) return;
+      if (roomTarget) {
+        void setRoomMemberRuntimeOption({ reasoningEffort: normalizeReasoningEffort(value), thinkingEnabled: true });
+        return;
+      }
+      if (assistTarget) {
+        settings.inlineAssistReasoningEffort = normalizeReasoningEffort(value);
+        renderModelRuntimeOptions();
+        browserApi.storage.local.set({ hermesBrowserSettings: settings });
+      } else {
+        setModelRuntimeOption('reasoningEffort', normalizeReasoningEffort(value));
+      }
+    },
+  });
+  els.modelOptionsList.append(control);
+  if (restoreRangeFocus) control.querySelector('.effort-control-range')?.focus({ preventScroll: true });
 }
 
 function persistModelRuntimeOptions() {
@@ -7778,6 +8508,10 @@ function applySidecarArt() {
   return entry;
 }
 applySidecarArt();
+createBackgroundArtRotation({
+  root: document.documentElement,
+  storage: browserApi?.storage?.local,
+});
 
 function renderContextWindow(userText = els.input?.value || '') {
   const stats = estimateContextWindow({
@@ -7826,6 +8560,7 @@ function renderContextWindow(userText = els.input?.value || '') {
     : meter.title;
   els.contextUsageDetail.textContent = compaction.detail;
   els.contextMeterFill.style.width = meterLimit ? `${Math.min(100, Math.max(0, meterPercent))}%` : '0%';
+  syncComposerFrame();
 
   const compactionStateLabels = {
     healthy: 'Healthy',
@@ -8009,23 +8744,30 @@ function applySelectedModel(selectedId, { persist = true, keepOpen = false } = {
   const previousId = settings.model;
   const previousBinding = currentEffectiveModelBinding();
   const nextId = selectedId || DEFAULT_SETTINGS.model;
-  const selected = availableModels.find((model) => model.id === nextId);
-  if (selected?.source === 'external') {
-    selectedModelProvider = modelProviderLabel(selected);
+  const listed = availableModels.find((model) => model.id === nextId);
+  if (listed?.source === 'external') {
+    selectedModelProvider = modelProviderLabel(listed);
     renderModelMenu();
     setStatus('warn', 'Custom model source is discovery-only', 'This model was discovered from a custom endpoint, but Hermes must expose it through the connected runtime before Browser can route requests to it.');
     return;
   }
+  // A 'selected' placeholder only stands in for a choice the catalog does not
+  // list. Its owner is not a provider, so the saved binding is kept as is.
+  const selected = listed?.source === 'selected' ? null : listed;
+  const keptBinding = !selected && previousBinding
+    && (previousBinding.modelId === nextId || previousBinding.rawModelId === nextId)
+    ? previousBinding
+    : null;
   if (selected) selectedModelProvider = modelProviderLabel(selected);
   const scope = updateBrowserModelScope({
-    selectedModel: selected ? modelBindingFromModel(selected) : { modelId: nextId, rawModelId: nextId, contextTokens: 0 },
+    selectedModel: selected ? modelBindingFromModel(selected) : (keptBinding || { modelId: nextId, rawModelId: nextId, contextTokens: 0 }),
     sessionId: settings.sessionId,
     sessionModelBindings: settings.sessionModelBindings || {},
   });
   settings = {
     ...settings,
     model: nextId,
-    modelContextTokens: selected?.contextTokens || 0,
+    modelContextTokens: selected?.contextTokens || keptBinding?.contextTokens || 0,
     extensionPreferredModel: scope.extensionPreferredModel,
     sessionModelBindings: scope.sessionModelBindings,
     modelScopeVersion: DEFAULT_SETTINGS.modelScopeVersion,
@@ -8875,24 +9617,7 @@ function setQuickCommandMenuOpen(open) {
 }
 
 function scrollInputToCaret() {
-  const input = els.input;
-  if (!input) return;
-  requestAnimationFrame(() => {
-    const start = input.selectionStart;
-    const end = input.selectionEnd;
-    const pos = (typeof start === 'number' && Number.isInteger(start)) ? start : (input.value ? input.value.length : 0);
-    if (typeof input.setSelectionRange === 'function' && typeof start === 'number' && typeof end === 'number') {
-      input.setSelectionRange(start, end);
-    }
-    if (pos >= (input.value?.length || 0)) {
-      input.scrollTop = input.scrollHeight;
-    } else {
-      const textBefore = String(input.value || '').slice(0, pos);
-      const lines = textBefore.split('\n').length;
-      const totalLines = Math.max(1, String(input.value || '').split('\n').length);
-      input.scrollTop = Math.max(0, Math.round((lines / totalLines) * input.scrollHeight - input.clientHeight / 2));
-    }
-  });
+  requestAnimationFrame(() => syncComposerFrame({ followCaret: true }));
 }
 
 function clearQuickCommandDetail() {
@@ -9909,6 +10634,76 @@ function clearActiveGroupLiveMessage() {
 let roomPopoverOpen = false;
 let roomPopoverMemberReads = 0;
 let roomModelPickTarget = null;
+// Last confirmed { model, provider } per room member, filled by the popover's
+// status reads. Lets the model picker open on the provider the bot really uses.
+const roomMemberModelReads = new Map();
+// Each room member's OWN Thinking/effort/Fast, read from its session. The 1:1
+// chat's settings.reasoningEffort must never be shown for (or written by) a bot.
+const roomMemberRuntimeOptions = new Map();
+function roomMemberReadKey(roomId, name) { return `${roomId}::${name}`; }
+
+function currentRoomMemberRuntimeOptions() {
+  const target = roomModelPickTarget;
+  if (!target) return null;
+  return roomMemberRuntimeOptions.get(roomMemberReadKey(target.roomId, target.member.name)) || null;
+}
+
+// Read the bot's own Thinking / effort / Fast from its session and repaint the
+// picker if it is still showing that same bot.
+async function refreshRoomMemberRuntimeOptions(roomId, member) {
+  let read;
+  try { read = await activeGroupRuntime?.readMemberRuntimeOptions(roomId, member); }
+  catch (error) { read = { state: 'unknown', error: String(error?.message || error) }; }
+  if (!read) return;
+  roomMemberRuntimeOptions.set(roomMemberReadKey(roomId, member.name), read);
+  const target = roomModelPickTarget;
+  if (!target || target.roomId !== roomId || target.member?.name !== member.name) return;
+  if (els.modelMenu.hidden || modelSelectionTarget !== 'room-member') return;
+  renderModelRuntimeOptions();
+}
+
+// Write ONE option to the bot's own session (never the 1:1 chat) and show what
+// the session confirms, not what was requested.
+async function setRoomMemberRuntimeOption(option) {
+  const target = roomModelPickTarget;
+  if (!target || !activeGroupRuntime) return;
+  const { roomId, member } = target;
+  const key = roomMemberReadKey(roomId, member.name);
+  const previous = roomMemberRuntimeOptions.get(key);
+  if (roomMemberBusyNow(member.name)) {
+    setStatus('warn', t('ui.room.busy'), `${member.title || member.name} is replying right now; wait for its turn to finish.`, { translateDetail: false });
+    renderModelRuntimeOptions();
+    return;
+  }
+  let result;
+  try { result = await activeGroupRuntime.setMemberRuntimeOption(roomId, member, option); }
+  catch (error) { result = { state: 'unavailable', error: String(error?.message || error) }; }
+  if (result?.state === 'ok') {
+    roomMemberRuntimeOptions.set(key, result);
+  } else {
+    if (previous) roomMemberRuntimeOptions.set(key, previous);
+    setStatus('warn', t('ui.room.unknown'), result?.error || 'The bot did not confirm that setting.', { translateDetail: false });
+    await refreshRoomMemberRuntimeOptions(roomId, member);
+  }
+  if (!els.modelMenu.hidden && modelSelectionTarget === 'room-member') renderModelRuntimeOptions();
+}
+
+// Find the catalog entry for a bot's confirmed model so the picker can start on
+// that provider. Prefers an exact model+provider match, then model, then any
+// model from the same provider.
+function modelForMemberRead(read = {}) {
+  const wantModel = String(read.model || '').trim();
+  const wantProvider = String(read.provider || '').trim().toLowerCase();
+  if (!wantModel && !wantProvider) return null;
+  const sameProvider = (m) => [m.provider, m.providerLabel, m.owner]
+    .some((v) => String(v || '').trim().toLowerCase() === wantProvider);
+  const sameModel = (m) => [m.id, m.rawModelId, m.model]
+    .some((v) => String(v || '').trim() === wantModel);
+  return availableModels.find((m) => sameModel(m) && wantProvider && sameProvider(m))
+    || availableModels.find((m) => wantModel && sameModel(m))
+    || availableModels.find((m) => wantProvider && sameProvider(m))
+    || null;
+}
 
 function activeRoomId() {
   return String(activeGroupProjection?.roomId || activeGroupProjection?.id || '');
@@ -10069,6 +10864,7 @@ function renderRoomPopover() {
       ? `${read.model}${read.provider ? ` · ${read.provider}` : ''}`
       : t(read?.state === 'no-session' ? 'ui.room.profile.default' : 'ui.room.unknown');
     entry.model.textContent = label;
+    if (read?.state === 'ok') roomMemberModelReads.set(roomMemberReadKey(roomId, member.name), { model: read.model, provider: read.provider });
     if (read?.state === 'ok' && entry.binding?.model === read.model) {
       entry.row.title = t('ui.room.model.note');
     }
@@ -10108,18 +10904,49 @@ function toggleRoomPopover() {
 }
 
 function openRoomMemberModelMenu(roomId, member) {
-  if (!activeGroupRuntime) return;
+  if (!activeGroupRuntime) {
+    // Never fail silently: a Change click with no live room runtime used to do nothing.
+    setStatus('warn', t('ui.room.unknown'), 'This room is not connected to a live Hermes session yet. Reopen the group chat and try again.', { translateDetail: false });
+    return;
+  }
   if (roomMemberBusyNow(member.name)) {
     setStatus('warn', t('ui.room.busy'), `${member.title || member.name} is replying right now; wait for its turn to finish.`, { translateDetail: false });
     return;
   }
   const binding = readRoomModelBinding(roomMemberBindings(), roomId, member.name);
-  roomModelPickTarget = { roomId, member, model: binding?.model || '', hasBinding: Boolean(binding) };
+  // Start on the provider the bot already uses: its room pick, else the last
+  // confirmed read, else a fresh read below. Never the first catalog provider.
+  const known = modelForMemberRead({ model: binding?.model, provider: binding?.provider })
+    || modelForMemberRead(roomMemberModelReads.get(roomMemberReadKey(roomId, member.name)));
+  roomModelPickTarget = { roomId, member, model: known?.id || binding?.model || '', hasBinding: Boolean(binding) };
   setModelSelectionTarget('room-member');
   closeFloatingPanels();
   els.modelMenu.hidden = false;
   els.modelMenuButton.setAttribute('aria-expanded', 'true');
   els.modelSearchInput?.focus();
+  if (!known) void alignRoomPickerToMemberProvider(roomId, member);
+  roomMemberRuntimeOptions.delete(roomMemberReadKey(roomId, member.name));
+  renderModelRuntimeOptions();
+  void refreshRoomMemberRuntimeOptions(roomId, member);
+}
+
+async function alignRoomPickerToMemberProvider(roomId, member) {
+  let read;
+  try { read = await activeGroupRuntime?.readMemberModel(roomId, member); } catch { return; }
+  if (read?.state !== 'ok') return;
+  roomMemberModelReads.set(roomMemberReadKey(roomId, member.name), { model: read.model, provider: read.provider });
+  const target = roomModelPickTarget;
+  // Only realign if the same picker is still open and the user has not searched
+  // or already moved to another provider.
+  if (!target || target.roomId !== roomId || target.member?.name !== member.name) return;
+  if (els.modelMenu.hidden || modelSelectionTarget !== 'room-member') return;
+  if (els.modelSearchInput?.value) return;
+  const found = modelForMemberRead(read);
+  if (!found) return;
+  roomModelPickTarget = { ...target, model: found.id };
+  selectedModelProvider = modelProviderLabel(found);
+  renderModelMenu('');
+  els.modelProviderList.querySelector('.model-provider-option.selected')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
 }
 
 function roomMemberModelLabel() {
@@ -10192,6 +11019,11 @@ function openRoomModelConfirm({ member, model, provider, message, onConfirm }) {
   confirmButton.focus?.();
 }
 
+function closeRoomModelMenu() {
+  els.modelMenu.hidden = true;
+  els.modelMenuButton.setAttribute('aria-expanded', 'false');
+}
+
 async function setRoomMemberModel(model, { confirm = false } = {}) {
   const target = roomModelPickTarget;
   if (!target || !activeGroupRuntime) return;
@@ -10205,6 +11037,9 @@ async function setRoomMemberModel(model, { confirm = false } = {}) {
     provider: requestedProvider,
     confirm,
   });
+  // Close the picker once the gateway answered so the updated member row in the
+  // popover is what the user sees; keep it open on errors so they can retry.
+  if (result?.state === 'ok' || result?.state === 'confirm') closeRoomModelMenu();
   if (result?.state === 'confirm') {
     // The gateway asked for an explicit confirmation (e.g. an expensive model).
     // Name the member/model/provider and retry only when the user confirms.
@@ -10233,6 +11068,8 @@ async function setRoomMemberModel(model, { confirm = false } = {}) {
   appendRoomEventLine(content);
   setStatus('ok', content, '', { translateDetail: false });
   roomModelPickTarget = { roomId, member, model: result.model || modelId, hasBinding: true };
+  roomMemberRuntimeOptions.delete(roomMemberReadKey(roomId, member.name));
+  void refreshRoomMemberRuntimeOptions(roomId, member);
   renderRoomPopover();
 }
 
@@ -10455,6 +11292,95 @@ function resetActiveGroupTypingIndicator({ clearPresence = true } = {}) {
   renderGroupTypingIndicator();
 }
 
+function claimGroupComposer() {
+  const lease = { id: ++groupComposerSerial };
+  activeComposerLease = lease;
+  sending = true;
+  updateComposerBusyState();
+  return lease;
+}
+
+function releaseGroupComposer(lease) {
+  if (!lease || activeComposerLease !== lease) return false;
+  activeComposerLease = null;
+  sending = false;
+  updateComposerBusyState();
+  return true;
+}
+
+function backgroundTurnFor(runtime) {
+  return backgroundGroupTurn?.runtime === runtime ? backgroundGroupTurn : null;
+}
+
+function commitDetachedGroupTranscript(projection, displayMessages) {
+  if (!projection) return;
+  projection.messages = (Array.isArray(displayMessages) ? displayMessages : [])
+    .map(groupProjectionEntryFromDisplayMessage)
+    .filter(Boolean);
+}
+
+function abortAttachedGroupTurn() {
+  const controller = activeGroupAbortController;
+  if (!controller || controller === backgroundGroupTurn?.abortController) return;
+  controller.abort();
+  if (activeGroupAbortController === controller) activeGroupAbortController = null;
+}
+
+function abortBackgroundGroupTurn() {
+  const controller = backgroundGroupTurn?.abortController;
+  if (!controller) return;
+  controller.abort();
+  backgroundGroupTurn = null;
+}
+
+function detachActiveGroupTurnForBackground() {
+  const controller = activeGroupAbortController;
+  const runtime = activeGroupRuntime;
+  const projection = activeGroupProjection;
+  if (!controller || !runtime || !projection || !sending) return false;
+  backgroundGroupTurn = {
+    abortController: controller,
+    runtime,
+    generation: activeGroupGeneration,
+    roomId: String(projection.roomId || projection.id || ''),
+    projection,
+    composerLease: activeComposerLease,
+    lastActivity: null,
+  };
+  activeGroupAbortController = null;
+  releaseGroupComposer(activeComposerLease);
+  resetActiveGroupTypingIndicator();
+  return true;
+}
+
+function reattachBackgroundGroupTurn(row) {
+  const turn = backgroundGroupTurn;
+  const roomId = String(row?.roomId || row?.id || '');
+  if (!turn || !roomId || turn.roomId !== roomId || turn.abortController?.signal?.aborted) return false;
+  backgroundGroupTurn = null;
+  activeGroupGeneration = turn.generation;
+  activeGroupAbortController = turn.abortController;
+  activeGroupRuntime = turn.runtime;
+  activeGroupProjection = turn.projection;
+  activeGroupMessages = [...groupProjectionMessagesForDisplay(turn.projection), ...activeGroupDisplayEvents]
+    .sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  messages = activeGroupMessages;
+  activeComposerLease = turn.composerLease;
+  sending = true;
+  updateComposerBusyState();
+  document.body.classList.add('bot-mode-engaged');
+  if (els.botModePanel) els.botModePanel.hidden = true;
+  els.botModeButton?.setAttribute?.('aria-expanded', 'false');
+  renderGroupThreadStrip();
+  renderMessagesFromStorage();
+  updateSessionLabel();
+  renderActiveProfileIndicator();
+  if (turn.lastActivity && ['turn_start', 'working', 'typing'].includes(turn.lastActivity.kind)) {
+    updateActiveGroupActivity(turn.lastActivity);
+  }
+  return true;
+}
+
 async function persistActiveGroupProjection(client, displayMessages) {
   const row = activeGroupProjection;
   const message = Array.isArray(displayMessages) ? displayMessages.at(-1) : null;
@@ -10473,8 +11399,8 @@ async function sendActiveGroupMessage(text = '', turnAttachments = []) {
     setStatus('warn', 'Group chat unavailable', 'This room has no verified Dashboard transport on the current Hermes runtime.', { translateDetail: false });
     return false;
   }
-  if (Array.isArray(turnAttachments) && turnAttachments.length) {
-    setStatus('warn', 'Group attachments unavailable', 'Group attachments require the official portable group-operations contract. Remove the attachment or open an agent chat.', { translateDetail: false });
+  if (Array.isArray(turnAttachments) && turnAttachments.some((item) => item?.browserTabScreenshot !== true)) {
+    setStatus('warn', 'Group attachments unavailable', 'Only explicitly captured tab screenshots are supported here. Remove other attachments or open an agent chat.', { translateDetail: false });
     return false;
   }
   if (sending) {
@@ -10489,8 +11415,7 @@ async function sendActiveGroupMessage(text = '', turnAttachments = []) {
   const groupGeneration = activeGroupGeneration;
   const abortController = new AbortController();
   activeGroupAbortController = abortController;
-  sending = true;
-  updateComposerBusyState();
+  const composerLease = claimGroupComposer();
   els.input.value = '';
   renderAttachments();
   try {
@@ -10508,23 +11433,44 @@ async function sendActiveGroupMessage(text = '', turnAttachments = []) {
     } else {
       targetThreadId = 'main';
     }
+    const browserScope = { ...effectiveContextGate(contextScope).scope };
+    const browserScopeKey = JSON.stringify(browserScope);
+    const turnGatewayUrl = settings.gatewayUrl;
     const result = await groupRuntime.send({
       roomId: groupProjection.roomId || groupProjection.id,
       groupName: groupProjection.displayName,
       members: groupRuntimeMembers(groupProjection),
       messages: groupMessages,
       text: value,
+      ...(await prepareBotBrowserTurn({
+        group: true,
+        scope: browserScope,
+        settings,
+        gatewayUrl: turnGatewayUrl,
+        attachments: turnAttachments,
+        getContext: () => collectBotPageContext({ browserApi, scope: browserScope, settings }),
+        isCurrent: () => !abortController.signal.aborted
+          && groupGeneration === activeGroupGeneration
+          && activeGroupRuntime === groupRuntime
+          && settings.gatewayUrl === turnGatewayUrl
+          && JSON.stringify(effectiveContextGate(contextScope).scope) === browserScopeKey,
+      })),
       signal: abortController.signal,
       thread: targetThreadId,
     });
     // Staleness is the generation/runtime token only. An in-place roster sync
     // replaces the projection object for the SAME open room, so identity here
     // would silently discard a legitimate completed turn mid-send.
-    if (
-      abortController.signal.aborted
-      || groupGeneration !== activeGroupGeneration
+    const detached = backgroundGroupTurn?.abortController === abortController;
+    if (abortController.signal.aborted) return false;
+    if (!detached && (
+      groupGeneration !== activeGroupGeneration
       || activeGroupRuntime !== groupRuntime
-    ) return false;
+    )) return false;
+    if (detached) {
+      commitDetachedGroupTranscript(backgroundGroupTurn.projection, result.messages);
+      return result.ok;
+    }
     if (isStartingNewThread) {
       activeGroupThreadId = targetThreadId;
       activeGroupExpandedThreads.add(targetThreadId);
@@ -10564,10 +11510,14 @@ async function sendActiveGroupMessage(text = '', turnAttachments = []) {
     }
     return false;
   } finally {
+    const stillBackground = backgroundGroupTurn?.abortController === abortController;
     if (activeGroupAbortController === abortController) activeGroupAbortController = null;
-    sending = false;
-    resetActiveGroupTypingIndicator({ clearPresence: activeGroupPresence.phase !== 'done' });
-    updateComposerBusyState();
+    if (stillBackground) {
+      backgroundGroupTurn = null;
+    } else {
+      releaseGroupComposer(composerLease);
+      resetActiveGroupTypingIndicator({ clearPresence: activeGroupPresence.phase !== 'done' });
+    }
   }
 }
 
@@ -10585,8 +11535,7 @@ async function retryFailedGroupMember(memberName) {
   const generation = activeGroupGeneration;
   const abortController = new AbortController();
   activeGroupAbortController = abortController;
-  sending = true;
-  updateComposerBusyState();
+  const composerLease = claimGroupComposer();
   // Immediate feedback: the notice's Retry button disables on the next paint.
   renderGroupTypingIndicator();
   try {
@@ -10602,11 +11551,16 @@ async function retryFailedGroupMember(memberName) {
       thread: activeGroupThreadId || 'main',
       signal: abortController.signal,
     });
-    if (
-      abortController.signal.aborted
-      || generation !== activeGroupGeneration
+    const detached = backgroundGroupTurn?.abortController === abortController;
+    if (abortController.signal.aborted) return false;
+    if (!detached && (
+      generation !== activeGroupGeneration
       || activeGroupRuntime !== runtime
-    ) return false;
+    )) return false;
+    if (detached) {
+      commitDetachedGroupTranscript(backgroundGroupTurn.projection, result?.messages);
+      return result?.ok !== false;
+    }
     if (result?.ok === false) return false;
     activeGroupMessages = [...result.messages, ...activeGroupDisplayEvents].sort((a, b) => (a.ts || 0) - (b.ts || 0));
     messages = activeGroupMessages;
@@ -10629,10 +11583,14 @@ async function retryFailedGroupMember(memberName) {
     }
     return false;
   } finally {
+    const stillBackground = backgroundGroupTurn?.abortController === abortController;
     if (activeGroupAbortController === abortController) activeGroupAbortController = null;
-    sending = false;
-    updateComposerBusyState();
-    renderGroupTypingIndicator();
+    if (stillBackground) {
+      backgroundGroupTurn = null;
+    } else {
+      releaseGroupComposer(composerLease);
+      renderGroupTypingIndicator();
+    }
   }
 }
 
@@ -10956,20 +11914,19 @@ function syncBotModeThreadsButton() {
     return;
   }
   const threads = groupThreadsFromProjection(activeGroupProjection);
-  const narrow = (els.composerActions?.clientWidth || 400) < 360;
-    if (button) {
-      button.hidden = false;
-      button.disabled = false;
-      const count = threads.length ? ` (${threads.length})` : '';
-      button.textContent = narrow ? (threads.length ? String(threads.length) : 'Threads') : `Threads${count}`;
-      button.title = threads.length ? `Threads (${threads.length})` : 'Threads';
-      button.setAttribute('aria-label', button.title);
-    }
-    if (newThreadBtn) {
-      newThreadBtn.hidden = false;
-      newThreadBtn.disabled = false;
-      newThreadBtn.textContent = narrow ? '+' : '+ New Thread';
-    }
+  if (button) {
+    button.hidden = false;
+    button.disabled = false;
+    const count = threads.length ? ` (${threads.length})` : '';
+    button.title = `${translateUiText('Threads')}${count}`;
+    button.setAttribute('aria-label', button.title);
+  }
+  if (newThreadBtn) {
+    newThreadBtn.hidden = false;
+    newThreadBtn.disabled = false;
+    newThreadBtn.title = translateUiText('Start a new thread in this group');
+    newThreadBtn.setAttribute('aria-label', newThreadBtn.title);
+  }
 }
 
 function renderGroupThreadStrip() {
@@ -11064,6 +12021,10 @@ async function openBotGroupChat(row) {
     setStatus('warn', 'Group chat unavailable', 'Group chats require the connected Hermes Dashboard. Switch to Dashboard mode to open this room.', { translateDetail: false });
     return false;
   }
+  if (!sending && reattachBackgroundGroupTurn(row)) {
+    setStatus('ok', 'Group chat still running', `${row.displayName || 'This room'} kept replying in the background.`, { translateDetail: false });
+    return true;
+  }
   if (sending) {
     setStatus('warn', 'Hermes is working…', 'Stop the active run before opening a group chat.');
     return false;
@@ -11116,7 +12077,13 @@ async function openBotGroupChat(row) {
     groupRuntime = createBotGroupRuntime({
       client: connection.client,
       onMessage: (message, meta = {}) => {
-        if (!isCurrentRuntime()) return;
+        const background = backgroundTurnFor(groupRuntime);
+        if (!isCurrentRuntime()) {
+          if (!background) return;
+          const entry = groupProjectionEntryFromDisplayMessage(message);
+          if (entry) background.projection.messages = [...(background.projection.messages || []), entry];
+          return;
+        }
         activeGroupMessages = [...activeGroupMessages, message];
         messages = activeGroupMessages;
         const entry = groupProjectionEntryFromDisplayMessage(message);
@@ -11143,7 +12110,11 @@ async function openBotGroupChat(row) {
         renderActiveProfileIndicator();
       },
       onActivity: (activity) => {
-        if (!isCurrentRuntime()) return;
+        const background = backgroundTurnFor(groupRuntime);
+        if (!isCurrentRuntime()) {
+          if (background) background.lastActivity = activity;
+          return;
+        }
         updateActiveGroupActivity(activity);
         const projection = liveProjection();
         if (activity.kind === 'working') {
@@ -11156,9 +12127,20 @@ async function openBotGroupChat(row) {
           setStatus('ok', 'Tool running', `${activity.roleLabel || activity.member} is using ${activity.tool || 'a tool'}…`, { translateDetail: false });
         }
       },
-      persist: (displayMessages) => isCurrentRuntime()
-        ? persistActiveGroupProjection(connection.client, displayMessages)
-        : undefined,
+      persist: (displayMessages) => {
+        const background = backgroundTurnFor(groupRuntime);
+        const attached = isCurrentRuntime();
+        if (!attached && !background) return undefined;
+        const rowForPersist = attached ? liveProjection() : background.projection;
+        const message = Array.isArray(displayMessages) ? displayMessages.at(-1) : null;
+        if (!rowForPersist || !message) return undefined;
+        return persistGroupProjectionAppend(connection.client, {
+          roomId: rowForPersist.roomId || rowForPersist.id,
+          roomKey: rowForPersist.roomKey,
+          message,
+          now: Date.now(),
+        });
+      },
       // B3.3 Outcome R: a room session drops its --session model pick on
       // resume, so the stored binding is re-verified and re-applied before
       // EVERY submission attempt. An unverified switch fails the member's
@@ -11231,10 +12213,10 @@ async function loadProfiles({ quiet = false, allowDashboardTrust = !quiet } = {}
     activeConversationTransport = 'rest';
     activeDashboardWsConnection = null;
     activeGroupGeneration += 1;
+    abortAttachedGroupTurn();
+    abortBackgroundGroupTurn();
     const clearedActiveGroup = Boolean(activeGroupProjection);
     if (clearedActiveGroup) {
-      activeGroupAbortController?.abort?.();
-      activeGroupAbortController = null;
       activeGroupProjection = null;
       activeGroupRuntime = null;
       activeGroupMessages = [];
@@ -11779,8 +12761,7 @@ async function openBotProfile(row) {
     els.botModeLoadingOverlay.hidden = false;
   }
   activeGroupGeneration += 1;
-  activeGroupAbortController?.abort?.();
-  activeGroupAbortController = null;
+  abortAttachedGroupTurn();
   activeGroupProjection = null;
   activeGroupRuntime = null;
   activeGroupMessages = [];
@@ -11871,9 +12852,26 @@ async function openBotProfile(row) {
 
 async function leaveBotModeForRegularSession() {
   if (!document.body.classList.contains('bot-mode-engaged')) return true;
-  if (!canSwitchActiveSession({ sending, runControl: activeRunControl })) {
+  const groupTurnLive = Boolean(activeGroupProjection && activeGroupAbortController && sending);
+  const decision = botModeLeaveDecision({
+    engaged: true,
+    groupTurnLive,
+    canLeave: canSwitchActiveSession({ sending, runControl: activeRunControl }),
+  });
+  if (decision.action === 'blocked') {
     setStatus('warn', 'Hermes is working…', 'Stop the active Bot Mode turn before returning to Regular Sessions.');
     return false;
+  }
+  const detachedRoomName = groupTurnLive
+    ? String(activeGroupProjection?.displayName || 'Group chat')
+    : '';
+  if (decision.action === 'detach-group') {
+    detachActiveGroupTurnForBackground();
+    // A stale writer lease must not trap the session switch the user just asked
+    // for. The group turn does not own activeRunControl.
+    if (activeRunControl && activeRunControl.phase !== 'terminal') {
+      activeRunControl = markRunTerminal(activeRunControl, 'failed');
+    }
   }
 
   if (els.botModeLoadingOverlay) {
@@ -11900,8 +12898,7 @@ async function leaveBotModeForRegularSession() {
     const nextProfile = returnProfile || String(settings.activeProfile || '').trim();
 
     activeGroupGeneration += 1;
-    activeGroupAbortController?.abort?.();
-    activeGroupAbortController = null;
+    abortAttachedGroupTurn();
     activeGroupProjection = null;
     activeGroupRuntime = null;
     activeGroupMessages = [];
@@ -11958,7 +12955,9 @@ async function leaveBotModeForRegularSession() {
     renderActiveProfileIndicator();
     updateSessionLabel();
     updateConnectionPrompt();
-    setStatus('ok', 'Regular Sessions restored', `Started a fresh Hermes Browser session for ${profileSwitchDisplayName(nextProfile)}.`, { translateDetail: false });
+    setStatus('ok', 'Regular Sessions restored', detachedRoomName
+      ? `${detachedRoomName} keeps running in the background. Open it again from Bot Mode whenever you want.`
+      : `Started a fresh Hermes Browser session for ${profileSwitchDisplayName(nextProfile)}.`, { translateDetail: false });
     return true;
   } finally {
     if (els.botModeLoadingOverlay) els.botModeLoadingOverlay.hidden = true;
@@ -14732,8 +15731,7 @@ function preferredModelOptionsForNewSession() {
 async function createHermesBrowserSession({ title = makeBrowserSessionTitle(), focus = true, hidden = false, transport = '', source = '', scopeRevisionId = scopeRevision.current() } = {}) {
   if (!scopeRevision.isCurrent(scopeRevisionId)) return false;
   activeGroupGeneration += 1;
-  activeGroupAbortController?.abort?.();
-  activeGroupAbortController = null;
+  abortAttachedGroupTurn();
   activeGroupProjection = null;
   activeGroupRuntime = null;
   activeGroupMessages = [];
@@ -14758,8 +15756,11 @@ async function createHermesBrowserSession({ title = makeBrowserSessionTitle(), f
           hidden,
           ...(source === 'hermes_bot_mode' ? { follow_profile_config: true } : {}),
           source: source || settings.sessionSource || DEFAULT_SETTINGS.sessionSource,
-          model: requestModel,
-          provider: requestProvider || undefined,
+          ...dashboardSessionModelParams({
+            model: requestModel,
+            provider: requestProvider,
+            gatewayDefault: preferredModel?.gatewayDefault === true || preferredBinding?.gatewayDefault === true,
+          }),
           reasoning_effort: preferredOptions.thinkingEnabled ? preferredOptions.reasoningEffort : 'none',
           fast: preferredOptions.fastMode,
           profile: safeActiveProfile(),
@@ -14924,8 +15925,7 @@ async function openHermesSession(selectedSession) {
     return false;
   }
   activeGroupGeneration += 1;
-  activeGroupAbortController?.abort?.();
-  activeGroupAbortController = null;
+  abortAttachedGroupTurn();
   activeGroupProjection = null;
   activeGroupRuntime = null;
   activeGroupMessages = [];
@@ -15036,6 +16036,7 @@ async function openHermesSession(selectedSession) {
   });
   if (!isCurrentRequest()) return false;
   setStatus(loaded ? 'ok' : 'warn', loaded ? 'Session opened' : 'Session opened without history', `${session.sourceLabel || session.source || 'Hermes'} · ${session.id}`, { translateDetail: false });
+  void hydrateRestSubagentSnapshot(session.id);
   return true;
 }
 
@@ -15207,9 +16208,9 @@ async function hydrateSessionMediaInElement(element) {
 // HTML page, an archive. The transcript used to answer with nothing but the
 // path it sits at. These cards make the file actionable: Open renders viewable
 // kinds in a new tab from bytes fetched over the same authenticated dashboard
-// transport the media routes use, Open on computer hands the file to the OS
-// default app through downloads.download + downloads.open, and Save keeps a
-// copy. Every state is honest — when the dashboard cannot read the file, the
+// transport the media routes use, Open on computer reveals the original file
+// in its containing folder through local Hermes, and Save downloads a copy.
+// Every state is honest: when the dashboard cannot read the file, the
 // buttons are disabled and say why instead of failing on click.
 const ARTIFACT_CARD_LIMIT = 6;
 const ARTIFACT_PROBE_CACHE_MS = 30_000;
@@ -15359,16 +16360,24 @@ async function artifactDownloadUrlFor(plan) {
 }
 
 async function openArtifactCardOnComputer(plan) {
-  const url = await artifactDownloadUrlFor(plan);
-  const downloadId = await browserApi.downloads.download({ url, filename: plan.name });
-  if (!Number.isInteger(Number(downloadId))) throw new Error('The browser did not start the download.');
-  await waitForArtifactDownload(Number(downloadId));
-  await browserApi.downloads.open(Number(downloadId));
+  const gatewayUrl = settings.gatewayUrl;
+  await revealArtifactOnComputer(plan.source, {
+    gatewayUrl,
+    platform: (await browserApi.runtime.getPlatformInfo()).os,
+    getClient: () => ensureProfileWsConnection(),
+    verifyFile: async (filePath) => {
+      const { baseUrl, token } = await resolveArtifactDashboardContext();
+      return probeArtifactFileSource(filePath, { baseUrl, token });
+    },
+    isCurrent: () => settings.gatewayUrl === gatewayUrl,
+  });
 }
 
 async function saveArtifactCardFile(plan) {
   const url = await artifactDownloadUrlFor(plan);
-  await browserApi.downloads.download({ url, filename: plan.name, saveAs: true });
+  const downloadId = await browserApi.downloads.download({ url, filename: plan.name, saveAs: true });
+  if (!Number.isInteger(downloadId)) throw new Error('The browser did not start the download.');
+  await waitForArtifactDownload(downloadId);
 }
 
 async function runArtifactCardAction(plan, card, busyLabelKey, action) {
@@ -17040,6 +18049,7 @@ function syncSettingsForm() {
   for (const input of els.panelResidencyInputs || []) {
     input.checked = input.value === normalizePanelResidencyMode(settings.panelResidencyMode);
   }
+  renderPanelResidencyHost();
   if (els.autoNameSessionsInput) els.autoNameSessionsInput.checked = settings.autoNameSessions !== false;
   if (els.showMessageTimesInput) els.showMessageTimesInput.checked = settings.showMessageTimes !== false;
   if (els.agentHostInput) els.agentHostInput.value = settings.agentDiscoveryHost || DEFAULT_SETTINGS.agentDiscoveryHost;
@@ -18346,7 +19356,7 @@ async function ensureHermesSession() {
 
 function parseSseBlock(block) {
   const event = { type: 'message', data: '' };
-  for (const line of block.split(/\r?\n/)) {
+  for (const line of block.split(/\cM?\n/)) {
     if (!line || line.startsWith(':')) continue;
     if (line.startsWith('event:')) event.type = line.slice(6).trim();
     if (line.startsWith('data:')) event.data += `${line.slice(5).trim()}\n`;
@@ -18364,7 +19374,7 @@ function parseSseBlock(block) {
 function sseBlocksFromBuffer(buffer, { flush = false } = {}) {
   const blocks = [];
   let match;
-  const boundary = /\r?\n\r?\n/g;
+  const boundary = /\cM?\n\cM?\n/g;
   let start = 0;
   while ((match = boundary.exec(buffer)) !== null) {
     blocks.push(buffer.slice(start, match.index));
@@ -18422,6 +19432,9 @@ async function readSseResponse(response, onDelta, onTool, { signal, onRun, onSte
       onTool(normalizeBrowserRuntimeEvent({ type: event.type, data }));
     } else if (event.type === 'hermes.tool.progress' && onTool) {
       onTool(normalizeBrowserRuntimeEvent({ type: event.type, data }));
+    } else if (isSubagentEventName(event.type)) {
+      const mapped = subagentGatewayEventFromSse(event, settings.sessionId);
+      if (mapped) ingestSubagentGatewayEvent(mapped);
     } else if (event.type === 'error') {
       const streamErr = new Error(data.message || event.data || 'Hermes stream error');
       streamErr.requestRejected = true;
@@ -18474,6 +19487,14 @@ function currentHermesBrowserSystemPrompt() {
   return `${HERMES_BROWSER_SYSTEM_PROMPT}\n\n${runtimeSelection}`;
 }
 
+// REST turns carry per-turn notes in the system message. A GPT-Live delegation
+// adds the voice note there; the dashboard socket sends surface "voice-live"
+// and the gateway adds the same note itself.
+function turnSystemMessage(voiceLive = null) {
+  const base = currentHermesBrowserSystemPrompt();
+  return voiceLive?.note ? `${base}\n\n${voiceLive.note}` : base;
+}
+
 function currentSelectedModel() {
   const binding = currentEffectiveModelBinding();
   return modelForBinding(binding) || availableModels.find((model) => model.id === settings.model) || null;
@@ -18489,6 +19510,17 @@ function currentModelProviderSlug() {
   const binding = currentEffectiveModelBinding();
   const selected = currentSelectedModel();
   return selected?.provider || binding?.provider || '';
+}
+
+// The dashboard socket's session.create takes a literal model; the Gateway
+// default alias goes out as "no override" so the profile's own default runs.
+function currentDashboardModelParams() {
+  const binding = currentEffectiveModelBinding();
+  return dashboardSessionModelParams({
+    model: currentModelRequestId(),
+    provider: currentModelProviderSlug(),
+    gatewayDefault: currentSelectedModel()?.gatewayDefault === true || binding?.gatewayDefault === true,
+  });
 }
 
 function applyPendingModelRuntimeAck(runtime = {}) {
@@ -18643,8 +19675,7 @@ async function ensureRemoteWsSession(connection) {
     storedSessionId,
     createParams: {
       title: settings.sessionTitle,
-      model: currentModelRequestId(),
-      provider: currentModelProviderSlug() || binding?.provider || undefined,
+      ...currentDashboardModelParams(),
       reasoning_effort: normalizeReasoningEffort(settings.reasoningEffort),
       fast: normalizeFastMode(settings.fastMode),
       profile: safeActiveProfile(),
@@ -18674,15 +19705,22 @@ async function ensureRemoteWsSession(connection) {
       },
       modelScopeVersion: DEFAULT_SETTINGS.modelScopeVersion,
     };
-    try {
-      const request = buildSessionModelSwitchRequest({
-        sessionId: liveId,
-        model: binding.rawModelId || binding.modelId,
-        provider: binding.provider,
-      });
-      await connection.client.request(request.method, request.params);
-    } catch (error) {
-      console.warn('[Hermes] Cloud model selection was not applied:', error?.message || error);
+    const switchTo = dashboardSessionModelParams({
+      model: binding.rawModelId || binding.modelId,
+      provider: binding.provider,
+      gatewayDefault: binding.gatewayDefault === true,
+    });
+    if (switchTo.model) {
+      try {
+        const request = buildSessionModelSwitchRequest({
+          sessionId: liveId,
+          model: switchTo.model,
+          provider: switchTo.provider,
+        });
+        await connection.client.request(request.method, request.params);
+      } catch (error) {
+        console.warn('[Hermes] Cloud model selection was not applied:', error?.message || error);
+      }
     }
   }
   try {
@@ -18759,7 +19797,7 @@ async function streamDashboardWsChat(prompt, onDelta, onTool, options = {}) {
   }
 }
 
-async function streamDashboardWsChatAttempt(connection, sessionId, prompt, onDelta, onTool, { signal, onRun, onSteerQueued, onRuntime, knownAssistantTexts = [], submitPrompt = true, attachments: turnAttachments = [], truncate = null, onSubmitResponse = null } = {}) {
+async function streamDashboardWsChatAttempt(connection, sessionId, prompt, onDelta, onTool, { signal, onRun, onSteerQueued, onRuntime, knownAssistantTexts = [], submitPrompt = true, attachments: turnAttachments = [], voiceLive = null, truncate = null, onSubmitResponse = null } = {}) {
   onRun?.(sessionId);
   const { client } = connection;
   const sessionIds = [sessionId, connection.wsSessionId, connection.wsStoredSessionId];
@@ -18887,6 +19925,8 @@ async function streamDashboardWsChatAttempt(connection, sessionId, prompt, onDel
       finish(reject, error);
     }));
 
+    // A GPT-Live delegation: the gateway adds the voice turn note itself.
+    const voiceParams = voiceLive ? { surface: 'voice-live', voice_context: String(voiceLive.context || '').slice(0, 6_000) } : {};
     if (submitPrompt) {
       void (async () => {
         try {
@@ -18900,6 +19940,7 @@ async function streamDashboardWsChatAttempt(connection, sessionId, prompt, onDel
           text: prompt,
           ...browserTurnDisplayParam(prompt),
           ...truncateSubmitParams({ rowId: truncate?.rowId }),
+          ...voiceParams,
         });
         client.request(WS_METHODS.promptSubmit, submitParams()).catch((error) => {
           if (!isDisplayTextRejection(error) || displayTextUnsupported) throw error;
@@ -18918,7 +19959,7 @@ async function streamDashboardWsChatAttempt(connection, sessionId, prompt, onDel
   });
 }
 
-async function streamSessionChat(prompt, onDelta, onTool, { signal, attachments: turnAttachments = attachments, onRun, onSteerQueued, onRuntime, knownAssistantTexts = [], truncate = null, onSubmitResponse = null } = {}) {
+async function streamSessionChat(prompt, onDelta, onTool, { signal, attachments: turnAttachments = attachments, onRun, onSteerQueued, onRuntime, knownAssistantTexts = [], voiceLive = null, truncate = null, onSubmitResponse = null } = {}) {
   if (usesDashboardWsChatTransport()) return streamDashboardWsChat(prompt, onDelta, onTool, {
     signal,
     attachments: turnAttachments,
@@ -18928,6 +19969,7 @@ async function streamSessionChat(prompt, onDelta, onTool, { signal, attachments:
     knownAssistantTexts,
     truncate,
     onSubmitResponse,
+    voiceLive,
   });
   let hasSessionRoutes = false;
   try {
@@ -18939,14 +19981,14 @@ async function streamSessionChat(prompt, onDelta, onTool, { signal, attachments:
     if (Number(setupError?.httpStatus ?? setupError?.status) === 401 && desktopDashboardUrl && safeActiveProfile()) {
       activeConversationTransport = 'dashboard-ws';
       return streamDashboardWsChat(prompt, onDelta, onTool, {
-        signal, attachments: turnAttachments, onRun, onSteerQueued, onRuntime, knownAssistantTexts,
+        signal, attachments: turnAttachments, onRun, onSteerQueued, onRuntime, knownAssistantTexts, voiceLive,
       });
     }
     throw setupError;
   }
-  if (!hasSessionRoutes) return streamChatCompletions(prompt, onDelta, onTool, { signal, attachments: turnAttachments, onRun, knownAssistantTexts });
+  if (!hasSessionRoutes) return streamChatCompletions(prompt, onDelta, onTool, { signal, attachments: turnAttachments, onRun, knownAssistantTexts, voiceLive });
   try {
-    return await streamSessionChatRest(prompt, onDelta, onTool, { signal, turnAttachments, onRun, onSteerQueued, onRuntime, knownAssistantTexts });
+    return await streamSessionChatRest(prompt, onDelta, onTool, { signal, turnAttachments, onRun, onSteerQueued, onRuntime, knownAssistantTexts, voiceLive });
   } catch (error) {
     // Profile-scoped 401: the gateway multiplexer requires each named
     // profile's own API key. Named-profile sessions still stream over the
@@ -18962,13 +20004,14 @@ async function streamSessionChat(prompt, onDelta, onTool, { signal, attachments:
         onSteerQueued,
         onRuntime,
         knownAssistantTexts,
+        voiceLive,
       });
     }
     throw error;
   }
 }
 
-async function streamSessionChatRest(prompt, onDelta, onTool, { signal, turnAttachments, onRun, onSteerQueued, onRuntime, knownAssistantTexts }) {
+async function streamSessionChatRest(prompt, onDelta, onTool, { signal, turnAttachments, onRun, onSteerQueued, onRuntime, knownAssistantTexts, voiceLive = null }) {
 
   let response;
   try {
@@ -18987,7 +20030,7 @@ async function streamSessionChatRest(prompt, onDelta, onTool, { signal, turnAtta
               gatewayDefault: currentSelectedModel()?.gatewayDefault === true,
             }),
             message: outboundContent(prompt, turnAttachments),
-            system_message: currentHermesBrowserSystemPrompt(),
+            system_message: turnSystemMessage(voiceLive),
           }),
     });
   } catch (error) {
@@ -19013,7 +20056,7 @@ async function streamSessionChatRest(prompt, onDelta, onTool, { signal, turnAtta
   }
 }
 
-async function streamChatCompletions(prompt, onDelta, onTool, { signal, attachments: turnAttachments = attachments, onRun, knownAssistantTexts = [] } = {}) {
+async function streamChatCompletions(prompt, onDelta, onTool, { signal, attachments: turnAttachments = attachments, onRun, knownAssistantTexts = [], voiceLive = null } = {}) {
   let response;
   try {
     response = await apiFetch('/v1/chat/completions', {
@@ -19031,7 +20074,7 @@ async function streamChatCompletions(prompt, onDelta, onTool, { signal, attachme
         model_options: currentModelOptionsPayload(),
         stream: true,
         messages: [
-          { role: 'system', content: currentHermesBrowserSystemPrompt() },
+          { role: 'system', content: turnSystemMessage(voiceLive) },
           { role: 'user', content: outboundContent(prompt, turnAttachments) },
         ],
       }),
@@ -19281,7 +20324,7 @@ async function connectApiWithPairing() {
     const message = 'Automatic pairing is available only for a loopback Local gateway. Remote API connections require an explicitly configured URL and token; dashboard connections use Trusted Dashboard Attach.';
     els.connectStatus.textContent = message;
     setStatus('warn', 'Manual setup required', message);
-    openSettingsDialog();
+    openSettingsDialog({ pane: 'connections' });
     return;
   }
   const generation = connectionController.begin({
@@ -19342,7 +20385,7 @@ async function connectApiWithPairing() {
         markConnectionProbe('unconfigured', 'Manual setup required; automatic browser pairing is not advertised by this Hermes runtime.');
         els.connectStatus.textContent = translateUiText('Automatic pairing is not available on this Hermes runtime. Open Settings and use Manual setup with your Gateway URL and API token.');
         setStatus('warn', 'Manual setup required', 'This Hermes runtime does not advertise browser pairing yet.');
-        openSettingsDialog();
+        openSettingsDialog({ pane: 'connections' });
         return;
       }
     }
@@ -19381,7 +20424,7 @@ async function connectApiWithPairing() {
     if (!connectionController.transition(generation, CONNECTION_STATES.ERROR, { errorKind: diagnostic.kind })) return;
     markGatewayUnreachable(error, diagnostic);
     els.connectStatus.textContent = `${currentConnectionTroubleshooting() || diagnostic.detail} Manual setup is still available in settings.`;
-    openSettingsDialog();
+    openSettingsDialog({ pane: 'connections' });
   } finally {
     if (connectionController.isCurrent(generation)) {
       els.connectButton.disabled = false;
@@ -19390,9 +20433,9 @@ async function connectApiWithPairing() {
   }
 }
 
-async function fallbackSessionChat(prompt, turnAttachments = attachments, { onRuntime } = {}) {
+async function fallbackSessionChat(prompt, turnAttachments = attachments, { onRuntime, voiceLive = null } = {}) {
   const hasSessionRoutes = await ensureHermesSession();
-  if (!hasSessionRoutes) return fallbackChatCompletions(prompt, turnAttachments);
+  if (!hasSessionRoutes) return fallbackChatCompletions(prompt, turnAttachments, { voiceLive });
 
   const response = await apiFetch(`/api/sessions/${encodeSessionId(settings.sessionId)}/chat`, {
     method: 'POST',
@@ -19407,7 +20450,7 @@ async function fallbackSessionChat(prompt, turnAttachments = attachments, { onRu
             gatewayDefault: currentSelectedModel()?.gatewayDefault === true,
           }),
           message: outboundContent(prompt, turnAttachments),
-          system_message: currentHermesBrowserSystemPrompt(),
+          system_message: turnSystemMessage(voiceLive),
         }),
   });
   const payload = await readJsonResponse(response);
@@ -19421,7 +20464,7 @@ async function fallbackSessionChat(prompt, turnAttachments = attachments, { onRu
   return extractAssistantText(payload);
 }
 
-async function fallbackChatCompletions(prompt, turnAttachments = attachments) {
+async function fallbackChatCompletions(prompt, turnAttachments = attachments, { voiceLive = null } = {}) {
   const response = await apiFetch('/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -19435,7 +20478,7 @@ async function fallbackChatCompletions(prompt, turnAttachments = attachments) {
       model_options: currentModelOptionsPayload(),
       stream: false,
       messages: [
-        { role: 'system', content: currentHermesBrowserSystemPrompt() },
+        { role: 'system', content: turnSystemMessage(voiceLive) },
         { role: 'user', content: outboundContent(prompt, turnAttachments) },
       ],
     }),
@@ -19721,6 +20764,7 @@ async function askHermes(userText, turnAttachments = [...attachments], turnOptio
           }
           streamPacer.push(liveText.slice(pushedLive));
           pushedLive = liveText.length;
+          turnOptions.onDelta?.(liveText);
         },
         (tool) => {
           if (!runControlGenerationMatches(turnRunControlGeneration, runControlGeneration)) return;
@@ -19729,10 +20773,12 @@ async function askHermes(userText, turnAttachments = [...attachments], turnOptio
           const sources = rawGeneratedImageCandidatesFromResult(activity.result);
           if (sources.length) turnImageSources = [...new Set([...turnImageSources, ...sources])];
           streamView.updateTool(activity);
+          turnOptions.onTool?.(activity);
         },
         {
           signal: activeAbortController.signal,
           attachments: preparedAttachments,
+          voiceLive: turnOptions.voiceLive || null,
           onRun: (runId) => {
             if (!runControlGenerationMatches(turnRunControlGeneration, runControlGeneration)) return;
             // Dashboard prompt streams report the live session id here, not a
@@ -19781,6 +20827,7 @@ ${streamError.message}`);
         } else if (fallbackSafe || recoveryAction === 'fallback') {
           streamView.update(`Streaming failed, retrying non-streaming...\n${streamError.message}`);
           answer = await fallbackSessionChat(prompt, preparedAttachments, {
+            voiceLive: turnOptions.voiceLive || null,
             onRuntime: (payload) => {
               if (!runControlGenerationMatches(turnRunControlGeneration, runControlGeneration)) return;
               applyTurnRuntimePayload(payload);
@@ -20063,8 +21110,7 @@ async function createInlineBackgroundSession(request) {
       client: connection.client,
       createParams: {
         title,
-        model: currentModelRequestId(),
-        provider: currentModelProviderSlug() || undefined,
+        ...currentDashboardModelParams(),
         reasoning_effort: normalizeReasoningEffort(settings.reasoningEffort),
         fast: normalizeFastMode(settings.fastMode),
       },
@@ -20779,6 +21825,40 @@ function bindEvents() {
   });
   watchTopbarHeight();
   els.settingsButton.addEventListener('click', openSettingsDialog);
+  els.settingsForm.addEventListener('click', handleSettingsCategoryNavigation);
+  els.settingsForm.addEventListener('input', renderSettingsEditedMarkers);
+  els.settingsForm.addEventListener('change', renderSettingsEditedMarkers);
+  document.getElementById('settingsOpenModelPickerButton')?.addEventListener('click', openSettingsModelPicker);
+  document.getElementById('settingsRefreshModelsButton')?.addEventListener('click', (event) => {
+    const button = event.currentTarget;
+    button.classList.add('is-refreshing');
+    els.refreshModelsButton?.click();
+    window.setTimeout(() => {
+      button.classList.remove('is-refreshing');
+      renderSettingsModelSummary();
+    }, 900);
+  });
+  document.getElementById('settingsPane-models')?.addEventListener('click', handleSettingsRuntimeClick);
+  const settingsRefreshStatus = document.getElementById('settingsModelRefreshStatus');
+  if (els.modelRefreshStatus && settingsRefreshStatus) {
+    new MutationObserver(() => {
+      const text = els.modelRefreshStatus.hidden ? '' : (els.modelRefreshStatus.textContent || '').trim();
+      settingsRefreshStatus.textContent = text;
+      settingsRefreshStatus.hidden = !text;
+      if (!els.settingsDialog.hidden && settingsActivePane === 'models') renderSettingsModelSummary();
+    }).observe(els.modelRefreshStatus, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ['hidden'] });
+  }
+  els.settingsDialog.addEventListener('scroll', updateSettingsBackToTop, { passive: true });
+  window.addEventListener('resize', updateSettingsBackToTop);
+  document.getElementById('settingsBackToTop')?.addEventListener('click', scrollSettingsToTop);
+  if (typeof ResizeObserver === 'function') new ResizeObserver(updateSettingsBackToTop).observe(els.settingsForm);
+  const modelSummaryObserver = new MutationObserver(() => {
+    if (!els.settingsDialog.hidden && settingsActivePane === 'models') renderSettingsModelSummary();
+  });
+  for (const id of ['currentModelName', 'currentModelEffort']) {
+    const node = document.getElementById(id);
+    if (node) modelSummaryObserver.observe(node, { childList: true, characterData: true, subtree: true });
+  }
   els.botModeButton?.addEventListener('click', async (event) => {
     event.stopPropagation();
     const opening = els.botModePanel.hidden;
@@ -20991,7 +22071,7 @@ function bindEvents() {
     });
   document.addEventListener('click', (event) => {
     if (!event.target.closest('#profileSwitchMenu, #activeProfileIndicator')) closeProfileSwitchMenu();
-    if (roomPopoverOpen && !event.target.closest('#roomMemberPopover, #activeProfileIndicator')) closeRoomPopover();
+    if (roomPopoverOpen && !event.target.closest('#roomMemberPopover, #activeProfileIndicator, #modelMenu')) closeRoomPopover();
   });
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape' || !roomPopoverOpen) return;
@@ -21170,6 +22250,15 @@ function bindEvents() {
         closeUpdateDialog();
         return;
       }
+      if (!els.modelMenu.hidden && els.modelMenu.dataset.floating === 'settings') {
+        closeFloatingPanels();
+        document.getElementById('settingsOpenModelPickerButton')?.focus({ preventScroll: true });
+        return;
+      }
+      if (!els.settingsDialog.hidden && settingsActivePane) {
+        showSettingsPane('');
+        return;
+      }
       if (!els.settingsDialog.hidden) closeSettingsDialog();
       closeFloatingPanels();
     }
@@ -21249,6 +22338,7 @@ function bindEvents() {
   });
   window.addEventListener('pagehide', () => {
     persistCurrentComposerDraft({ immediate: true });
+    endLiveVoice({ quiet: true });
     const tab = currentContext?.activeTab || annotationTargetTab();
     if (tab?.id) {
       browserApi.tabs.sendMessage(tab.id, { type: PAGE_ANNOTATION_MESSAGES.ABORT }).catch(() => {});
@@ -21344,6 +22434,14 @@ function bindEvents() {
       setStatus('warn', 'Wake word unavailable', error?.message || String(error), { translateDetail: false });
       refreshWakeState();
     });
+  });
+  // Warm the glow while the pointer (or keyboard focus) is on its way to the mic.
+  els.voiceButton?.addEventListener('pointerenter', prewarmVoiceWingbeat, { once: true, passive: true });
+  els.voiceButton?.addEventListener('focus', prewarmVoiceWingbeat, { once: true });
+  els.liveVoiceButton?.addEventListener('pointerenter', prewarmLiveVoice, { once: true, passive: true });
+  els.liveVoiceButton?.addEventListener('focus', prewarmLiveVoice, { once: true });
+  els.liveVoiceButton?.addEventListener('click', () => {
+    void toggleLiveVoice();
   });
   els.voiceButton?.addEventListener('click', () => {
     toggleVoiceDictation().catch((error) => {
@@ -21470,7 +22568,7 @@ function bindEvents() {
   });
   els.editModelsButton.addEventListener('click', () => {
     closeFloatingPanels();
-    openSettingsDialog();
+    openSettingsDialog({ pane: 'models' });
     setStatus('warn', 'Edit models in Hermes Desktop', 'Use Hermes Desktop model settings or the Hermes model command, then Refresh Models here.');
   });
   els.contextMenuRouteNotice?.addEventListener('click', (event) => {
@@ -21499,13 +22597,29 @@ function bindEvents() {
     els.modelSearchInput.focus();
   });
   els.modelMenuCloseButton?.addEventListener('click', () => {
-    const focusTarget = modelSelectionTarget === 'assist' ? els.inlineAssistModelButton : els.modelMenuButton;
+    const floatingAnchor = els.modelMenu.dataset.floating === 'settings' ? document.getElementById('settingsOpenModelPickerButton') : null;
+    const focusTarget = floatingAnchor || (modelSelectionTarget === 'assist' ? els.inlineAssistModelButton : els.modelMenuButton);
     closeFloatingPanels();
     focusTarget?.focus();
   });
   els.modelOptionsList.addEventListener('click', (event) => {
     const toggle = event.target.closest('[data-toggle]');
     const effort = event.target.closest('[data-effort]');
+    if (modelSelectionTarget === 'room-member') {
+      // A room member's options belong to that bot's session, never the 1:1 chat.
+      const own = currentRoomMemberRuntimeOptions();
+      if (!own || own.state !== 'ok') return;
+      if (toggle?.dataset.toggle === 'thinking') {
+        void setRoomMemberRuntimeOption(own.thinkingEnabled
+          ? { thinkingEnabled: false }
+          : { thinkingEnabled: true, reasoningEffort: own.reasoningEffort || 'medium' });
+      } else if (toggle?.dataset.toggle === 'fast') {
+        void setRoomMemberRuntimeOption({ fastMode: !own.fastMode });
+      } else if (effort) {
+        void setRoomMemberRuntimeOption({ reasoningEffort: normalizeReasoningEffort(effort.dataset.effort), thinkingEnabled: true });
+      }
+      return;
+    }
     if (modelSelectionTarget === 'assist') {
       if (toggle?.dataset.toggle === 'thinking') settings.inlineAssistThinkingEnabled = settings.inlineAssistThinkingEnabled === false;
       if (toggle?.dataset.toggle === 'fast') settings.inlineAssistFastMode = !normalizeFastMode(settings.inlineAssistFastMode);
@@ -21568,6 +22682,13 @@ function bindEvents() {
       if (kind === 'images') els.imageInput.click();
       if (kind === 'paste-image') await pasteClipboardImage();
       if (kind === 'url') attachUrl();
+      if (kind === 'tab-screenshot') {
+        const gate = effectiveContextGate(contextScope);
+        const target = gate.scope.mode === 'pinned-tab'
+          ? await browserApi.tabs.get(Number(gate.scope.pinnedTabId))
+          : (await browserApi.tabs.query({ active: true, lastFocusedWindow: true }))[0];
+        addAttachment(await captureBotTabScreenshot({ browserApi, tab: target, scopeMode: gate.scope.mode, allowed: gate.allowed }));
+      }
     } catch (error) {
       addMessage('system', `Attach failed: ${error?.message || String(error)}`);
     }
@@ -22054,6 +23175,7 @@ function bindEvents() {
     renderSkillSuggestions();
     updateComposerBusyState();
     persistCurrentComposerDraft();
+    syncComposerFrame({ followCaret: true });
   });
   document.querySelectorAll('[data-prompt]').forEach((button) => {
     button.addEventListener('click', async () => {
@@ -22134,15 +23256,12 @@ function bindEvents() {
       const gateReason = button.dataset.contextConsentReason || '';
       els.contextScopeMenu.hidden = true;
       renderContextScopeControls();
-      openSettingsDialog();
-      requestAnimationFrame(() => {
-        if (gateReason === 'principal-unavailable') {
-          els.testConnectionButton?.focus({ preventScroll: true });
-          return;
-        }
-        els.browserContextConsentControl?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-        els.browserContextConsentInput?.focus({ preventScroll: true });
-      });
+      if (gateReason === 'principal-unavailable') {
+        openSettingsDialog({ pane: 'connections' });
+        requestAnimationFrame(() => els.testConnectionButton?.focus({ preventScroll: true }));
+        return;
+      }
+      openSettingsDialog({ pane: 'permissions', field: 'browserContextConsentInput' });
       return;
     }
 
@@ -22308,7 +23427,8 @@ async function runPanelConnectionReadiness({ restoreSettings = false } = {}) {
       },
       selectModel: async () => selectedModelReadiness({ settings, availableModels, activeSessionRuntime }),
       loadSkills: async () => {
-        await loadSkills({ quiet: true });
+        const outcome = await loadSkills({ quiet: true });
+        if (outcome?.ok === false) return { status: 'fallback', detail: outcome.error || 'Skill catalog unavailable.' };
         return gatewayCapabilities.skills
           ? { status: 'ready', detail: `${availableSkills.length} skills available.` }
           : { status: 'skipped', detail: 'Skills route unavailable on this runtime.' };
@@ -22408,5 +23528,6 @@ renderVersionInfo();
 renderContextScopeControls();
 updateVoiceButtonState();
 renderEmptyState();
+syncComposerFrame({ followCaret: true });
 // Not awaited: the update watch and the silent check must never delay boot.
 void initializeUpdateFlow();
