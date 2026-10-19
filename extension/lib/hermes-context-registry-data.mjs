@@ -103,6 +103,7 @@ export default Object.freeze({
     "ox-alpha": 1048576,
     "union-alpha": 262144,
     "nemotron-3.5-lightning": 1000000,
+    "nemotron-3.5-super-vl": 1000000,
     "nemotron": 131072,
     "laguna-s-2.1": 262144,
     "laguna-xs-2.1": 262144,
@@ -177,6 +178,6 @@ export default Object.freeze({
   ],
   "suffix": "-900k",
   "fallback": 256000,
-  "source": "installed-hermes-agent",
-  "sourceSha256": "051d4dde2d4e92aa6f96411df37b7ee25b9308f881be5bbaa4810cd02fd532e0"
+  "source": "hermes-upstream",
+  "sourceSha256": "497f2342915b0c7f23e56c2ec7e191a122d6255a6d12e660e570a4013895ab3d"
 });

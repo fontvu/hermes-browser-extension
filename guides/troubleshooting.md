@@ -12,9 +12,17 @@ hermes computer-use doctor
 
 That diagnostic belongs to the Hermes runtime/tool layer, not to Browser extension packaging or Chrome permissions.
 
+### Profiles, skills, or voice dictation fail after a Hermes update
+
+Current Hermes can serve profiles and skills through API routes when no dashboard is available. If those routes are missing, the extension keeps the last loaded profile details and tries the older dashboard path. It does not clear a working roster because one discovery route changed. Profiles, skills, and transcription each need their own advertised route, so a connection that loads one of them may still be missing another.
+
+Pictures attached to a message are stored on the machine running Hermes. Reopening the session shows them when that gateway serves stored files, and the panel keeps the previews it still holds when it does not. A session that is open keeps refreshing while its reply runs; reopening it from the session list is no longer needed to see new output.
+
+Voice dictation uses the API transcription route first, then the dashboard route, then browser speech. A dashboard that does not provide its session token is skipped. Browser speech can still fail independently when the browser has not finished installing its language pack or does not support the requested recognition mode.
+
 ### Native Hermes computer use is not working
 
-Hermes Browser Extension does not request browser-control permissions and does not drive pages itself. Native desktop control comes from Hermes Agent's `computer_use` toolset via `cua-driver`.
+Hermes Browser Extension does not control your desktop. Chromium builds request the `debugger` permission only for opt-in Hermes Control, which drives tabs you attach; Firefox builds omit it. Native desktop control is separate and comes from Hermes Agent's `computer_use` toolset via `cua-driver`.
 
 On the machine running Hermes, verify computer use directly:
 

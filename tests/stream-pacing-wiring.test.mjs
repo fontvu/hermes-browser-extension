@@ -5,7 +5,9 @@ import { readFileSync } from 'node:fs';
 const sidepanelSource = readFileSync(new URL('../extension/sidepanel.js', import.meta.url), 'utf8');
 
 test('the live turn stream is paced instead of painted in bursts', () => {
-  assert.match(sidepanelSource, /import \{ createStreamPacer \} from '\.\/lib\/stream-pacing\.mjs';/);
+  assert.match(sidepanelSource, /import \{ createStreamPacer, pacerFramePaint \} from '\.\/lib\/stream-pacing\.mjs';/);
+  // A closing frame with no revealed text must not blank a notice on the bubble.
+  assert.match(sidepanelSource, /const paint = pacerFramePaint\(text, meta, THINKING_PLACEHOLDER\);\s*\n\s*if \(paint !== null\) streamView\.updateText\(paint\);/);
   assert.match(sidepanelSource, /streamPacer = createStreamPacer\(\{/);
   // Driven by animation frames, not a timer, so it matches the paint cadence.
   assert.match(sidepanelSource, /schedule: \(cb\) => requestAnimationFrame\(cb\),\s*\n\s*cancel: \(id\) => cancelAnimationFrame\(id\),/);
@@ -29,5 +31,5 @@ test('the paced reveal finishes before the terminal paint so the bubble cannot j
 
 test('terminal error paths paint whatever the pacer still holds', () => {
   assert.match(sidepanelSource, /let streamPacer = null;/);
-  assert.equal((sidepanelSource.match(/streamPacer\?\.flush\?\.\(\);/g) || []).length, 2);
+  assert.equal((sidepanelSource.match(/streamPacer\?\.flush\?\.\(\);/g) || []).length, 3);
 });
