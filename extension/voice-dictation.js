@@ -2,6 +2,8 @@ import {
   AUDIO_TRANSCRIBE_ENDPOINT,
   DEFAULT_SETTINGS,
   buildAudioTranscriptionBody,
+  dashboardVoiceFailureMessage,
+  normalizeGatewayMode,
   normalizeGatewayUrl,
   prepareOnDeviceSpeechRecognition,
   shouldFallbackToWebSpeechForTranscription,
@@ -20,6 +22,7 @@ import {
   normalizeGatewayCapabilities,
 } from './lib/capabilities.mjs';
 import {
+  fetchDashboardSessionToken,
   resolveDashboardTranscriptionBaseUrl,
   transcribeAudioViaDashboard,
 } from './lib/model-discovery.mjs';
@@ -85,6 +88,7 @@ async function resolveVoicePageDashboardBaseUrl() {
     discover: async () => {
       const cached = await readCachedRosterUrl().catch(() => ({ url: '' }));
       return discoverLocalDashboardBaseUrl({
+        gatewayMode: normalizeGatewayMode(settings.gatewayMode),
         cachedUrl: cached?.url || '',
         cachedAt: Number(cached?.cachedAt || 0),
         gatewayUrl: normalizeGatewayUrl(settings.gatewayUrl),
@@ -314,7 +318,7 @@ async function transcribeVoiceRecording(blob) {
       mimeType: blob.type || 'audio/webm',
     });
     if (!result.ok) {
-      const error = new Error(result.error || 'Hermes Dashboard voice transcription failed.');
+      const error = new Error(dashboardVoiceFailureMessage(result));
       error.status = result.status;
       error.fallbackToWebSpeech = shouldFallbackToWebSpeechForTranscription(result.status);
       throw error;
@@ -542,9 +546,25 @@ function stopRecording() {
   return true;
 }
 
+// Mirror of the side panel's preflight: never record audio the Desktop
+// dashboard cannot transcribe; use on-device speech when it is unreachable.
+let dashboardSttProbe = { at: 0, ok: false };
+async function dashboardSttReachable() {
+  if (Date.now() - dashboardSttProbe.at < 30_000) return dashboardSttProbe.ok;
+  let ok = false;
+  try {
+    const baseUrl = await resolveVoicePageDashboardBaseUrl();
+    ok = Boolean(baseUrl) && Boolean(await fetchDashboardSessionToken({ baseUrl, timeoutMs: 1_500 }));
+  } catch {
+    ok = false;
+  }
+  dashboardSttProbe = { at: Date.now(), ok };
+  return ok;
+}
+
 async function startBestVoiceMode() {
   await loadCapabilities();
-  if (canUseHermesStt() || canUseLocalDashboardStt()) {
+  if (canUseHermesStt() || (canUseLocalDashboardStt() && await dashboardSttReachable())) {
     await startRecording();
     return;
   }

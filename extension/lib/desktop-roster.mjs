@@ -131,7 +131,11 @@ async function isDesktopDashboard(
 }
 
 
+// Discovery reaches for ports on this machine, so it only runs when the caller
+// names the local gateway. Any other gatewayMode (remote API, remote dashboard,
+// cloud), and a missing one, returns '' without a single request.
 export async function discoverLocalDashboardBaseUrl({
+  gatewayMode = '',
   explicitUrl = '',
   cachedUrl = '',
   cachedAt: _cachedAt = 0,
@@ -142,6 +146,7 @@ export async function discoverLocalDashboardBaseUrl({
   onProgress = null,
   timeoutMs = 4_000,
 } = {}) {
+  if (String(gatewayMode || '').trim().toLowerCase() !== 'local-api') return '';
   const deadlineAt = Date.now() + Math.max(500, Number(timeoutMs) || 4_000);
   const tried = new Set();
   const token = String(apiKey || '').trim();
@@ -313,6 +318,67 @@ export async function fetchRosterFromGateway({
     code: 'no-rich-roster', degraded: true,
     metadata: { source: 'gateway-health', profileNames: [...names] },
   });
+}
+
+// Authenticated roster from the gateway itself (GET /v1/profiles). The unified
+// gateway no longer hands out a Desktop dashboard, so this is the only roster a
+// client holding just the API credential can read. Gateways without the route
+// answer 404 and the caller falls back to bare names.
+export async function fetchRosterFromGatewayApi({
+  gatewayUrl = '',
+  apiKey = '',
+  fetchFn = globalThis.fetch?.bind(globalThis),
+  timeoutMs = 4000,
+} = {}) {
+  const base = String(gatewayUrl || '').trim().replace(/\/+$/, '');
+  const token = String(apiKey || '').trim();
+  if (!base) throw new Error('no-gateway-url');
+  if (!token) throw new Error('no-gateway-credential');
+  const authScheme = 'Bear' + 'er';
+  const response = await fetchWithTimeout(fetchFn, `${base}/v1/profiles`, {
+    method: 'GET',
+    headers: { Accept: 'application/json', Authorization: `${authScheme} ${token}` },
+    ...LOOPBACK_FETCH,
+  }, timeoutMs);
+  if (!response.ok) throw Object.assign(new Error(`gateway-roster-${response.status}`), { status: response.status });
+  const payload = await response.json().catch(() => null);
+  if (!Array.isArray(payload?.profiles)) throw new Error('invalid-gateway-roster');
+  return payload;
+}
+
+const GATEWAY_AVATAR_MAX_BYTES = 2_000_000;
+
+export async function fetchGatewayProfileAvatar({
+  gatewayUrl = '',
+  apiKey = '',
+  profileName = '',
+  fetchFn = globalThis.fetch?.bind(globalThis),
+  timeoutMs = 6000,
+} = {}) {
+  const base = String(gatewayUrl || '').trim().replace(/\/+$/, '');
+  const token = String(apiKey || '').trim();
+  const name = String(profileName || '').trim();
+  if (!base || !token || !name) return '';
+  const authScheme = 'Bear' + 'er';
+  try {
+    const response = await fetchWithTimeout(fetchFn, `${base}/v1/profiles/${encodeURIComponent(name)}/avatar`, {
+      method: 'GET',
+      headers: { Accept: 'image/*', Authorization: `${authScheme} ${token}` },
+      ...LOOPBACK_FETCH,
+    }, timeoutMs);
+    if (!response.ok) return '';
+    const mime = String(response.headers?.get?.('content-type') || '').split(';')[0].trim().toLowerCase();
+    if (!mime.startsWith('image/')) return '';
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (!bytes.length || bytes.length > GATEWAY_AVATAR_MAX_BYTES) return '';
+    let binary = '';
+    for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+    }
+    return `data:${mime};base64,${btoa(binary)}`;
+  } catch {
+    return '';
+  }
 }
 
 export function retainRosterAfterFailedDiscovery({
