@@ -36,11 +36,22 @@ jobs:
 
       - name: Compute release tag
         id: tag
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
         run: |
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             tag="${GITHUB_REF#refs/tags/}"
           else
-            tag="v${{ steps.ver.outputs.version }}-fontvu.${{ github.run_number }}"
+            # Date-based, so a release reads like a date. A second push on the same
+            # UTC day takes .2, .3, ... UTC keeps the date stable regardless of the
+            # runner's timezone and matches how GitHub timestamps the release.
+            base="v${VERSION}-$(date -u +%Y%m%d)"
+            tag="$base"
+            n=1
+            while git ls-remote --tags --refs origin "refs/tags/$tag" | grep -q .; do
+              n=$((n + 1))
+              tag="$base.$n"
+            done
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "asset=hermes-browser-extension-${tag#v}.zip" >> "$GITHUB_OUTPUT"
