@@ -34,15 +34,25 @@ jobs:
         run: |
           node -e "const m=require('./dist/manifest.json'); if(!m.key){console.error('manifest.key missing from dist');process.exit(1)} console.log('manifest.key present, length', m.key.length)"
 
+      - name: Compute release tag
+        id: tag
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tag="${GITHUB_REF#refs/tags/}"
+          else
+            tag="v${{ steps.ver.outputs.version }}-fontvu.${{ github.run_number }}"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "asset=hermes-browser-extension-${tag#v}.zip" >> "$GITHUB_OUTPUT"
+
       - name: Zip dist
+        env:
+          ASSET: ${{ steps.tag.outputs.asset }}
         run: |
           cd dist
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            zip -r "../hermes-browser-extension-${{ steps.ver.outputs.version }}.zip" .
-          else
-            zip -r "../hermes-browser-extension-latest.zip" .
-          fi
+          zip -r "../$ASSET" .
           cd ..
+          cp "$ASSET" hermes-browser-extension-latest.zip
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -51,11 +61,18 @@ jobs:
           path: hermes-browser-extension-*.zip
           if-no-files-found: error
 
+      # Runs on every push to main (auto-tagged) and on a manual v* tag push.
+      # The tag is created with GITHUB_TOKEN, so it cannot re-trigger this
+      # workflow's `tags: ['v*']` filter - GitHub suppresses token-authored events.
       - name: Publish versioned release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: hermes-browser-extension-*.zip
+          tag_name: ${{ steps.tag.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ steps.tag.outputs.tag }}
+          prerelease: false
+          make_latest: true
+          files: ${{ steps.tag.outputs.asset }}
           generate_release_notes: true
 
       - name: Update rolling 'latest' release
@@ -71,9 +88,12 @@ jobs:
           Extension ID is stable: \`laplaijpbccfcgccodfofgoponggbpbh\`.
 
           Download, extract, then chrome://extensions > Load unpacked."
+          # Recreate instead of editing: `gh release edit` never moves published_at, and
+          # the releases API takes no published_at input (create or update), so an edited
+          # rolling release keeps showing its original creation date. The git tag is the
+          # source of truth and is force-moved above; it survives because we do not pass
+          # --cleanup-tag.
           if gh release view latest -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit latest -R "$GITHUB_REPOSITORY" --prerelease --title "Latest build (main)" --notes "$notes"
-            gh release upload latest -R "$GITHUB_REPOSITORY" hermes-browser-extension-latest.zip --clobber
-          else
-            gh release create latest -R "$GITHUB_REPOSITORY" --prerelease --title "Latest build (main)" --notes "$notes" hermes-browser-extension-latest.zip
+            gh release delete latest -R "$GITHUB_REPOSITORY" --yes
           fi
+          gh release create latest -R "$GITHUB_REPOSITORY" --prerelease --title "Latest build (main)" --notes "$notes" hermes-browser-extension-latest.zip
