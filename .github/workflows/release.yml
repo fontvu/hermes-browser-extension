@@ -88,9 +88,12 @@ jobs:
           Extension ID is stable: \`laplaijpbccfcgccodfofgoponggbpbh\`.
 
           Download, extract, then chrome://extensions > Load unpacked."
+          # Recreate instead of editing: `gh release edit` never moves published_at, and
+          # the releases API takes no published_at input (create or update), so an edited
+          # rolling release keeps showing its original creation date. The git tag is the
+          # source of truth and is force-moved above; it survives because we do not pass
+          # --cleanup-tag.
           if gh release view latest -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit latest -R "$GITHUB_REPOSITORY" --prerelease --title "Latest build (main)" --notes "$notes"
-            gh release upload latest -R "$GITHUB_REPOSITORY" hermes-browser-extension-latest.zip --clobber
-          else
-            gh release create latest -R "$GITHUB_REPOSITORY" --prerelease --title "Latest build (main)" --notes "$notes" hermes-browser-extension-latest.zip
+            gh release delete latest -R "$GITHUB_REPOSITORY" --yes
           fi
+          gh release create latest -R "$GITHUB_REPOSITORY" --prerelease --title "Latest build (main)" --notes "$notes" hermes-browser-extension-latest.zip
