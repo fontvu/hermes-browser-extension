@@ -215,7 +215,7 @@ test('terminal error paths dispose the diffusion placeholder on both surfaces', 
   // Side panel: the streaming updater owns an explicit dispose and the turn
   // catch calls it everywhere the stream ends without a final flush.
   assert.match(sidepanelSource, /function dispose\(\) \{[\s\S]*?setToolActivity\(node, null\);/);
-  assert.match(sidepanelSource, /return \{\s*node,\s*update: updateText,\s*updateText,\s*updateTool,\s*flush,\s*dispose,\s*\};/);
+  assert.match(sidepanelSource, /return \{\s*get node\(\) \{ return node; \},\s*captureViewState,\s*rebind,\s*update: updateText,\s*updateText,\s*updateTool,\s*flush,\s*dispose,\s*\};/);
   assert.match(sidepanelSource, /if \(error\?\.requestAccepted !== true\) \{\s*\n\s*streamPacer\?\.flush\?\.\(\);\s*\n\s*streamView\?\.dispose\?\.\(\);\s*\n\s*\}/);
   assert.match(sidepanelSource, /if \(contextRecovery\) \{[\s\S]*?streamView\?\.dispose\?\.\(\);/);
   // Hermes Web: the live-run diffusion card is cleared on the rejected-request
@@ -356,5 +356,9 @@ test('display_text rejection from a strict-contract core is recognised and retri
   assert.equal(turnRecovery.isDisplayTextRejection(new Error('invalid params for prompt.submit: truncate_before_row_id: Extra inputs')), false);
   assert.equal(turnRecovery.isDisplayTextRejection(new Error('Dashboard connection closed mid-turn.')), false);
   const source = readFileSync(new URL('../extension/sidepanel.js', import.meta.url), 'utf8');
-  assert.match(source, /isDisplayTextRejection\(error\)[\s\S]{0,200}displayTextUnsupported = true/);
+  // The refusal is remembered per gateway (not as a page-wide flag), and only a
+  // submit that carried display_text is retried without it.
+  assert.match(source, /Object\.hasOwn\(firstSubmit, 'display_text'\)[\s\S]{0,120}isDisplayTextRejection\(error\)/);
+  assert.match(source, /isDisplayTextRejection\(error\)[\s\S]{0,200}markUnsupported\(quirkGatewayUrl, GATEWAY_QUIRK\.PROMPT_DISPLAY_TEXT\)/);
+  assert.doesNotMatch(source, /displayTextUnsupported/);
 });
