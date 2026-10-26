@@ -201,7 +201,7 @@ test('sidepanel replays stored history without emptying canonical messages betwe
   const renderer = source.match(/function renderMessagesFromStorage\(\) \{[\s\S]*?\n\}/)?.[0] || '';
 
   assert.match(renderer, /els\.messages\.innerHTML = '';/);
-  assert.match(renderer, /for \(const message of browserDisplayMessages\((?:visibleMessages|messages)\)\) \{/);
+  assert.match(renderer, /for \(const message of groupToolHistoryMessages\(sessionToolDisplayMessages\((?:visibleMessages|messages)\)\)\) \{/);
   assert.match(renderer, /if \(isDelegationCompletionMarkerMessage\(message\)\) continue;/);
   // Replay keeps roleLabel pass-through (group projection author labels).
   assert.match(renderer, /addMessage\(message\.role, message\.content, \{[\s\S]*?persist: false[\s\S]*?attachments: message\.attachments \|\| null[\s\S]*?\}\);/);
@@ -595,14 +595,15 @@ test('redactSensitiveText masks provider token shapes and quoted secret values',
   const quotedSecret = ['abc', '123', 'def', '456'].join('');
   const jsonOutput = redactSensitiveText(`{"api_key": "${quotedSecret}"}`);
   assert.doesNotMatch(jsonOutput, new RegExp(quotedSecret));
-  assert.match(jsonOutput, /api_key=\[REDACTED_SECRET\]/);
+  assert.equal(jsonOutput, '{"api_key": "[REDACTED_SECRET]"}');
 
   const compoundOutput = redactSensitiveText(`{"client_secret":"${quotedSecret}","aws_secret_access_key":"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY","refresh_token":"refresh-${quotedSecret}"}`);
   assert.doesNotMatch(compoundOutput, /wJalrXUtnFEMI/);
   assert.doesNotMatch(compoundOutput, /refresh-abc123/);
-  assert.match(compoundOutput, /client_secret=\[REDACTED_SECRET\]/);
-  assert.match(compoundOutput, /aws_secret_access_key=\[REDACTED_SECRET\]/);
-  assert.match(compoundOutput, /refresh_token=\[REDACTED_SECRET\]/);
+  assert.match(compoundOutput, /"client_secret":"\[REDACTED_SECRET\]"/);
+  assert.match(compoundOutput, /"aws_secret_access_key":"\[REDACTED_SECRET\]"/);
+  assert.match(compoundOutput, /"refresh_token":"\[REDACTED_SECRET\]"/);
+  assert.doesNotThrow(() => JSON.parse(compoundOutput), 'quoted JSON must keep its shape');
 
   assert.equal(redactSensitiveText('The quick brown fox jumps over the lazy dog.'), 'The quick brown fox jumps over the lazy dog.');
 });
@@ -1064,10 +1065,15 @@ test('remote session route 403s classify as API authorization failures', () => {
 test('sidepanel routes session creation failures through remote setup diagnostics', () => {
   const source = readFileSync(new URL('../extension/sidepanel.js', import.meta.url), 'utf8');
 
+  // The GET/POST sequence lives in session-materialization.mjs; the side panel
+  // passes createSessionRouteError as its failure handler.
+  const materialization = readFileSync(new URL('../extension/lib/session-materialization.mjs', import.meta.url), 'utf8');
+
   assert.match(source, /function createSessionRouteError\(/);
   assert.match(source, /classifyRemoteGatewaySetup\(\{[\s\S]*?healthOk:\s*true[\s\S]*?status[\s\S]*?body/s);
-  assert.match(source, /throw createSessionRouteError\(\{[\s\S]*?Inspect Hermes Browser Extension session[\s\S]*?response:\s*getResponse/s);
-  assert.match(source, /throw createSessionRouteError\(\{[\s\S]*?Create Hermes Browser Extension session[\s\S]*?response:\s*createResponse/s);
+  assert.match(source, /materializeSessionRoute\(\{[\s\S]*?failure:\s*createSessionRouteError/s);
+  assert.match(materialization, /throw failure\(failureDetails\(\{[\s\S]*?Inspect Hermes Browser Extension session[\s\S]*?response:\s*lookup/s);
+  assert.match(materialization, /throw failure\(failureDetails\(\{[\s\S]*?Create Hermes Browser Extension session[\s\S]*?response:\s*created/s);
   assert.doesNotMatch(source, /Could not create Hermes Browser Extension session \(\$\{createResponse\.status\}\):/);
 });
 
@@ -1410,6 +1416,13 @@ test('voice dictation targets the Desktop-compatible Hermes audio transcription 
   assert.equal(shouldFallbackToWebSpeechForTranscription(404), true);
   assert.equal(shouldFallbackToWebSpeechForTranscription(405), true);
   assert.equal(shouldFallbackToWebSpeechForTranscription(500), false);
+  // Dashboard never answered (0) or refuses the extension a token (401/403): fall back too.
+  assert.equal(shouldFallbackToWebSpeechForTranscription(0), true);
+  assert.equal(shouldFallbackToWebSpeechForTranscription(401), true);
+  assert.equal(shouldFallbackToWebSpeechForTranscription(403), true);
+  assert.equal(common.dashboardVoiceFailureMessage({ status: 0, error: 'Failed to fetch' }), 'Hermes speech-to-text is unavailable: the Desktop dashboard did not respond.');
+  assert.equal(common.dashboardVoiceFailureMessage({ status: 500, error: 'boom' }), 'boom');
+  assert.equal(common.dashboardVoiceFailureMessage({ status: 500 }), 'Hermes Dashboard voice transcription failed.');
 });
 
 test('voice dictation uses the authenticated local Dashboard transcription route when the API server omits audio', async () => {
@@ -1516,6 +1529,19 @@ test('voice dictation prefers on-device speech and installs a language pack when
   });
   assert.equal(cloud.mode, 'cloud');
   assert.equal(cloudRecognition.processLocally, false);
+
+  // A language pack that never finishes installing must not freeze the mic click.
+  const stuckRecognition = { processLocally: false };
+  const started = Date.now();
+  const stuck = await common.prepareOnDeviceSpeechRecognition({
+    Recognition: { available: async () => 'downloadable', install: () => new Promise(() => {}) },
+    recognition: stuckRecognition,
+    language: 'en-US',
+    installTimeoutMs: 40,
+  });
+  assert.equal(stuck.mode, 'cloud');
+  assert.equal(stuck.availability, 'error');
+  assert.ok(Date.now() - started < 2000);
 
   const sidepanelJs = readFileSync(new URL('../extension/sidepanel.js', import.meta.url), 'utf8');
   const voiceJs = readFileSync(new URL('../extension/voice-dictation.js', import.meta.url), 'utf8');
@@ -1652,7 +1678,7 @@ test('connect and startup sync Hermes models, sessions, skills, and profiles fro
   assert.match(source, /apiFetch\('\/v1\/skills'/);
   assert.match(source, /request\(WS_METHODS\.profilesList, \{ include_sessions: true \}\)/);
   assert.doesNotMatch(source, /fetchRosterFromDashboard\(\{/);
-  assert.match(source, /apiFetch\(`\/api\/sessions\?limit=\$\{limit\}&offset=\$\{offset\}&include_children=true&order=recent`/);
+  assert.match(source, /hermesClient\.listSessions\(\{ limit: 200, maxPages: 1 \}\)/);
   assert.match(source, /els\.refreshModelsButton\.addEventListener\('click', refreshModelsFromMenu\)/);
 });
 
@@ -1712,13 +1738,15 @@ test('assistant thinking placeholder renders animated indicator markup and reduc
   assert.match(source, /const THINKING_STATUSES = \['thinking', 'brainstorming', 'contemplating', 'reasoning', 'processing', 'analyzing', 'reflecting', 'pondering', 'deliberating', 'formulating'\]/);
   assert.match(source, /function renderThinkingIndicator/);
   assert.match(source, /class="thinking-indicator" role="status" aria-live="polite" aria-label="Hermes is thinking, brainstorming, contemplating, reasoning, processing, analyzing, reflecting, pondering, deliberating, and formulating"/);
-  assert.match(source, /<span class="thinking-glyph" aria-hidden="true">\(o_o\)<\/span>/);
+  assert.match(source, /classicThinkingFace\(thinkingFaceStep\)/);
+  assert.match(source, /scheduleClassicThinkingFaces/);
+  assert.doesNotMatch(css, /thinkingFaceCycle/);
   assert.match(source, /<span class="thinking-line">/);
   assert.match(source, /<span class="thinking-word">\$\{escapeHtml\(word\)\}<\/span>/);
   assert.match(source, /<span class="thinking-dots" aria-hidden="true"><i><\/i><i><\/i><i><\/i><\/span>/);
   assert.match(source, /<span class="thinking-words" aria-hidden="true">\$\{phrases\}<\/span>/);
   assert.match(source, /streamPacer\.push\(liveText\.slice\(pushedLive\)\);/);
-  assert.match(source, /streamView\.updateText\(text \|\| \(meta\.done \? '' : THINKING_PLACEHOLDER\)\);/);
+  assert.match(source, /const paint = pacerFramePaint\(text, meta, THINKING_PLACEHOLDER\);/);
   assert.match(css, /\.thinking-indicator[\s\S]*overflow: hidden/);
   assert.match(css, /\.thinking-words[\s\S]*overflow: hidden/);
   assert.match(css, /\.thinking-words[\s\S]*height: 1\.46em/);
@@ -1879,6 +1907,20 @@ test('normalizeHermesModels gives Grok 4.6 a 500k window instead of the grok-4 2
 
   const older = normalizeHermesModels({ data: [{ id: 'grok-4', rawModelId: 'grok-4', provider: 'xai', context_length: 0 }] }, 'grok-4');
   assert.equal(older[0].contextTokens, 256_000);
+});
+
+test('normalizeHermesModels gives StepFun step-5-preview its 1M window instead of the 256k fallback', () => {
+  const live = normalizeHermesModels({ data: [{ id: 'nous::stepfun/step-5-preview', rawModelId: 'stepfun/step-5-preview', label: 'StepFun: Step 5 Preview', provider: 'nous', context_length: 1_000_000 }] }, 'stepfun/step-5-preview');
+  assert.equal(live[0].contextTokens, 1_000_000);
+
+  const free = normalizeHermesModels({ data: [{ id: 'stepfun/step-5-preview:free', rawModelId: 'stepfun/step-5-preview:free', provider: 'nous', context_length: 0 }] }, 'stepfun/step-5-preview:free');
+  assert.equal(free[0].contextTokens, 1_000_000);
+
+  const cached = normalizeHermesModels({ data: [{ id: 'stepfun/step-5-preview', rawModelId: 'stepfun/step-5-preview', provider: 'nous', contextTokens: 0, source: 'cache' }] }, 'stepfun/step-5-preview');
+  assert.equal(cached[0].contextTokens, 1_000_000, 'a stale cache row with no context must still resolve 1M');
+
+  const flash = normalizeHermesModels({ data: [{ id: 'stepfun/step-3.7-flash', rawModelId: 'stepfun/step-3.7-flash', provider: 'nous', context_length: 0 }] }, 'stepfun/step-3.7-flash');
+  assert.equal(flash[0].contextTokens, 262_144, 'step-3.7 flash keeps its own 262k window');
 });
 
 test('normalizeHermesModels applies 1M context fallback for Qwen Token Plan models', () => {
@@ -2623,12 +2665,12 @@ test('skill helpers normalize slash commands and suggest matches from / or @ inp
   assert.deepEqual(skillSuggestionsForInput('normal message', skills), []);
 });
 
-test('named profiles never inherit the default REST skills catalog', () => {
+test('named profiles load their own REST skills catalog through the profile route', () => {
   assert.equal(isNamedHermesProfileName('default'), false);
   assert.equal(isNamedHermesProfileName(''), false);
   assert.equal(isNamedHermesProfileName('research'), true);
   assert.equal(restSkillsFallbackAllowed({ profileName: 'default', dashboardReady: false }), true);
-  assert.equal(restSkillsFallbackAllowed({ profileName: 'research', dashboardReady: false }), false);
+  assert.equal(restSkillsFallbackAllowed({ profileName: 'research', dashboardReady: false }), true);
   assert.equal(restSkillsFallbackAllowed({ profileName: 'default', dashboardReady: true }), false);
 });
 
@@ -4365,4 +4407,39 @@ test('Connected agent section copy clarifies the scan is remote-dashboard-inappl
   assert.match(html, /id="agentList"/);
   assert.match(html, /Scans a trusted Hermes API host for running sidecar gateways on/i);
   assert.match(html, /Remote[\s\S]*?dashboard mode Dashboard Attach connects over the dashboard[\s\S]*?WebSocket/i);
+});
+
+test('REST sessions are created under a source the gateway runs turns on', async () => {
+  const { restSessionCreateSource, REST_TURN_SOURCES } = await import('../extension/lib/session-materialization.mjs');
+  const common = await import('../extension/lib/common.mjs');
+  // Since Oct 2026 Hermes refuses every REST turn on a session stored as hermes_browser
+  // and refuses to relabel it, so the side panel must never create one.
+  assert.equal(restSessionCreateSource('hermes_browser'), 'api_server');
+  assert.equal(restSessionCreateSource('desktop'), 'api_server');
+  assert.equal(restSessionCreateSource(''), 'api_server');
+  assert.equal(restSessionCreateSource(undefined), 'api_server');
+  assert.equal(restSessionCreateSource('api_server'), 'api_server');
+  assert.equal(restSessionCreateSource(' Bot_Room '), 'bot_room');
+  assert.equal(common.REST_TURN_SOURCES, REST_TURN_SOURCES);
+  // The id, not the stored source, marks them as the Browser's (side panel and Hermes Assist).
+  assert.equal(common.isHermesBrowserOwnedSession({ id: 'hermes-browser-extension-20261019-abc123', source: 'api_server' }), true);
+  assert.equal(common.isHermesBrowserOwnedSession({ id: 'hermes-assist-mf3k2-0123456789ab', source: 'api_server' }), true);
+  assert.equal(common.isHermesBrowserOwnedSession({ id: 'telegram-42', source: 'api_server' }), false);
+  // Every side panel REST create uses it (first send, new chat, Hermes Assist).
+  const sidepanel = readFileSync(new URL('../extension/sidepanel.js', import.meta.url), 'utf8');
+  const creates = sidepanel.split("apiFetch('/api/sessions', {").slice(1).map((rest) => rest.slice(0, 400))
+    .filter((body) => !body.includes("source: 'hermes_browser_bg'")); // /bg dispatch: never takes a turn here
+  assert.equal(creates.length, 2);
+  for (const body of creates) assert.match(body, /source: restSessionCreateSource\(settings\.sessionSource\)/);
+  assert.match(sidepanel, /createBody: \(\) => \(\{[^}]*source: restSessionCreateSource\(settings\.sessionSource\)/);
+});
+
+test('restTurnSourceRepair relabels sessions the gateway would refuse to run a REST turn on', async () => {
+  const { restTurnSourceRepair } = await import('../extension/lib/common.mjs');
+  assert.deepEqual(restTurnSourceRepair({ id: 'a', source: 'hermes_browser' }), { source: 'api_server' });
+  assert.deepEqual(restTurnSourceRepair({ session: { id: 'a', source: 'desktop' } }), { source: 'api_server' });
+  assert.equal(restTurnSourceRepair({ id: 'a', source: 'api_server' }), null);
+  assert.equal(restTurnSourceRepair({ id: 'a', source: 'bot_room' }), null);
+  assert.equal(restTurnSourceRepair({}), null);
+  assert.equal(restTurnSourceRepair(null), null);
 });

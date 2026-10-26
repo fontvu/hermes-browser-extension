@@ -1,5 +1,5 @@
 /* Generated from extension/lib/content-extraction-core.mjs, extension/lib/appearance-themes.mjs, extension/lib/site-adapters.mjs, extension/lib/inline-draft-policy.mjs, extension/lib/page-annotation-content.mjs. Do not edit directly. */
-/* extension/lib/content-extraction-core.mjs · SHA-256 d4533fe293cb7c8f */
+/* extension/lib/content-extraction-core.mjs · SHA-256 8b63a45056491eb4 */
 (function hermesContentExtractorRuntime(hermesGlobal) {
   'use strict';
 
@@ -91,7 +91,37 @@ const SENSITIVE_ASSIGNMENT_KEYS = new Set([
   'passwd',
   'privatekey',
 ]);
-const POTENTIAL_ASSIGNMENT_RE = /\b([A-Za-z][A-Za-z0-9_%+.-]{1,79})["'`]?\s*([:=])\s*["'`]?([^\s'"`;&,]+)/gi;
+// Names are matched on their normalized form (lowercase, letters and digits
+// only), so `stripe_secret_key`, `MY_API_TOKEN` and `db-password` all end in a
+// credential word. A bare trailing `key` is deliberately not on this list:
+// `sort_key` and `cache_key` are ordinary names.
+const SENSITIVE_ASSIGNMENT_KEY_SUFFIXES = [
+  'password',
+  'passwd',
+  'passphrase',
+  'pwd',
+  'secret',
+  'token',
+  'apikey',
+  'accesskey',
+  'secretkey',
+  'privatekey',
+  'signingkey',
+  'encryptionkey',
+  'authkey',
+  'masterkey',
+  'credential',
+  'credentials',
+];
+// key, optional closing quote of a JSON-style key, separator, then either a
+// fully quoted value (spaces allowed) or a bare token.
+const POTENTIAL_ASSIGNMENT_RE = /\b([A-Za-z][A-Za-z0-9_%+.-]{1,79})(["'`]?)(\s*)([:=])(\s*)(?:(["'`])((?:(?!\6)[^\r\n]){1,500})\6|(["'`]?)([^\s'"`;&,]+))/gi;
+// The same shape inside a JSON string that was itself stored as a string
+// (`{\"password\":\"hunter2\"}`), which is how JSON turns up in logs and API
+// consoles. The value runs to the next escaped quote.
+const ESCAPED_JSON_ASSIGNMENT_RE = /\b([A-Za-z][A-Za-z0-9_%+.-]{1,79})(\\+["'])(\s*:\s*)(\\+["'])((?:(?!\\+["'])[^\r\n]){1,500})(\\+["'])/gi;
+// Closing brackets after a bare value belong to the surrounding JSON or code.
+const BARE_VALUE_TRAILING_BRACKETS_RE = /[}\]]+$/;
 
 const SECRET_PATTERNS = [
   { pattern: /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/g, replacement: '[REDACTED_PRIVATE_KEY]' },
@@ -105,6 +135,17 @@ const SECRET_PATTERNS = [
   { pattern: /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, replacement: '[REDACTED_JWT]' },
   { pattern: /\b(?:sk|pk)_(?:live|test)_[A-Za-z0-9_-]{8,}\b/gi, replacement: '[REDACTED_SECRET]' },
   { pattern: /\bgh[pousr]_[A-Za-z0-9_]{16,}\b/gi, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\bnpm_[A-Za-z0-9]{30,}\b/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\bhf_[A-Za-z0-9]{30,}\b/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\bya29\.[A-Za-z0-9_-]{20,}/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\bGOCSPX-[A-Za-z0-9_-]{20,}/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\bglpat-[A-Za-z0-9_-]{20,}/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\bdop_v1_[a-f0-9]{64}\b/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\bshp(?:at|ca|pa|ss)_[a-f0-9]{32}\b/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\bwhsec_[A-Za-z0-9]{16,}\b/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\b(?:Authorization|Proxy-Authorization)(["'`]?\s*[:=]\s*["'`]?)(?:Basic|Digest|Negotiate|NTLM|Token)\s+[^\s'"`;&,]+/gi, replacement: 'Authorization$1[REDACTED_SECRET]' },
+  { pattern: /\b([a-z][a-z0-9+.-]{1,20}:\/\/[^\s:/@'"`]+:)[^\s@/'"`]+@/gi, replacement: '$1[REDACTED_SECRET]@' },
 ];
 
 function boundedInteger(value, fallback, minimum = 1, maximum = Number.MAX_SAFE_INTEGER) {
@@ -160,18 +201,34 @@ function decodedTextLayers(value = '', maxLayers = 3) {
 function isSensitiveAssignmentKey(value = '') {
   return decodedTextLayers(value).some((layer) => {
     const normalized = layer.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-    return SENSITIVE_ASSIGNMENT_KEYS.has(normalized);
+    return SENSITIVE_ASSIGNMENT_KEYS.has(normalized)
+      || SENSITIVE_ASSIGNMENT_KEY_SUFFIXES.some((suffix) => normalized.endsWith(suffix));
   });
 }
 
 function redactSensitiveAssignments(value = '') {
   let count = 0;
-  const text = String(value || '').replace(POTENTIAL_ASSIGNMENT_RE, (match, key, separator) => {
+  const escaped = String(value || '').replace(ESCAPED_JSON_ASSIGNMENT_RE, (match, key, keyQuote, separator, openQuote, _secret, closeQuote) => {
     if (!isSensitiveAssignmentKey(key)) return match;
     count += 1;
-    const quotedObjectKey = /^["'`]\s*:/.test(match.slice(key.length));
-    const delimiter = separator === ':' && !quotedObjectKey ? ': ' : '=';
-    return `${key}${delimiter}[REDACTED_SECRET]`;
+    return `${key}${keyQuote}${separator}${openQuote}[REDACTED_SECRET]${closeQuote}`;
+  });
+  const text = escaped.replace(POTENTIAL_ASSIGNMENT_RE, (match, key, keyQuote, beforeSeparator, separator, afterSeparator, quote, _quoted, _bareQuote, bare) => {
+    if (!isSensitiveAssignmentKey(key)) return match;
+    count += 1;
+    if (quote) {
+      // Quoted value: keep the key, separator spacing and quotes so JSON and
+      // config-file shapes survive, and drop only the value itself.
+      return `${key}${keyQuote}${beforeSeparator}${separator}${afterSeparator}${quote}[REDACTED_SECRET]${quote}`;
+    }
+    // A bare value must not swallow the `}` or `]` that closes its object.
+    const closers = BARE_VALUE_TRAILING_BRACKETS_RE.exec(bare || '')?.[0] || '';
+    if (keyQuote) {
+      // JSON-style key followed by an unquoted value (number, boolean, bare word).
+      return `${key}${keyQuote}${separator} [REDACTED_SECRET]${closers}`;
+    }
+    const delimiter = separator === ':' ? ': ' : '=';
+    return `${key}${delimiter}[REDACTED_SECRET]${closers}`;
   });
   return { text, count };
 }
@@ -181,9 +238,9 @@ function redactSensitiveTextWithCount(value = '') {
   let text = assignments.text;
   let count = assignments.count;
   for (const { pattern, replacement } of SECRET_PATTERNS) {
-    text = text.replace(pattern, () => {
+    text = text.replace(pattern, (...args) => {
       count += 1;
-      return replacement;
+      return replacement.replace(/\$(\d)/g, (_token, index) => (typeof args[Number(index)] === 'string' ? args[Number(index)] : ''));
     });
   }
   return { text, count };
@@ -956,7 +1013,7 @@ const APPEARANCE_RUNTIME_API = Object.freeze({
   hermesGlobal.HermesAppearance = APPEARANCE_RUNTIME_API;
 })(globalThis);
 
-/* extension/lib/site-adapters.mjs · SHA-256 25c151d2a977ea62 */
+/* extension/lib/site-adapters.mjs · SHA-256 e53e0fd8eeae4d75 */
 (function hermesSiteAdapterRuntime(hermesGlobal) {
   'use strict';
 
@@ -1087,10 +1144,11 @@ function baseResult(adapterId, label, policy, route, capabilities, actions, cont
     capabilities,
     actions,
     context: {
-      text: bounded(context.text || '', MAX_CONTEXT_CHARS),
+      text: bounded(context.text || '', adapterId === 'gmail' ? Math.max(4_000, Math.min(200_000, Number(context.maxTextChars) || 30_000)) : MAX_CONTEXT_CHARS),
       title: bounded(context.title || '', 500),
       itemCount: Math.max(0, Number(context.itemCount || 0)),
       transcriptFetched: Boolean(context.transcriptFetched),
+      truncated: Boolean(context.truncated),
     },
   };
 }
@@ -1158,7 +1216,7 @@ function xAdapter(document, url) {
 // .a3s / [role="document"] message body is walked, and form-control tags are
 // skipped so draft textareas, inputs, and select values can never leak.
 const GMAIL_MESSAGE_LIMIT = 60;
-const GMAIL_BODY_LIMIT = 8_000;
+const GMAIL_BODY_LIMIT = 200_000;
 const GMAIL_BODY_SELECTOR = '.a3s, [role="document"]';
 const GMAIL_BODY_SKIP_TAGS = new Set([
   'script', 'style', 'noscript', 'template', 'textarea', 'input', 'select',
@@ -1186,7 +1244,8 @@ function gmailBodyText(root, max = GMAIL_BODY_LIMIT) {
     for (const child of Array.from(node.childNodes || [])) visit(child);
   };
   visit(root);
-  return bounded(parts.join(' '), max);
+  const text = parts.join(' ');
+  return text.length > max ? `${text.slice(0, max - 13).trimEnd()} [truncated]` : bounded(text, max);
 }
 
 function gmailSubject(document) {
@@ -1214,27 +1273,49 @@ function gmailMessageDate(message) {
   return bounded(node.getAttribute?.('title') || textOf(node, 200), 200);
 }
 
-function gmail(document, url, explicitCapture) {
-  const route = { kind: /#(?:inbox|all|sent)\//i.test(url.hash) ? 'thread' : 'mailbox' };
+function isGmailThreadUrl(value = '') {
+  const url = parsedUrl(value);
+  if (url?.hostname !== 'mail.google.com') return false;
+  const parts = url.hash.slice(1).split('?')[0].split('/');
+  const [folder] = parts;
+  if (!parts.at(-1) || /^p\d+$/i.test(parts.at(-1))) return false;
+  if (['label', 'search', 'category'].includes(folder)) return parts.length >= 3;
+  return ['inbox', 'all', 'sent', 'starred', 'imp', 'snoozed', 'trash', 'spam'].includes(folder)
+    && parts.length >= 2;
+}
+
+function gmail(document, url, explicitCapture, maxTextChars = 30_000) {
+  const route = { kind: isGmailThreadUrl(url.href) ? 'thread' : 'mailbox' };
+  explicitCapture = explicitCapture && route.kind === 'thread';
   const title = explicitCapture ? gmailSubject(document) : '';
   const messages = [];
+  const limit = Math.max(4_000, Math.min(200_000, Number(maxTextChars) || 30_000));
+  let truncated = false;
   if (explicitCapture) {
-    // Total output stays within the shared adapter budget (MAX_CONTEXT_CHARS);
-    // capture stops at the last message that fully fits, so the result is
-    // truncated at a message boundary instead of mid-sentence when a thread
-    // exceeds the budget.
     let size = title ? title.length + 2 : 0;
-    const messageNodes = Array.from(document.querySelectorAll('[data-message-id]'));
-    for (const message of messageNodes) {
-      if (messages.length >= GMAIL_MESSAGE_LIMIT) break;
-      const body = gmailBodyText(message.querySelector(GMAIL_BODY_SELECTOR));
+    const seenBodies = new Set();
+    let messageNodes = Array.from(document.querySelectorAll('[data-message-id]'));
+    if (!messageNodes.length) messageNodes = Array.from(document.querySelectorAll('[data-legacy-message-id], .adn'));
+    // Keep the latest reply when a thread is larger than the budget, while
+    // preserving chronological order for every message that fits.
+    for (const message of messageNodes.reverse()) {
+      const bodyNode = message.querySelector(GMAIL_BODY_SELECTOR);
+      if (!bodyNode || bodyNode.isContentEditable === true || bodyNode.getAttribute?.('contenteditable') === 'true' || seenBodies.has(bodyNode)) continue;
+      seenBodies.add(bodyNode);
+      if (messages.length >= GMAIL_MESSAGE_LIMIT) { truncated = true; break; }
+      const body = gmailBodyText(bodyNode, limit);
       if (!body) continue;
       const sender = gmailMessageSender(message);
       const date = gmailMessageDate(message);
       const label = [sender, date ? `(${date})` : ''].filter(Boolean).join(' ');
       const line = label ? `${label}: ${body}` : body;
-      if (size + line.length + 2 > MAX_CONTEXT_CHARS) break;
-      messages.push(line);
+      if (size + line.length + 2 > limit) {
+        if (!messages.length || line.length > limit - (title.length + 2)) messages.unshift(`${line.slice(0, Math.max(0, limit - size - 20))} [truncated]`);
+        truncated = true;
+        break;
+      }
+      messages.unshift(line);
+      if (body.endsWith(' [truncated]')) truncated = true;
       size += line.length + 2;
     }
   }
@@ -1243,8 +1324,10 @@ function gmail(document, url, explicitCapture) {
     action('summarize-thread', 'Summarize thread', 'Summarize only after explicit capture.'),
   ], {
     title,
-    text: explicitCapture ? [title, ...messages].filter(Boolean).join('\n\n') : '',
+    text: explicitCapture && messages.length ? [title, ...messages].filter(Boolean).join('\n\n') : '',
     itemCount: messages.length,
+    maxTextChars: limit,
+    truncated,
   });
 }
 
@@ -1669,11 +1752,16 @@ function inspectSite(document, options = {}) {
   if (host === 'github.com' || host.endsWith('.github.com')) return github(document, url);
   if (host === 'youtube.com' || host.endsWith('.youtube.com') || host === 'youtu.be') return youtube(document, url);
   if (host === 'x.com' || host.endsWith('.x.com') || host === 'twitter.com' || host.endsWith('.twitter.com')) return xAdapter(document, url);
-  if (host === 'mail.google.com') return gmail(document, url, Boolean(options.explicitCapture));
+  if (host === 'mail.google.com') return gmail(document, url, Boolean(options.explicitCapture), options.maxTextChars);
   const adapterId = adapterIdForHost(host);
   if (adapterId !== 'generic') {
     const explicitCapture = Boolean(options.explicitCapture);
-    const privateSite = PRIVATE_INLINE_SITES.has(adapterId);
+    const publicArticle = (adapterId === 'medium' && /\/[\w-]+-[a-f0-9]{8,}(?:\/)?$/i.test(url.pathname)
+      && !/^\/(?:me|new-story|settings|draft|edit)(?:\/|$)/i.test(url.pathname))
+      || (adapterId === 'substack' && /^\/p\/[^/]+\/?$/.test(url.pathname));
+    const readingArticle = publicArticle && Boolean(document.querySelector('article, [itemprop="articleBody"]'))
+      && !document.querySelector('article [contenteditable="true"], article textarea');
+    const privateSite = PRIVATE_INLINE_SITES.has(adapterId) && !readingArticle;
     const context = explicitCapture
       ? visibleContextText(document.querySelector('main, [role="main"], body') || document.body, null, MAX_CONTEXT_CHARS)
       : '';
@@ -1707,11 +1795,16 @@ function applySiteAdapterPolicy(pageContext = {}, siteAdapter = {}) {
         capabilities: siteAdapter.capabilities,
         actions: siteAdapter.actions,
         suppressed: shouldSuppress && !adapterText,
+        itemCount: Number(siteAdapter?.context?.itemCount || 0),
+        truncated: Boolean(siteAdapter?.context?.truncated),
       },
     },
   };
   if (shouldSuppress && !adapterText) next.text = '';
   else if (adapterText) next.text = adapterText;
+  if (siteAdapter.adapterId === 'gmail' && adapterText) {
+    next.meta.extraction = { ...(next.meta.extraction || {}), method: 'gmail-thread', confidence: 0.95, wordCount: adapterText.split(/\s+/).length, truncated: Boolean(siteAdapter.context?.truncated) };
+  }
   if (pageContext.extraction) {
     next.extraction = {
       ...pageContext.extraction,
@@ -1743,6 +1836,7 @@ const SITE_ADAPTER_API = Object.freeze({
   inspectInlineSite,
   captureInlineSiteContext,
   normalizeInlineSiteContextPreferences,
+  isGmailThreadUrl,
   applySiteAdapterPolicy,
   explicitSiteCaptureAction,
   safeUrl,

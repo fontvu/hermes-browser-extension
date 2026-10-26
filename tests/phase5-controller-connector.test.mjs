@@ -236,6 +236,7 @@ test('Cloud connector uses trusted dashboard mint, credential-free gateway subpr
   assert.equal(register.method, 'browser.controller.register');
   assert.equal(register.params.session_id, 'live-session-2');
   assert.equal(register.params.controller_id, 'controller-fixture');
+  assert.equal('product' in register.params, false, 'gateway-RPC register must not send product');
   socket.message({ id: register.id, result: { scope: { session_id: 'live-session-2' } } });
   const connection = await connecting;
 
@@ -295,7 +296,8 @@ test('local API connector materializes a ghost session on browser_control_sessio
     if (url.endsWith('/api/sessions')) {
       const body = JSON.parse(options.body);
       assert.equal(body.id, 'stored-session-fixture');
-      assert.equal(body.source, 'hermes_browser');
+      // Created under a label the gateway runs REST turns on, not hermes_browser.
+      assert.equal(body.source, 'api_server');
       return jsonResponse(201, { session: { id: body.id } });
     }
     throw new Error(`Unexpected request: ${url}`);
