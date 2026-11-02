@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import vm from 'node:vm';
 
 import {
   CONTEXT_SCOPE_MODES,
@@ -7,6 +8,7 @@ import {
   contextScopeFromTab,
   normalizeContextScope,
 } from '../extension/lib/context-scope.mjs';
+import { CHECK_JS } from '../scripts/check-js.mjs';
 import {
   createRevisionGate,
   resetContextScope,
@@ -145,7 +147,7 @@ test('sidepanel async scope publication is revision-guarded at storage and captu
   const loadStart = source.indexOf('async function loadMessagesForActiveScope');
   const loadEnd = source.indexOf('\nasync function saveMessagesForActiveScope', loadStart);
   const refreshStart = source.indexOf('async function refreshContext(options');
-  const refreshEnd = source.indexOf('\nfunction setRefreshButtonBusy', refreshStart);
+  const refreshEnd = source.indexOf('\nfunction setContextPageRefreshBusy', refreshStart);
   const loadRegion = source.slice(loadStart, loadEnd);
   const refreshRegion = source.slice(refreshStart, refreshEnd);
   assert.match(loadRegion, /scopeRevision/);
@@ -241,8 +243,7 @@ test('pinning a stale menu row fails closed instead of reusing a closed tab snap
 
 test('check:js syntax-checks the transition helper', async () => {
   const { readFile } = await import('node:fs/promises');
-  const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
-  assert.match(packageJson.scripts['check:js'], /node --check extension\/lib\/context-scope-transition\.mjs/);
+  assert.match(CHECK_JS, /node --check extension\/lib\/context-scope-transition\.mjs/);
 });
 
 test('conversation snapshots restore non-pinned identity without copying connection secrets', () => {
@@ -274,4 +275,102 @@ test('conversation snapshots restore non-pinned identity without copying connect
   assert.equal(restored.settings.sessionId, 'global-session');
   assert.equal(restored.activeSessionRuntime.sessionId, 'global-session');
   assert.equal(restored.transport, 'dashboard-ws');
+});
+
+test('a running chat this panel made over REST opens over REST; only the roster ever falls back to it', async () => {
+  const { chooseOpenSessionTransport } = await import('../extension/lib/context-scope-transition.mjs');
+  // The reported case: a REST connection, a hermes-browser-extension-* chat whose turn is still running.
+  assert.deepEqual(chooseOpenSessionTransport({ activeTransport: 'rest', liveOnRoster: true, restMadeChat: true }), { dashboard: false, restFallback: false });
+  // A running session from elsewhere (Desktop, CLI) is attached over the socket, and REST takes over if the socket cannot.
+  assert.deepEqual(chooseOpenSessionTransport({ activeTransport: 'rest', liveOnRoster: true }), { dashboard: true, restFallback: true });
+  // A panel already chatting over the socket keeps it, and a socket failure stays a failure there.
+  assert.deepEqual(chooseOpenSessionTransport({ activeTransport: 'dashboard-ws', liveOnRoster: true, restMadeChat: true }), { dashboard: true, restFallback: false });
+  // Bot Mode and Remote socket mode need the socket; no REST fallback there.
+  assert.deepEqual(chooseOpenSessionTransport({ activeTransport: 'rest', botTransport: true, liveOnRoster: true }), { dashboard: true, restFallback: false });
+  assert.deepEqual(chooseOpenSessionTransport({ activeTransport: 'rest', remoteWsMode: true, liveOnRoster: true, restMadeChat: true }), { dashboard: true, restFallback: false });
+  // Idle sessions and explicit REST opens stay REST.
+  assert.deepEqual(chooseOpenSessionTransport({ activeTransport: 'rest' }), { dashboard: false, restFallback: false });
+  assert.deepEqual(chooseOpenSessionTransport({ activeTransport: 'dashboard-ws', forceRest: true }), { dashboard: false, restFallback: false });
+});
+
+test('the picker opens a session through the transport choice and falls back to REST instead of failing', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(new URL('../extension/sidepanel.js', import.meta.url), 'utf8');
+  const start = source.indexOf('async function openHermesSession(');
+  const body = source.slice(start, source.indexOf('\nasync function attachLiveSessionIfRunning', start));
+  assert.match(body, /chooseOpenSessionTransport\(\{[\s\S]*?restMadeChat: isSidePanelSessionId\(session\.id\),/);
+  assert.match(body, /if \(openTransport\.restFallback\) \{[\s\S]*?dashboardTransport = false;/);
+  assert.match(body, /\n {2}if \(!dashboardTransport\) \{\n/, 'the REST open runs after a fallback too');
+});
+
+// Runs the real commitContextScope against stubs: a scope change must not load the regular chat's cached
+// transcript over an open group chat, whose messages live in activeGroupMessages.
+async function runScopeCommit({ groupOpen, scope = { mode: CONTEXT_SCOPE_MODES.CHAT_ONLY }, ensureSession = false }) {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(new URL('../extension/sidepanel.js', import.meta.url), 'utf8');
+  const start = source.indexOf('async function commitContextScope');
+  const end = source.indexOf('\nfunction applyContextScope', start);
+  assert.ok(start >= 0 && end > start, 'commitContextScope source region must exist');
+  const calls = [];
+  const env = {
+    scopeRevision: { isCurrent: () => true },
+    scopeTransitionSnapshot: () => ({}),
+    normalizeContextScope,
+    CONTEXT_SCOPE_MODES,
+    conversationScopeForContextScope: (scope) => scope,
+    rememberNonPinnedConversationSession: () => {},
+    restoreNonPinnedConversationSession: () => null,
+    availableSessions: [],
+    DEFAULT_SETTINGS: { sessionSource: 'Browser' },
+    contextScope: normalizeContextScope({ mode: CONTEXT_SCOPE_MODES.FOLLOW_ACTIVE }),
+    previousConversationScope: normalizeContextScope({ mode: CONTEXT_SCOPE_MODES.FOLLOW_ACTIVE }),
+    rememberConversationScope: () => {},
+    saveConversationScopeForInstance: () => {},
+    saveContextScopeForInstance: () => {},
+    syncSelectedTabsFromContextScope: () => {},
+    currentContext: { tabs: [] },
+    renderContextScopeControls: () => {},
+    activeGroupProjection: groupOpen ? { roomId: 'launch-room' } : null,
+    loadMessagesForActiveScope: async () => { calls.push('load-regular-transcript'); return true; },
+    renderMessagesFromStorage: () => { calls.push('render'); },
+    openHermesSession: async () => { calls.push('open-session'); return true; },
+    ensureSessionForActiveScope: async () => { calls.push('bind-scope-session'); return true; },
+    refreshContext: async () => { calls.push('refresh-context'); },
+    restoreScopeTransitionSnapshot: () => {},
+    browserApi: { storage: { local: { set: async () => {} } } },
+  };
+  // The stubs are the sandbox's globals, as sidepanel.js's module scope is for the real function.
+  const context = vm.createContext(env);
+  vm.runInContext(source.slice(start, end), context);
+  const ok = await context.commitContextScope(scope, { ensureSession, scopeRevisionId: 1 });
+  return { ok, calls };
+}
+
+test('Chat only on an open group chat keeps the group transcript on screen', async () => {
+  const { ok, calls } = await runScopeCommit({ groupOpen: true });
+  assert.equal(ok, true);
+  assert.equal(calls.includes('load-regular-transcript'), false, 'the regular chat must not be loaded over the group');
+  assert.deepEqual(calls, ['render', 'refresh-context']);
+});
+
+test('Chat only on a regular chat still loads that chat for the new scope', async () => {
+  const { ok, calls } = await runScopeCommit({ groupOpen: false });
+  assert.equal(ok, true);
+  assert.deepEqual(calls, ['load-regular-transcript', 'refresh-context']);
+});
+
+// Pinning a tab binds the regular chat saved for that tab (ensureSession). With a room open, that would
+// open the regular chat and close the room.
+const PINNED = { mode: CONTEXT_SCOPE_MODES.PINNED_TAB, pinnedTabId: 7, pinnedTitle: 'Launch page', pinnedUrl: 'https://example.com/' };
+
+test('pinning a tab on an open group chat keeps the room open and binds no regular chat', async () => {
+  const { ok, calls } = await runScopeCommit({ groupOpen: true, scope: PINNED, ensureSession: true });
+  assert.equal(ok, true);
+  assert.deepEqual(calls, ['render', 'refresh-context']);
+});
+
+test('pinning a tab on a regular chat still binds the chat saved for that tab', async () => {
+  const { ok, calls } = await runScopeCommit({ groupOpen: false, scope: PINNED, ensureSession: true });
+  assert.equal(ok, true);
+  assert.deepEqual(calls, ['load-regular-transcript', 'bind-scope-session', 'refresh-context']);
 });
