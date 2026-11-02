@@ -77,8 +77,7 @@ test('inline helper uses approved Hermes branding, routes sessions, and supports
   assert.match(source, /Open session/);
   assert.match(source, /Automatic replacement/);
   const sidepanelHtml = await read('extension/sidepanel.html');
-  const appHtml = await read('extension/app.html');
-  // Assist controls live only in the side panel Settings; Hermes Web no longer hosts them.
+  // Assist controls live only in the side panel Settings.
   for (const html of [sidepanelHtml]) {
     assert.match(html, /inlineAssistEnabled/);
     assert.match(html, /inlineAssistDefaultRoute/);
@@ -92,11 +91,6 @@ test('inline helper uses approved Hermes branding, routes sessions, and supports
     assert.match(html, /Ask every time/);
     assert.match(html, /Run in background/);
   }
-  assert.doesNotMatch(appHtml, /inlineAssistEnabled/);
-  assert.doesNotMatch(appHtml, /inlineAssistDefaultRoute/);
-  assert.doesNotMatch(appHtml, /id="inlineAssistModelButton"/);
-  assert.doesNotMatch(appHtml, /assistModelCapabilityHint/);
-  assert.doesNotMatch(appHtml, /inlineAssistSessionRetention/);
   assert.match(source, /current\.text\s*!==\s*pending\.draftText/);
   assert.match(source, /host\.dataset\.inlineAssistDefaultRoute/);
   assert.match(source, /host\.dataset\.inlineAssistSessionRetention/);
@@ -104,12 +98,9 @@ test('inline helper uses approved Hermes branding, routes sessions, and supports
   assert.doesNotMatch(source, /\.innerHTML\s*=/);
 });
 
-test('settings surfaces preserve Assist model controls and explain exact-routing fallback', async () => {
-  const [sidepanel, app] = await Promise.all([
-    read('extension/sidepanel.js'),
-    read('extension/app.js'),
-  ]);
-  for (const source of [sidepanel, app]) {
+test('settings surface preserves Assist model controls and explains exact-routing fallback', async () => {
+  const sidepanel = await read('extension/sidepanel.js');
+  for (const source of [sidepanel]) {
     assert.match(source, /assistModelRoutingSupported/);
     assert.match(source, /gateway default/i);
     assert.match(source, /inlineAssistModelButton\.disabled\s*=\s*false/);
@@ -117,14 +108,15 @@ test('settings surfaces preserve Assist model controls and explain exact-routing
   }
 });
 
-test('Sidecar intro is panel-open-only and new session cannot reveal it again', async () => {
+test('the empty chat has no intro card, and New chat still marks the intro seen', async () => {
   const [html, source] = await Promise.all([
     read('extension/sidepanel.html'),
     read('extension/sidepanel.js'),
   ]);
-  assert.match(html, /id="browserIntroHero"[^>]*aria-label="Hermes Browser intro"/);
+  assert.doesNotMatch(html, /id="browserIntroHero"/, 'the panel no longer opens on the intro card');
+  assert.match(html, /class="release-sidecar"/, 'the wordmark stays in Settings');
   assert.match(source, /function renderBrowserIntroVisibility\(/);
-  assert.match(source, /browserIntroHero/);
+  assert.doesNotMatch(source, /browserIntroHero/);
   assert.match(source, /newSessionButton\.addEventListener[\s\S]{0,1200}await persistBrowserIntroSeen\(\);[\s\S]{0,900}await beginHermesBrowserDraft\(\);/);
   assert.match(source, /createSessionButton\.addEventListener[\s\S]{0,400}await persistBrowserIntroSeen\(\);[\s\S]{0,300}await beginHermesBrowserDraft\(\);/);
 });
@@ -183,7 +175,7 @@ test('sidepanel claims queued requests, honors current/new/background routing, a
   assert.match(source, /createInlineBackgroundSession/);
   assert.match(source, /\{ ok: true, text, sessionId/);
   assert.match(source, /forceChatOnly:\s*true/);
-  assert.match(source, /Hermes Assist options/);
+  assert.match(source, /'assist\.options_heading'/);
   assert.match(source, /executeContextMenuRequest/);
   assert.match(source, /handleContextMenuRouteChoice/);
   assert.match(source, /askHermes\(userText/);

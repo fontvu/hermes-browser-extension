@@ -1,5 +1,5 @@
 /* Generated from extension/lib/content-extraction-core.mjs, extension/lib/appearance-themes.mjs, extension/lib/site-adapters.mjs, extension/lib/inline-draft-policy.mjs, extension/lib/page-annotation-content.mjs. Do not edit directly. */
-/* extension/lib/content-extraction-core.mjs · SHA-256 8b63a45056491eb4 */
+/* extension/lib/content-extraction-core.mjs · SHA-256 62d0b33e7f417d7a */
 (function hermesContentExtractorRuntime(hermesGlobal) {
   'use strict';
 
@@ -110,6 +110,8 @@ const SENSITIVE_ASSIGNMENT_KEY_SUFFIXES = [
   'encryptionkey',
   'authkey',
   'masterkey',
+  // Hermes Agent's own gateway key is API_SERVER_KEY.
+  'serverkey',
   'credential',
   'credentials',
 ];
@@ -131,7 +133,8 @@ const SECRET_PATTERNS = [
   { pattern: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, replacement: '[REDACTED_SECRET]' },
   { pattern: /\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{40,})\b/g, replacement: '[REDACTED_SECRET]' },
   { pattern: /\bAIza[0-9A-Za-z_-]{35}\b/g, replacement: '[REDACTED_SECRET]' },
-  { pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\bxox[abeprs]-[A-Za-z0-9-]{10,}\b/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\bxapp-\d+-[A-Za-z0-9-]{10,}\b/g, replacement: '[REDACTED_SECRET]' },
   { pattern: /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, replacement: '[REDACTED_JWT]' },
   { pattern: /\b(?:sk|pk)_(?:live|test)_[A-Za-z0-9_-]{8,}\b/gi, replacement: '[REDACTED_SECRET]' },
   { pattern: /\bgh[pousr]_[A-Za-z0-9_]{16,}\b/gi, replacement: '[REDACTED_SECRET]' },
@@ -140,8 +143,38 @@ const SECRET_PATTERNS = [
   { pattern: /\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b/g, replacement: '[REDACTED_SECRET]' },
   { pattern: /\bya29\.[A-Za-z0-9_-]{20,}/g, replacement: '[REDACTED_SECRET]' },
   { pattern: /\bGOCSPX-[A-Za-z0-9_-]{20,}/g, replacement: '[REDACTED_SECRET]' },
-  { pattern: /\bglpat-[A-Za-z0-9_-]{20,}/g, replacement: '[REDACTED_SECRET]' },
-  { pattern: /\bdop_v1_[a-f0-9]{64}\b/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\bgl(?:pat|dt|rt|rtr|cbt|ptt|ft|imt|agent|soat|ffct|wt|oas)-[A-Za-z0-9_.-]{20,}/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\bGR1348941[A-Za-z0-9_-]{20,}/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\bdo[opr]_v1_[a-f0-9]{64}\b/g, replacement: '[REDACTED_SECRET]' },
+  // The key shapes Hermes Agent's own redactor (agent/redact.py) knows for the providers, tools and chat
+  // platforms Hermes is set up with. Each has a fixed prefix and a minimum length well past ordinary words.
+  { pattern: /\b(?:gsk_|xai-|r8_|pplx-|fw_|fpk_)[A-Za-z0-9]{20,}/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\bsyt_[A-Za-z0-9]{4,}_[A-Za-z0-9]{10,}_[A-Za-z0-9]{6}\b/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\btvly-(?:dev-|prod-)?[A-Za-z0-9]{20,}/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\b(?:fal_|bb_live_)[A-Za-z0-9]{20,}/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\bfc-[a-f0-9]{32}\b/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\bntn_[A-Za-z0-9]{40,}/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\bsecret_[A-Za-z0-9]{43}\b/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\blin_(?:api|oauth)_[A-Za-z0-9]{32,}/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{20,}/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\bsk_[a-f0-9]{48}\b/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\bpk-lf-[A-Za-z0-9-]{20,}/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\bgAAAAA[A-Za-z0-9_=-]{40,}/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\bATATT3[A-Za-z0-9_=-]{40,}/g, replacement: '[REDACTED_SECRET]' },
+  { pattern: /\bPMAK-[a-f0-9]{24}-[a-f0-9]{34}\b/g, replacement: '[REDACTED_SECRET]' },
+  // A Google OAuth refresh token.
+  { pattern: /\b1\/\/0[A-Za-z0-9_-]{40,}/g, replacement: '[REDACTED_SECRET]' },
+  // A Telegram bot token (`123456789:AA…`), also inside an `api.telegram.org/bot<token>/` path. A URL in
+  // page text often carries the colon percent-encoded (`%3A`, or `%253A` when encoded twice), and the
+  // `bot` may follow an encoded slash (`%2Fbot…`). The quantifiers are all bounded.
+  { pattern: /(?:\b|(?<=%2[Ff]))(bot)?\d{8,12}(?::|%(?:25)?3[Aa])[A-Za-z0-9_-]{30,}/g, replacement: '$1[REDACTED_SECRET]' },
+  // A Discord bot token: base64 user id, timestamp and HMAC, dot separated. Any punctuation before it
+  // (`/`, `-`, `.`, `_`) still counts as a boundary; only a letter or digit glued to it does not.
+  { pattern: /(?<![A-Za-z0-9])[MNO][A-Za-z0-9_-]{23,27}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,40}\b/g, replacement: '[REDACTED_SECRET]' },
+  // Slack and Discord incoming webhook URLs carry their secret as the last path segment. Slashes may be
+  // percent-encoded (`%2F`, `%252F`) when the URL sits inside a query string.
+  { pattern: /((?:\/|%(?:25)?2[Ff])services(?:\/|%(?:25)?2[Ff])T[A-Z0-9]{8,}(?:\/|%(?:25)?2[Ff])B[A-Z0-9]{8,}(?:\/|%(?:25)?2[Ff]))[A-Za-z0-9]{20,}/g, replacement: '$1[REDACTED_SECRET]' },
+  { pattern: /((?:\/|%(?:25)?2[Ff])api(?:(?:\/|%(?:25)?2[Ff])v\d+)?(?:\/|%(?:25)?2[Ff])webhooks(?:\/|%(?:25)?2[Ff])\d{17,20}(?:\/|%(?:25)?2[Ff]))[A-Za-z0-9_-]{60,}/g, replacement: '$1[REDACTED_SECRET]' },
   { pattern: /\bshp(?:at|ca|pa|ss)_[a-f0-9]{32}\b/g, replacement: '[REDACTED_SECRET]' },
   { pattern: /\bwhsec_[A-Za-z0-9]{16,}\b/g, replacement: '[REDACTED_SECRET]' },
   { pattern: /\b(?:Authorization|Proxy-Authorization)(["'`]?\s*[:=]\s*["'`]?)(?:Basic|Digest|Negotiate|NTLM|Token)\s+[^\s'"`;&,]+/gi, replacement: 'Authorization$1[REDACTED_SECRET]' },
@@ -839,7 +872,7 @@ const CONTENT_EXTRACTION_API = Object.freeze({
   hermesGlobal.HermesContentExtractor = CONTENT_EXTRACTION_API;
 })(globalThis);
 
-/* extension/lib/appearance-themes.mjs · SHA-256 7f168bee787d3a77 */
+/* extension/lib/appearance-themes.mjs · SHA-256 668c0366c68e7abe */
 (function hermesAppearanceRuntime(hermesGlobal) {
   'use strict';
 
@@ -849,72 +882,84 @@ const APPEARANCE_THEMES = Object.freeze([
     name: 'Nous',
     description: 'Ink blue with soft-white Desktop accents',
     preview: { bg: '#0505e8', panel: '#0505e8', text: '#f8faff', muted: '#dbe6ff', accent: '#f8faff' },
+    previewLight: { bg: '#ffffff', panel: '#eef0ff', text: '#0000f2', muted: '#7a7af7', accent: '#0000f2' },
   },
   {
     value: 'midnight',
     name: 'Midnight',
     description: 'Deep blue-violet with cool accents',
     preview: { bg: '#07061a', panel: '#0d0b25', text: '#d9d2ff', muted: '#8e88bd', accent: '#1d1850' },
+    previewLight: { bg: '#f0eeff', panel: '#ffffff', text: '#2a1a69', muted: '#8a7fc0', accent: '#2a1a69' },
   },
   {
     value: 'ember',
     name: 'Ember',
     description: 'Warm crimson and bronze forge',
     preview: { bg: '#1a0600', panel: '#250800', text: '#ffd0a4', muted: '#c98f65', accent: '#4b1603' },
+    previewLight: { bg: '#fff1e4', panel: '#fffaf6', text: '#651b00', muted: '#b0703f', accent: '#ff9d4d' },
   },
   {
     value: 'mono',
     name: 'Mono',
     description: 'Clean grayscale minimal focus',
     preview: { bg: '#0d0d0d', panel: '#111111', text: '#eeeeee', muted: '#9b9b9b', accent: '#1f1f1f' },
+    previewLight: { bg: '#f2f2f2', panel: '#ffffff', text: '#202020', muted: '#8a8a8a', accent: '#1d1d1d' },
   },
   {
     value: 'cyberpunk',
     name: 'Cyberpunk',
     description: 'Neon green terminal',
     preview: { bg: '#001004', panel: '#001b08', text: '#12ff68', muted: '#00a947', accent: '#002d10' },
+    previewLight: { bg: '#eaffef', panel: '#fbfffc', text: '#005e25', muted: '#37a95f', accent: '#005e25' },
   },
   {
     value: 'slate',
     name: 'Slate',
     description: 'Cool slate blue developer focus',
     preview: { bg: '#081015', panel: '#0e171e', text: '#d0dbe2', muted: '#94a3ad', accent: '#172c3d' },
+    previewLight: { bg: '#f4f8fb', panel: '#ffffff', text: '#1d3848', muted: '#7d97a8', accent: '#1d3848' },
   },
   {
     value: 'senter-space',
     name: 'Senter Space',
     description: 'Deep space, sea glass, and warm starlight',
     preview: { bg: '#091716', panel: '#112722', text: '#e9d1a5', muted: '#87c6b7', accent: '#c79a55' },
+    previewLight: { bg: '#fbf8ef', panel: '#f3eedf', text: '#174f48', muted: '#b77c38', accent: '#103b35' },
   },
   {
     value: 'aurora',
     name: 'Aphrodite',
     description: 'Hot pink, orchid, and rose with a polished dark-plum counterpart.',
     preview: { bg: '#3b0928', panel: '#5f123d', text: '#fff0f7', muted: '#d89ab7', accent: '#ff4fa3' },
+    previewLight: { bg: '#fff7fb', panel: '#ffe9f3', text: '#42142f', muted: '#c76a99', accent: '#e8358b' },
   },
   {
     value: 'solstice',
     name: 'Solstice',
     description: 'Quiet graphite with sun-warmed brass',
     preview: { bg: '#181715', panel: '#25211b', text: '#f1dfbc', muted: '#c4a77c', accent: '#e5b96c' },
+    previewLight: { bg: '#fffbf3', panel: '#f6ecd8', text: '#58401f', muted: '#bd7d2d', accent: '#513a1b' },
   },
   {
     value: 'everforest',
     name: 'Everforest',
     description: 'Forest greens, warm parchment, and soft sage',
     preview: { bg: '#2d353b', panel: '#373e42', text: '#d3c6aa', muted: '#a4ada1', accent: '#a7c080' },
+    previewLight: { bg: '#fdf6e3', panel: '#f4eed6', text: '#5c6a72', muted: '#939f91', accent: '#586b35' },
   },
   {
     value: 'classic',
     name: 'Classic Hermes',
     description: 'Original amber gold, bronze, and midnight navy',
     preview: { bg: '#1a1a2e', panel: '#232335', text: '#fff8dc', muted: '#b8860b', accent: '#ffbf00' },
+    previewLight: { bg: '#f5f5f5', panel: '#f0f0ef', text: '#2b2109', muted: '#74634b', accent: '#825d02' },
   },
   {
     value: 'anti-nous',
     name: 'Anti-Nous',
     description: 'Blood red and berry, navy reading surfaces, and fine gold trim',
     preview: { bg: '#8a1a2d', panel: '#101b30', text: '#f5ece6', muted: '#d4af6c', accent: '#ff4d4d' },
+    previewLight: { bg: '#ffffff', panel: '#fff1f2', text: '#d4182d', muted: '#e0808a', accent: '#d4182d' },
   },
 ]);
 
@@ -968,6 +1013,12 @@ const INLINE_ASSIST_THEME_TOKENS = Object.freeze({
     light: Object.freeze({ surface: '#d4182d', panel: '#ffffff', ink: '#d4182d', fg: '#fff7f0', accent: '#d4182d', primary: '#d42a40' }),
   }),
 });
+
+// The colours a theme card draws in the given resolved mode, so the theme
+// grid shows each palette as it will look in light or dark.
+function themePreviewForMode(theme, mode = DEFAULT_COLOR_MODE) {
+  return (mode === 'light' && theme?.previewLight) || theme?.preview || {};
+}
 
 const DEFAULT_APPEARANCE_THEME = 'nous';
 const DEFAULT_COLOR_MODE = 'dark';
@@ -1845,7 +1896,7 @@ const SITE_ADAPTER_API = Object.freeze({
   hermesGlobal.HermesSiteAdapters = SITE_ADAPTER_API;
 })(globalThis);
 
-/* extension/lib/inline-draft-policy.mjs · SHA-256 abde7418446df5a1 */
+/* extension/lib/inline-draft-policy.mjs · SHA-256 887c3ec0c988bc0d */
 (function hermesInlineDraftRuntime(hermesGlobal) {
   'use strict';
 
@@ -1869,7 +1920,17 @@ const MAX_PAGE_CONTEXT_CHARS = 6_000;
 const MAX_RESULT_CHARS = 12_000;
 const ID_RE = /^[A-Za-z0-9_.:-]{8,160}$/;
 const SENSITIVE_LABEL_RE = /(?:password|passwd|passcode|one.?time|otp|verification.?code|security.?code|two.?factor|2fa|credit.?card|card.?number|cvv|cvc|expiry|payment|billing|api.?(?:key|token)|access.?token|auth.?token|session.?token|secret|private.?key|seed.?phrase|recovery.?phrase|wallet)/i;
-const SECRET_TEXT_RE = /(?:-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----|\bBearer\s+\S{8,}|\b(?:sk-|gh[pousr]_|github_pat_|AIza|xox[baprs]-)[A-Za-z0-9_-]{8,}|\b(?:api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|password|secret)\s*[:=]\s*\S{4,})/i;
+const SECRET_TEXT_RE = /(?:-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----|\bBearer\s+\S{8,}|\b(?:sk-|gh[pousr]_|github_pat_|AIza|xox[baprs]-)[A-Za-z0-9_-]{8,}|\b(?:[a-z0-9]{1,20}[_-]){0,3}(?:api[_-]?key|server[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|password|secret)\s*[:=]\s*\S{4,})/i;
+// This module stays import-free (it also runs as a classic content script), so it keeps its own copy of
+// the provider key shapes the shared redactor (content-extraction-core.mjs SECRET_PATTERNS) knows. Each
+// body class and minimum length mirrors the shared pattern (hyphens, underscores, dots and `=` included),
+// so a key the redactor would mask is never judged clean here.
+// tests/redaction-hermes-token-shapes.test.mjs checks that the two agree.
+const PROVIDER_KEY_TEXT_RE = /(?:\b(?:(?:gsk_|xai-|r8_|pplx-|fw_|fpk_|tvly-(?:dev-|prod-)?|fal_|bb_live_)[A-Za-z0-9]{20,}|syt_[A-Za-z0-9]{4,}_[A-Za-z0-9]{10,}_[A-Za-z0-9]{6}\b|ntn_[A-Za-z0-9]{40,}|lin_(?:api|oauth)_[A-Za-z0-9]{32,}|fc-[a-f0-9]{32}\b|secret_[A-Za-z0-9]{43}\b|sk_[a-f0-9]{48}\b|do[opr]_v1_[a-f0-9]{64}\b|pk-lf-[A-Za-z0-9-]{20,}|xapp-\d+-[A-Za-z0-9-]{10,}|xoxe-[A-Za-z0-9-]{10,}|pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{20,}|(?:gAAAAA|ATATT3)[A-Za-z0-9_=-]{40,}|PMAK-[a-f0-9]{24}-[a-f0-9]{34}\b|gl(?:pat|dt|rt|rtr|cbt|ptt|ft|imt|agent|soat|ffct|wt|oas)-[A-Za-z0-9_.-]{20,}|GR1348941[A-Za-z0-9_-]{20,}|1\/\/0[A-Za-z0-9_-]{40,}|(?:bot)?\d{8,12}(?::|%(?:25)?3[Aa])[A-Za-z0-9_-]{30,})|(?<=%2[Ff])(?:bot)?\d{8,12}(?::|%(?:25)?3[Aa])[A-Za-z0-9_-]{30,}|(?<![A-Za-z0-9])[MNO][A-Za-z0-9_-]{23,27}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,40}\b|(?:\/|%(?:25)?2[Ff])services(?:\/|%(?:25)?2[Ff])T[A-Z0-9]{8,}(?:\/|%(?:25)?2[Ff])B[A-Z0-9]{8,}(?:\/|%(?:25)?2[Ff])[A-Za-z0-9]{20,}|(?:\/|%(?:25)?2[Ff])api(?:(?:\/|%(?:25)?2[Ff])v\d+)?(?:\/|%(?:25)?2[Ff])webhooks(?:\/|%(?:25)?2[Ff])\d{17,20}(?:\/|%(?:25)?2[Ff])[A-Za-z0-9_-]{60,})/;
+
+function containsSecretText(value = '') {
+  return SECRET_TEXT_RE.test(value) || PROVIDER_KEY_TEXT_RE.test(value);
+}
 
 function compact(value = '', max = 500) {
   const text = String(value || '').replace(/\u00a0/g, ' ').replace(/[\t\f\v ]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
@@ -1986,8 +2047,8 @@ function buildInlineDraftRequest(element, options = {}) {
   const redactedContext = redact(pageContext);
   if (Number(redacted?.count || 0) > 0
     || Number(redactedContext?.count || 0) > 0
-    || SECRET_TEXT_RE.test(draftText)
-    || SECRET_TEXT_RE.test(pageContext)) {
+    || containsSecretText(draftText)
+    || containsSecretText(pageContext)) {
     return { ok: false, reason: 'sensitive-content' };
   }
   return {
@@ -2026,8 +2087,8 @@ function normalizeInlineDraftRequest(value = {}) {
     || !actionId
     || (!draftText && !contextDraft)
     || (!draftText && !pageContext && !compact(value.fieldLabel, 200) && !contextDraft)
-    || SECRET_TEXT_RE.test(draftText)
-    || SECRET_TEXT_RE.test(pageContext)) return null;
+    || containsSecretText(draftText)
+    || containsSecretText(pageContext)) return null;
   return {
     schema: INLINE_DRAFT_SCHEMA,
     version: INLINE_DRAFT_VERSION,
