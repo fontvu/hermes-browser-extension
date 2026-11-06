@@ -3,7 +3,7 @@
   "default_locale": "en",
   "name": "__MSG_extensionName__",
   "short_name": "__MSG_extensionShortName__",
-  "version": "0.3.4",
+  "version": "0.4.0",
   "description": "__MSG_extensionDescription__",
   "minimum_chrome_version": "116",
   "icons": {
@@ -25,6 +25,9 @@
     "storage",
     "unlimitedStorage",
     "tabs"
+  ],
+  "optional_permissions": [
+    "webRequest"
   ],
   "host_permissions": [
     "http://127.0.0.1/*",
@@ -90,23 +93,60 @@
         "content-inline-helper.js"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "http://127.0.0.1/*",
+        "http://localhost/*"
+      ],
+      "include_globs": [
+        "*/webapp/launch*",
+        "*/webapp/window*"
+      ],
+      "css": [
+        "hermes-web-launch.css"
+      ],
+      "js": [
+        "lib/browser-api-global.js",
+        "hermes-web-launch.js"
+      ],
+      "run_at": "document_start"
     }
   ],
   "web_accessible_resources": [
     {
       "resources": [
         "assets/img/hermes-browser-extension-icon-box-white.png",
-        "assets/img/hermes-browser-extension-icon-ink.png"
+        "assets/img/hermes-browser-extension-icon-ink.png",
+        "assets/img/assist-wing.png",
+        "assets/img/assist-staff.svg",
+        "assets/img/assist-girl-outline.png",
+        "assets/img/assist-girl-solid.png",
+        "assets/img/hermes-wing-mark.svg"
       ],
       "matches": [
         "http://*/*",
         "https://*/*",
         "file:///*"
       ]
+    },
+    {
+      "resources": [
+        "hermes-web-opening.html"
+      ],
+      "matches": [
+        "http://127.0.0.1/*",
+        "http://localhost/*"
+      ]
     }
   ],
   "content_security_policy": {
+<<<<<<< HEAD
     "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; img-src 'self' data: blob:; media-src 'self'; connect-src http: https: wss: ws://127.0.0.1:* ws://localhost:*;"
   },
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsCCIMaviZBToZefbYiyv7DvOKcVsBdak+i6BGlW5aAb8gdpLtHuFeVqfk60EhSPAuqFaIh4OcN5YhBBWFywEqsQlJXTzsRrUe6SWXY+EmN4o6tO29ifWvwBFyIdLgIhkzAzcB7ljY8Q8pq44+0i+975F+U21mZz4C1GmBa8n3fx4WRCyjvIAGZ6iUQIwd3bxvjV4VtmLLRJS38PBcbFc+oLnVVquQ+o8cC0ukBtfD5YxzqscIgPeC3E9iUd+G7B3H3XsGdOB7RivlfgfdOUon/xukj9C4EMg+HNFprSh2kXEOBDNY64JSwBvZUCbCmDceqK0mJX2IEJHwWr8cadacQIDAQAB"
+=======
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src http://127.0.0.1:* http://localhost:*; img-src 'self' data: blob:; media-src 'self'; connect-src http: https: wss: ws://127.0.0.1:* ws://localhost:*;"
+  }
+>>>>>>> upstream/main
 }
