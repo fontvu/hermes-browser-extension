@@ -1,5 +1,5 @@
 // Shared side-panel/full-view thread behavior. The caller owns transcript data.
-import { buildDayDivider, buildMessageRail, setRailCopyEnabled } from './message-actions.mjs';
+import { buildDayDivider, buildMessageRail, setRailCopyEnabled, setReadAloudState } from './message-actions.mjs';
 import { dayDividerLabel, decideRailPlacement, normalizeMessageTimestamp } from './message-meta.mjs';
 
 export function createMessageThreadUi({
@@ -7,7 +7,9 @@ export function createMessageThreadUi({
   ResizeObserver = globalThis.ResizeObserver,
   requestFrame = (callback) => (globalThis.requestAnimationFrame || ((fn) => fn()))(callback),
   locale = () => undefined, translate = (text) => text, now = () => Date.now(),
-  canRewind = () => false, replyLabelFor = () => '', onCopy, onEdit, onRestore, onReply, onDayDivider,
+  canRewind = () => false, replyLabelFor = () => '', durationLabelFor = () => '',
+  canReadAloud = () => false, readAloudStateFor = () => 'idle',
+  onCopy, onEdit, onRestore, onReply, onReadAloud, onDayDivider,
 } = {}) {
   let pinnedRow = null;
   let previousTs = null;
@@ -38,21 +40,31 @@ export function createMessageThreadUi({
   function renderRail(entry) {
     const { row, node, record, room, streaming } = entry;
     row.querySelector(':scope > .message-rail')?.remove();
+    row.classList.remove('is-being-read');
     if (!['user', 'assistant'].includes(record.role)) return;
     const rewind = !room && canRewind(record);
+    const readAloudState = readAloudStateFor(record);
+    const readAloudActive = readAloudState === 'speaking' || readAloudState === 'loading';
     const rail = buildMessageRail({
       document, role: record.role, ts: normalizeMessageTimestamp(record.ts, { now: now() }),
       now: now(), locale: locale(), translate,
-      showTime: record.role === 'user' || room,
+      // A reply's time is when it finished, so it joins the rail once the
+      // stream ends; the rail keeps its height either way, so nothing jumps.
+      showTime: !streaming,
       canEdit: rewind, canRestore: rewind,
       replyLabel: room && record.role === 'assistant' ? replyLabelFor(record) : '',
+      durationLabel: !streaming && record.role === 'assistant' ? durationLabelFor(record) : '',
+      canReadAloud: record.role === 'assistant' && !streaming && (canReadAloud(record, node) || readAloudActive),
+      readAloudState,
       onReply: () => onReply?.(record, node),
+      onReadAloud: () => onReadAloud?.(record, node),
       onCopy: () => onCopy?.(record, node),
       onEdit: () => onEdit?.(row, record),
       onRestore: (event) => onRestore?.(row, record, event.currentTarget),
     });
     setRailCopyEnabled(rail, !streaming);
     row.append(rail);
+    setReadAloudState(rail, readAloudState, { translate });
     requestFrame(() => applyPlacement(row));
   }
 
@@ -116,6 +128,13 @@ export function createMessageThreadUi({
     rows.clear();
   }
   function refreshActions() {
+    const focused = document.activeElement;
+    const focusedRow = focused?.closest?.('.message-row');
+    const restoreSpeakFocus = Boolean(
+      focused?.classList?.contains?.('message-action-speak')
+        && focusedRow
+        && root.contains(focusedRow),
+    );
     for (const [row, entry] of rows) {
       if (!root.contains(row)) {
         observer?.unobserve?.(row);
@@ -125,12 +144,46 @@ export function createMessageThreadUi({
         renderRail(entry);
       }
     }
+    if (restoreSpeakFocus) {
+      focusedRow.querySelector(':scope > .message-rail .message-action-speak')?.focus?.();
+    }
+  }
+  function readAloudRailsNeedRebuild() {
+    for (const [row, entry] of rows) {
+      if (!root.contains(row) || entry.streaming || entry.record.role !== 'assistant') continue;
+      const speakBtn = row.querySelector(':scope > .message-rail .message-action-speak');
+      const state = readAloudStateFor(entry.record);
+      const activePlayback = state === 'speaking' || state === 'loading';
+      const shouldShowSpeak = canReadAloud(entry.record, entry.node) || activePlayback;
+      if (shouldShowSpeak !== Boolean(speakBtn)) return true;
+    }
+    return false;
+  }
+  // After the dashboard voice probe: rebuild when rails are stale (missing speaker or
+  // speaker when read-aloud is off); otherwise update pressed/Stop state in place so keyboard focus is kept.
+  function refreshAfterReadAloudProbe() {
+    if (readAloudRailsNeedRebuild()) refreshActions();
+    else refreshReadAloud();
   }
   function setStreaming(row, streaming) {
     const entry = rows.get(row);
     if (!entry) return;
+    const finished = entry.streaming && !streaming;
     entry.streaming = Boolean(streaming);
-    setRailCopyEnabled(row.querySelector(':scope > .message-rail'), !entry.streaming);
+    if (!finished) {
+      setRailCopyEnabled(row.querySelector(':scope > .message-rail'), !entry.streaming);
+      return;
+    }
+    // A live reply has no stored time yet: it finished now.
+    if (normalizeMessageTimestamp(entry.record.ts, { now: now() }) === null) entry.record.ts = now();
+    renderRail(entry);
+  }
+  // Only the speaker buttons and the reply being read change: no rail is rebuilt.
+  function refreshReadAloud() {
+    for (const [row, entry] of rows) {
+      if (!root.contains(row)) continue;
+      setReadAloudState(row.querySelector(':scope > .message-rail'), readAloudStateFor(entry.record), { translate });
+    }
   }
   function dispose() {
     reset();
@@ -138,5 +191,8 @@ export function createMessageThreadUi({
     document.removeEventListener('click', clickOutside);
     document.removeEventListener('keydown', escape);
   }
-  return { attach, applyPlacement, reset, refreshActions, setStreaming, pin, dispose };
+  return {
+    attach, applyPlacement, reset, refreshActions, refreshReadAloud, refreshAfterReadAloudProbe,
+    readAloudRailsNeedRebuild, setStreaming, pin, dispose,
+  };
 }
