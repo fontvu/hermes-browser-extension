@@ -16,6 +16,7 @@ export default Object.freeze({
     "claude": 200000,
     "gpt-6-astra": 1050000,
     "gpt-6.1-sol": 1050000,
+    "gpt-6.1-terra": 1050000,
     "gpt-6-sol": 1050000,
     "gpt-6-luna": 1050000,
     "gpt-5.6-luna": 1050000,
@@ -179,5 +180,5 @@ export default Object.freeze({
   "suffix": "-900k",
   "fallback": 256000,
   "source": "hermes-upstream",
-  "sourceSha256": "497f2342915b0c7f23e56c2ec7e191a122d6255a6d12e660e570a4013895ab3d"
+  "sourceSha256": "d19fb4091451650b4e13494d257fc26f58d59e5d9ff0ee898a4c2e659049fbac"
 });

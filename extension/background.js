@@ -27,14 +27,23 @@ import {
 import { CONTEXT_CONSENT_STORAGE_KEY } from './lib/context-consent.mjs';
 import { gateInlineDraftRequestContext } from './lib/inline-draft-consent.mjs';
 import { createHermesClient } from './lib/hermes-client.mjs';
+import { isLocalGatewayConnection, openHermesWebapp } from './lib/hermes-webapp.mjs';
+import { resolveWebappTarget } from './lib/hermes-webapp.mjs';
+import { createWebappCredentialStore, keepSignedInEnabled } from './lib/webapp-credential.mjs';
+import { createWebappGatewayTickets } from './lib/webapp-gateway-tickets.mjs';
+import { HERMES_WEB_LAUNCH_LOOK_MESSAGE, HERMES_WEB_OPENING_MESSAGES, createHermesWebOpening } from './lib/hermes-web-opening.mjs';
+import { INLINE_ASSIST_FONT_REQUEST, createInlineAssistFontServer } from './lib/inline-assist-font-server.mjs';
+import { createInlineAssistModelServer } from './lib/inline-assist-models.mjs';
+import { assistSessionTitle, handOffInlineDraftToSidePanel, openSidePanelInClick } from './lib/inline-assist-handoff.mjs';
 import { restSessionCreateSource } from './lib/session-materialization.mjs';
 import { normalizeGatewayCapabilities } from './lib/capabilities.mjs';
 import {
   assertAssistModelSelectionAcknowledged,
+  assistEffortRequest,
   assistModelFallbackNotice,
   buildAssistModelRouteRequest,
 } from './lib/assist-model-contract.mjs';
-import { createWakeBackgroundController } from './lib/wake-background.mjs';
+import { createWakeBackgroundController, wakeNeedsReconfigure } from './lib/wake-background.mjs';
 import { WAKE_MESSAGES } from './lib/wake-word.mjs';
 import { initI18n, subscribeLocale, translateUiText } from './lib/i18n.mjs';
 import {
@@ -47,6 +56,8 @@ import { createVscodeMarketplaceClient } from './lib/vscode-marketplace.mjs';
 import { createThemeMarketplaceController } from './lib/theme-marketplace-controller.mjs';
 import { resolveBrowserApi } from './lib/browser-api.mjs';
 import { installLoopbackCorsRules, handleLoopbackFetchMessage, LOOPBACK_FETCH_MESSAGE } from './lib/loopback-cors.mjs';
+import { applyConnectionHeaderRules, createHeaderRuleSync, extensionInitiatorHost } from './lib/connection-headers.mjs';
+import { SYNC_GATEWAY_RULES_MESSAGE, PendingPairingGatewayUrls, applyGatewayOriginRule } from './lib/gateway-origin-rule.mjs';
 import {
   CONTROLLER_HEARTBEAT_ALARM,
   CONTROLLER_RECONCILE_ALARM,
@@ -59,9 +70,17 @@ import {
 } from './lib/controller-service-worker.mjs';
 import { createBrowserControlRuntime } from './lib/browser-control-runtime.mjs';
 import {
+  BACKGROUND_BROWSER_ALARM, BACKGROUND_BROWSER_CONSENT, createBackgroundTaskBrowser,
+} from './lib/background-task-browser.mjs';
+import {
   createBrowserControlArtifactClient,
   createBrowserControlArtifactHttpTransport,
 } from './lib/browser-control-artifacts.mjs';
+import {
+  hydrateHermesBrowserSettingsFromStorage,
+  hydrateSavedConnectionSecrets,
+  SAVED_CONNECTION_SECRETS_STORAGE_KEY,
+} from './lib/saved-connections.mjs';
 
 const browserApiResolution = resolveBrowserApi();
 const browserApi = browserApiResolution.api;
@@ -87,8 +106,77 @@ const browserControlRuntime = createBrowserControlRuntime({
     });
   },
 });
+// The Hermes Web sign-in kept for this browser (lib/webapp-credential.mjs), shared with the panel
+// through storage.session. The setting is read from storage each time, so the panel's Save applies here.
+async function readStoredSettings() {
+  try {
+    const stored = await browserApi.storage.local.get(['hermesBrowserSettings', SAVED_CONNECTION_SECRETS_STORAGE_KEY]);
+    return hydrateHermesBrowserSettingsFromStorage(stored);
+  } catch {
+    return {};
+  }
+}
+const webappCredentials = createWebappCredentialStore({
+  storageSession: browserApi.storage?.session,
+  scriptingApi: browserApi.scripting,
+  tabsApi: browserApi.tabs,
+  fetchImpl: (...args) => globalThis.fetch(...args),
+  isEnabled: async () => keepSignedInEnabled(await readStoredSettings()),
+});
+// The paired gateway's Hermes Web tickets (lib/webapp-gateway-tickets.mjs): a gateway with the pairing routes
+// signs a new Hermes Web tab in for the paired token, so opening it from an Assist card needs no terminal.
+const webappGatewayTickets = createWebappGatewayTickets({
+  getConnection: async () => {
+    const stored = await readStoredSettings();
+    return { gatewayUrl: stored.gatewayUrl || 'http://127.0.0.1:8642', token: stored.apiKey, local: isLocalGatewayConnection(stored) };
+  },
+  fetchImpl: (...args) => globalThis.fetch(...args),
+});
+// The branded "Opening Hermes Web" hand-off (lib/hermes-web-opening.mjs). It lives here, not in the panel, so it keeps
+// watching the launch tab if the panel closes. The panel asks for it with a runtime message, never with the ticket in a URL.
+// A run of the gateway is its process: a restart (or another gateway) shows the opening page once more, and later
+// Hermes Web tabs in the same run open with nothing in between. /health/detailed names the pid for the paired token;
+// a gateway that does not answer it is treated as one run per browser session.
+async function hermesWebRuntimeIdentity() {
+  const stored = await readStoredSettings();
+  const base = String(stored.gatewayUrl || 'http://127.0.0.1:8642').trim().replace(/\/+$/, '');
+  const token = typeof stored.apiKey === 'string' ? stored.apiKey.trim() : '';
+  try {
+    const response = await globalThis.fetch(`${base}/health/detailed`, {
+      headers: token ? { Accept: 'application/json', Authorization: `Bearer ${token}` } : { Accept: 'application/json' },
+      credentials: 'omit',
+      cache: 'no-store',
+      redirect: 'error',
+    });
+    const pid = response.ok ? Number((await response.json())?.pid) : NaN;
+    if (Number.isInteger(pid) && pid > 0) return `${base}#pid:${pid}`;
+  } catch {
+    /* no process id from this gateway */
+  }
+  try {
+    const key = 'hermesWebBrowserSession';
+    let nonce = (await browserApi.storage.session.get(key))?.[key];
+    if (typeof nonce !== 'string' || !nonce) {
+      nonce = globalThis.crypto.randomUUID();
+      await browserApi.storage.session.set({ [key]: nonce });
+    }
+    return `${base}#session:${nonce}`;
+  } catch {
+    return '';
+  }
+}
+const hermesWebOpening = createHermesWebOpening({
+  tabsApi: browserApi.tabs,
+  windowsApi: browserApi.windows,
+  runtimeApi: browserApi.runtime,
+  storageSession: browserApi.storage?.session,
+  storageLocal: browserApi.storage?.local,
+  runtimeIdentity: hermesWebRuntimeIdentity,
+});
+const hermesWebOpener = { open: (request) => hermesWebOpening.start(request) };
 let cachedPanelResidencyMode = DEFAULT_PANEL_RESIDENCY_MODE;
 let panelResidencyHydrated = false;
+let controllerSettingsStorageRebind = 0;
 
 const controllerConnector = createControllerConnector({
   fetchImpl: globalThis.fetch?.bind(globalThis),
@@ -96,6 +184,15 @@ const controllerConnector = createControllerConnector({
   tabsApi: browserApi.tabs,
   scriptingApi: browserApi.scripting,
 });
+const backgroundTaskBrowser = browserProduct.engine === 'chromium' && browserApi.tabGroups
+  ? createBackgroundTaskBrowser({
+      browserApi, connector: controllerConnector, runtime: browserControlRuntime, product: browserProduct,
+    })
+  : null;
+function syncBackgroundTaskBrowser() {
+  return backgroundTaskBrowser?.sync().catch(() => {});
+}
+void syncBackgroundTaskBrowser();
 const extensionOrigin = (() => {
   try {
     const parsed = new URL(browserApi.runtime.getURL(''));
@@ -119,6 +216,8 @@ const controllerWorker = typeof browserApi.storage?.local?.set === 'function'
     })
   : null;
 browserControlRuntime.setDebuggerDetachHandler((event) => {
+  // An external detach revokes the lease, including when Chrome's banner is cancelled.
+  backgroundTaskBrowser?.releaseTab(event.tabId);
   controllerWorker?.handleDebuggerDetach(event)
     .catch((error) => console.warn('[Hermes Browser] Debugger detach reconciliation failed:', error));
 });
@@ -131,6 +230,19 @@ function startControllerAlarms() {
   return true;
 }
 
+// A gateway without extension control answers registration with a terminal
+// result; the alarms would only wake the worker to say the same thing again.
+function stopControllerAlarms() {
+  if (typeof browserApi?.alarms?.clear !== 'function') return false;
+  browserApi.alarms.clear(CONTROLLER_HEARTBEAT_ALARM);
+  browserApi.alarms.clear(CONTROLLER_RECONCILE_ALARM);
+  return true;
+}
+
+function syncControllerAlarms(result) {
+  return result?.terminal === true ? stopControllerAlarms() : startControllerAlarms();
+}
+
 // A restarted or suspended service worker loses the idle-detach timers of the
 // debugger sessions it opened; this removes any attachment it no longer tracks.
 function sweepDebuggerOrphans() {
@@ -140,6 +252,7 @@ sweepDebuggerOrphans();
 
 browserApi.alarms?.onAlarm?.addListener?.((alarm) => {
   if (!alarm?.name) return;
+  if (alarm.name === BACKGROUND_BROWSER_ALARM) void syncBackgroundTaskBrowser();
   if (alarm.name === CONTROLLER_HEARTBEAT_ALARM || alarm.name === CONTROLLER_RECONCILE_ALARM) {
     sweepDebuggerOrphans();
     controllerWorker?.reconcile({ reason: alarm.name })
@@ -150,14 +263,14 @@ browserApi.alarms?.onAlarm?.addListener?.((alarm) => {
 async function bootControllerWorker() {
   if (!controllerWorker) return { ok: false, connected: false, dormant: true };
   const result = await controllerWorker.boot();
-  startControllerAlarms();
+  syncControllerAlarms(result);
   return result;
 }
 
 async function reconcileControllerWorker(reason) {
   if (!controllerWorker) return { ok: false, connected: false, dormant: true };
   const result = await controllerWorker.reconcile({ reason });
-  startControllerAlarms();
+  syncControllerAlarms(result);
   return result;
 }
 
@@ -180,12 +293,17 @@ const WAKE_BACKGROUND_MESSAGE_TYPES = new Set([
 const wakeController = createWakeBackgroundController({
   chromeApi: browserApi,
   openPanel: (tab, options) => openHermesPanel(tab, options),
+  webappCredentials,
 });
 const contextMenuController = createContextMenuController({
   chromeApi: browserApi,
   openHermesSurface: (tab) => openHermesPanelFromContextGesture(tab),
   translate: (_key, fallback) => translateUiText(fallback),
 });
+// Fonts for the Hermes Assist panel, which a web page may not load from the extension directly.
+const handleInlineAssistFontRequest = createInlineAssistFontServer({ runtime: browserApi.runtime });
+// The model picker in Assist on a page: the verified model list, and saving the one picked.
+const inlineAssistModels = createInlineAssistModelServer({ runtime: browserApi.runtime, storage: browserApi.storage.local });
 const themeMarketplaceController = createThemeMarketplaceController({
   client: createVscodeMarketplaceClient(),
   storageArea: browserApi.storage.local,
@@ -260,8 +378,7 @@ async function runInlineDraftInServiceWorker(request, sender, tabId) {
     if (!tab || pageKey(tab.url || tab.pendingUrl) !== pageKey(request.pageUrl)) {
       throw new Error('The originating page changed before Hermes could draft.');
     }
-    const stored = await browserApi.storage.local.get('hermesBrowserSettings');
-    const settings = stored?.hermesBrowserSettings || {};
+    const settings = await readStoredSettings();
     const client = createHermesClient({
       getConnection: () => ({
         gatewayUrl: settings.gatewayUrl || settings.agentApiUrl || '',
@@ -269,11 +386,6 @@ async function runInlineDraftInServiceWorker(request, sender, tabId) {
         activeProfile: settings.activeProfile || settings.profile || '',
       }),
     });
-    const sessionId = assistSessionId();
-    const adapterLabel = String(request.adapterId || 'Browser').replace(/(^|[-_\s])([a-z])/g, (_, lead, letter) => `${lead}${letter.toUpperCase()}`);
-    const titleStamp = new Date().toISOString().replace('T', ' ').replace('Z', '');
-    const titleNonce = sessionId.slice(-4);
-    const sessionTitle = `Hermes Assist · ${adapterLabel} · ${titleStamp} · ${titleNonce}`;
     const gatewayCapabilities = await loadAssistGatewayCapabilities(client);
     const { policy: assistPolicy, request: routeRequest } = buildAssistModelRouteRequest(
       settings,
@@ -285,12 +397,18 @@ async function runInlineDraftInServiceWorker(request, sender, tabId) {
     let modelNotice = assistPolicy.mode === 'gateway-default-fallback'
       ? assistModelFallbackNotice(requestedSelection, 'this gateway does not advertise exact model routing')
       : '';
-    let resolvedSessionId = sessionId;
-    let resolvedTitle = sessionTitle;
+    let resolvedSessionId = '';
+    let resolvedTitle = '';
     let text = '';
+    let contextWithheld = false;
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       let createdThisAttempt = false;
+      // A fresh id for each attempt: Hermes never reuses the id of a session it deleted.
+      const sessionId = assistSessionId();
+      const sessionTitle = assistSessionTitle(request, { suffix: sessionId.slice(-4) });
+      resolvedSessionId = sessionId;
+      resolvedTitle = sessionTitle;
       try {
         const createResponse = await client.fetch('/api/sessions', {
           method: 'POST',
@@ -318,6 +436,7 @@ async function runInlineDraftInServiceWorker(request, sender, tabId) {
           ledger: consentStored[CONTEXT_CONSENT_STORAGE_KEY] || null,
           controller: String(browserApi.runtime.id || 'hermes-browser'),
         });
+        contextWithheld = Boolean(request.pageContext) && !gatedRequest.allowed;
         const chatResponse = await client.fetch(`/api/sessions/${encodeURIComponent(resolvedSessionId)}/chat`, {
           method: 'POST',
           body: JSON.stringify({
@@ -350,7 +469,7 @@ async function runInlineDraftInServiceWorker(request, sender, tabId) {
         }
         modelNotice = assistModelFallbackNotice(attemptSelection, error?.message || 'the selected route was rejected');
         attemptSelection = null;
-        attemptRouteRequest = {};
+        attemptRouteRequest = assistEffortRequest(settings);
       }
     }
 
@@ -368,13 +487,11 @@ async function runInlineDraftInServiceWorker(request, sender, tabId) {
     await sendDirectInlineResult(tabId, request, {
       ok: true,
       text,
+      contextWithheld,
       sessionId: retainedSessionId,
       sessionTitle: retainedSessionTitle,
       modelNotice,
     });
-    if (request.route === INLINE_DRAFT_ROUTES.NEW && retainedSessionId) {
-      await queueOpenSessionRequest({ sessionId: retainedSessionId }, sender);
-    }
     return { ok: true, requestId: request.requestId, background: request.route === INLINE_DRAFT_ROUTES.BACKGROUND, sessionId: retainedSessionId };
   } catch (error) {
     const reason = error?.message || String(error);
@@ -383,28 +500,51 @@ async function runInlineDraftInServiceWorker(request, sender, tabId) {
   }
 }
 
-async function queueInlineDraftRequest(message, sender) {
+// Synchronous up to the side panel's open call: the click on the page counts only until the first await.
+function queueInlineDraftRequest(message, sender) {
   const tabId = Number(sender?.tab?.id);
   if (!Number.isFinite(tabId) || tabId <= 0 || Number(sender?.frameId || 0) !== 0) {
-    return { ok: false, reason: 'Inline draft requests must come from the top-level active page.' };
+    return Promise.resolve({ ok: false, reason: 'Inline draft requests must come from the top-level active page.' });
   }
   const request = normalizeInlineDraftRequest(message?.request);
-  if (!request) return { ok: false, reason: 'Inline draft request failed validation.' };
-  if (!browserApi.storage?.session) return { ok: false, reason: 'Session-only draft handoff is unavailable in this browser.' };
-  const queued = {
-    ...request,
-    tabId,
-    windowId: Number(sender?.tab?.windowId) || null,
-    expiresAt: Date.now() + INLINE_DRAFT_TTL_MS,
-  };
-  if ([INLINE_DRAFT_ROUTES.BACKGROUND, INLINE_DRAFT_ROUTES.NEW].includes(request.route)) {
-    return runInlineDraftInServiceWorker(request, sender, tabId);
+  if (!request) return Promise.resolve({ ok: false, reason: 'Inline draft request failed validation.' });
+  if (request.route === INLINE_DRAFT_ROUTES.BACKGROUND) return runInlineDraftInServiceWorker(request, sender, tabId);
+  if (!browserApi.storage?.session) return Promise.resolve({ ok: false, reason: 'Session-only draft handoff is unavailable in this browser.' });
+  // Continue current chat and Start new Assist session run in the side panel, where the user sees the turn.
+  return handOffInlineDraftToSidePanel({
+    queued: {
+      ...request,
+      tabId,
+      windowId: Number(sender?.tab?.windowId) || null,
+      expiresAt: Date.now() + INLINE_DRAFT_TTL_MS,
+    },
+    storageKey: INLINE_DRAFT_STORAGE_KEY,
+    sessionStorage: browserApi.storage.session,
+    openSidePanel: () => openAssistSidePanelFromGesture(sender.tab),
+    sidePanelIsOpen,
+  });
+}
+
+// The real side panel for Assist, opened inside the page click (the same scope as openHermesPanelFromGesture).
+// Resolves whether it opened; never falls back to a full tab or a popup window.
+function openAssistSidePanelFromGesture(tab) {
+  const browserId = detectBrowserId();
+  if (browserId === 'opera' || browserId === 'firefox') {
+    return Promise.resolve(openNativeSidebar({ windowId: tab?.windowId ?? null })).then(Boolean, () => false);
   }
-  await Promise.all([
-    browserApi.storage.session.set({ [INLINE_DRAFT_STORAGE_KEY]: queued }),
-    openHermesPanel(sender.tab),
-  ]);
-  return { ok: true, requestId: request.requestId };
+  const tabId = Number(tab?.id);
+  const useTabAttached = cachedPanelResidencyMode === PANEL_RESIDENCY_MODES.TAB_ATTACHED && Number.isFinite(tabId) && tabId > 0;
+  return openSidePanelInClick(browserApi.sidePanel, useTabAttached ? { tabId } : { windowId: Number(tab?.windowId) });
+}
+
+// Whether a Hermes side panel is open in any window (Chrome 116+; elsewhere it reads as closed).
+async function sidePanelIsOpen() {
+  try {
+    const contexts = await browserApi.runtime.getContexts?.({ contextTypes: ['SIDE_PANEL'] });
+    return Array.isArray(contexts) && contexts.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 async function inlineSessionStatus() {
@@ -416,7 +556,7 @@ async function inlineSessionStatus() {
     ok: true,
     hasActiveSession: Boolean(sessionId),
     sessionId,
-    title: String(state.title || settings.sessionTitle || 'Current Browser chat').slice(0, 160),
+    title: String(state.title || settings.sessionTitle || 'Current chat').slice(0, 160),
     messageCount: Math.max(0, Number(state.messageCount || 0)),
   };
 }
@@ -426,15 +566,24 @@ async function queueOpenSessionRequest(message, sender) {
   if (!/^[A-Za-z0-9_.:-]{8,200}$/.test(sessionId)) return { ok: false, reason: 'Invalid session binding.' };
   const surface = message?.surface === 'web' ? 'web' : 'sidepanel';
   if (surface === 'web') {
-    const sourceSidePanelPath = String(browserApi.runtime.getManifest()?.side_panel?.default_path || 'sidepanel.html');
-    const appPath = sourceSidePanelPath.startsWith('extension/') ? 'extension/app.html' : 'app.html';
-    const appUrl = new URL(browserApi.runtime.getURL(appPath));
-    appUrl.searchParams.set('sessionId', sessionId);
-    const sourceTabId = Number(sender?.tab?.id);
-    if (Number.isFinite(sourceTabId) && sourceTabId > 0) appUrl.searchParams.set('sourceTabId', String(sourceTabId));
-    appUrl.searchParams.set('sourceSurfaceId', 'inline-assist');
-    await openHermesFullView(appUrl.href);
-    return { ok: true, sessionId, surface };
+    // Hermes Web is the Webapp the user's own gateway serves. It cannot be opened on one
+    // session, so this opens (or focuses) it and the session is found in its own list.
+    const stored = await browserApi.storage.local.get('hermesBrowserSettings');
+    const result = await openHermesWebapp({
+      settings: stored?.hermesBrowserSettings || {},
+      tabsApi: browserApi.tabs,
+      windowsApi: browserApi.windows,
+      permissionsApi: browserApi.permissions,
+      storageArea: browserApi.storage.local,
+      permissionMode: 'contains',
+      credentials: webappCredentials,
+      tickets: webappGatewayTickets,
+      opener: hermesWebOpener,
+    });
+    if (result.status === 'opened' || result.status === 'focused') {
+      return { ok: true, sessionId, surface, webapp: result.status, hint: result.hint || '' };
+    }
+    return { ok: false, webapp: result.status, address: result.address || '', reason: 'Hermes Web is not available.' };
   }
 
   const tab = sender?.tab || (await browserApi.tabs.query({ active: true, currentWindow: true }))[0];
@@ -445,10 +594,12 @@ async function queueOpenSessionRequest(message, sender) {
       expiresAt: Date.now() + INLINE_DRAFT_TTL_MS,
     },
   });
+  // An open side panel opens the session itself.
+  if (await sidePanelIsOpen()) return { ok: true, sessionId, surface };
   const opened = await openHermesPanel(tab, { allowFallback: false });
   if (opened === false) {
     await browserApi.storage.session.remove(OPEN_SESSION_STORAGE_KEY);
-    return { ok: false, reason: 'The Browser side panel could not open. Choose Hermes Web instead.' };
+    return { ok: false, reason: 'The extension\'s side panel could not open. If your gateway serves Hermes Web, you can open that instead.' };
   }
   return { ok: true, sessionId, surface };
 }
@@ -745,7 +896,7 @@ function openHermesPanelFromGesture(tab) {
   // Chromium-family: one correctly scoped sidePanel attempt, opened
   // synchronously. A resolved native request owns the gesture even when the
   // visibility event is missed; opening a fallback tab in that state can show
-  // both the side panel and a duplicate full-tab Hermes surface.
+  // both the side panel and a duplicate Hermes tab.
   const openOptions = useTabAttached
     ? { tabId }
     : { windowId: Number(tab?.windowId) };
@@ -798,18 +949,6 @@ async function openHermesPanelFallback(tab, browserId, panelUrl) {
 
 // Backward-compatible entry name for the context-menu controller wiring.
 const openHermesPanelFromContextGesture = openHermesPanelFromGesture;
-
-async function openHermesFullView(requestedUrl = '') {
-  const packagedAppUrl = new URL(browserApi.runtime.getURL('app.html'));
-  const rootDevAppUrl = new URL(browserApi.runtime.getURL('extension/app.html'));
-  const targetUrl = new URL(String(requestedUrl || packagedAppUrl.href));
-  const allowedPaths = new Set([packagedAppUrl.pathname, rootDevAppUrl.pathname]);
-  if (targetUrl.origin !== packagedAppUrl.origin || !allowedPaths.has(targetUrl.pathname)) {
-    throw new Error('Refused to open a non-Hermes full-view URL.');
-  }
-  await browserApi.tabs.create({ url: targetUrl.href, active: true });
-  return { ok: true };
-}
 
 function timeoutSignal(ms = 5000) {
   const controller = new AbortController();
@@ -910,19 +1049,42 @@ void initI18n().catch((error) => {
   console.warn('[Hermes Browser] Localization initialization failed:', error);
 });
 
+// The active connection's custom headers ride on every request to its address, WebSocket handshake included,
+// and its API requests leave without the Origin header Hermes would refuse (gateway-origin-rule.mjs). This
+// worker is the only writer of both rules: every update reads stored settings when it runs, one at a time.
+// A panel pairing with a loopback address it has not saved yet registers that address until the
+// attempt ends; another panel's ordinary sync must not clear it. The next settings change drops all.
+const pendingPairingGatewayUrls = new PendingPairingGatewayUrls();
+const syncConnectionHeaders = createHeaderRuleSync({
+  read: readStoredSettings,
+  apply: async (settings) => {
+    const extensionHost = extensionInitiatorHost((path) => browserApi.runtime.getURL(path));
+    await applyGatewayOriginRule({
+      gatewayUrl: settings.gatewayUrl,
+      connectionTransport: settings.connectionTransport,
+      extensionHost,
+      pendingGatewayUrls: pendingPairingGatewayUrls.values(),
+    }).catch((error) => console.warn('[Hermes Browser] Gateway origin rule failed:', error));
+    return applyConnectionHeaderRules({ gatewayUrl: settings.gatewayUrl, headers: settings.connectionHeaders, extensionHost });
+  },
+  onError: (error) => console.warn('[Hermes Browser] Connection header rules failed:', error),
+});
 void installLoopbackCorsRules().catch((error) => {
   console.warn('[Hermes Browser] Loopback CORS session rule cleanup failed:', error);
 });
+void syncConnectionHeaders();
 browserApi.runtime.onInstalled.addListener((details) => {
   void installLoopbackCorsRules().catch((error) => {
     console.warn('[Hermes Browser] Loopback CORS session rule cleanup failed:', error);
   });
+  void syncConnectionHeaders();
   return configureInstalledSurfaces(details);
 });
 browserApi.runtime.onStartup.addListener(async () => {
   await installLoopbackCorsRules().catch((error) => {
     console.warn('[Hermes Browser] Loopback CORS session rule cleanup failed:', error);
   });
+  await syncConnectionHeaders();
   await configureInstalledSurfaces({ controllerReason: 'browser-startup' });
   restoreWakeController();
 });
@@ -947,20 +1109,74 @@ browserApi.contextMenus?.onClicked?.addListener?.((info, tab) => {
 });
 browserApi.tabs?.onActivated?.addListener?.(({ tabId }) => reapplyPanelResidencyForTab(tabId));
 browserApi.tabs?.onUpdated?.addListener?.((tabId, changeInfo) => {
+  backgroundTaskBrowser?.tabUpdated(tabId, changeInfo);
   controllerWorker?.handleTabUpdated(tabId, changeInfo)
     .catch((error) => console.warn('[Hermes Browser] Could not invalidate controller document authority:', error));
 });
+// A tab one of Hermes's actions opened (a link to a new tab, a page's window.open) becomes one Hermes can act in.
+browserApi.tabs?.onCreated?.addListener?.((tab) => {
+  controllerWorker?.handleTabCreated(tab)
+    .catch((error) => console.warn('[Hermes Browser] Could not adopt a tab Hermes Control opened:', error));
+});
+// The Hermes Web launch tab finished loading the Webapp itself: show it and close the "Opening Hermes Web" page.
+browserApi.tabs?.onUpdated?.addListener?.((tabId, changeInfo, tab) => {
+  hermesWebOpening.handleTabUpdated(tabId, changeInfo, tab)
+    .catch((error) => console.warn('[Hermes Browser] Could not finish opening Hermes Web:', error));
+});
+// A signed-in Hermes Web tab is the only place its sign-in lives. Read it while the tab is open, so
+// closing the tab does not mean running `hermes webapp` again. Only a finished load of a loopback page
+// is looked at, and only the configured Webapp address is read from (and only when the setting is on).
+browserApi.tabs?.onUpdated?.addListener?.((tabId, changeInfo, tab) => {
+  if (changeInfo?.status !== 'complete' || !/^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?\//i.test(String(tab?.url || ''))) return;
+  void (async () => {
+    const settings = await readStoredSettings();
+    if (!keepSignedInEnabled(settings)) return;
+    const target = resolveWebappTarget(settings);
+    if (!target.ok) return;
+    await webappCredentials.capture(target, { tab });
+  })().catch(() => undefined);
+});
 browserApi.tabs?.onRemoved?.addListener?.((tabId) => {
+  hermesWebOpening.handleTabRemoved(tabId)
+    .catch((error) => console.warn('[Hermes Browser] Could not clean up the Hermes Web opening page:', error));
+  backgroundTaskBrowser?.releaseTab(tabId);
   controllerWorker?.handleTabRemoved(tabId)
     .catch((error) => console.warn('[Hermes Browser] Could not release removed controller tab state:', error));
 });
 browserApi.storage?.onChanged?.addListener?.((changes, areaName) => {
   if (areaName !== 'local') return;
+  if (changes.hermesBrowserSettings || changes[SAVED_CONNECTION_SECRETS_STORAGE_KEY] || changes[BACKGROUND_BROWSER_CONSENT]) {
+    backgroundTaskBrowser?.settingsChanged(changes).catch(() => {});
+  }
   contextMenuController.handleStorageChanged(changes, areaName)
     .catch((error) => console.warn('[Hermes Browser] Context menu refresh failed:', error));
   if (changes.hermesBrowserSettings?.newValue && controllerWorker) {
-    controllerWorker.syncSettings(changes.hermesBrowserSettings.newValue)
-      .catch((error) => console.warn('[Hermes Browser] Controller settings rebind failed:', error));
+    const rebindGeneration = ++controllerSettingsStorageRebind;
+    void (async () => {
+      try {
+        let secrets = Object.hasOwn(changes, SAVED_CONNECTION_SECRETS_STORAGE_KEY)
+          ? changes[SAVED_CONNECTION_SECRETS_STORAGE_KEY]?.newValue
+          : undefined;
+        if (secrets === undefined) {
+          const stored = await browserApi.storage.local.get(SAVED_CONNECTION_SECRETS_STORAGE_KEY);
+          secrets = stored[SAVED_CONNECTION_SECRETS_STORAGE_KEY];
+        }
+        const hydrated = await hydrateSavedConnectionSecrets(changes.hermesBrowserSettings.newValue, secrets);
+        if (rebindGeneration !== controllerSettingsStorageRebind) return;
+        const result = await controllerWorker.syncSettings(hydrated);
+        syncControllerAlarms(result);
+      } catch (error) {
+        console.warn('[Hermes Browser] Controller settings rebind failed:', error);
+      }
+    })();
+  }
+  if (changes.hermesBrowserSettings || changes[SAVED_CONNECTION_SECRETS_STORAGE_KEY]) {
+    if (changes.hermesBrowserSettings) pendingPairingGatewayUrls.clear();
+    void syncConnectionHeaders();
+  }
+  if (changes.hermesBrowserSettings?.newValue
+    && wakeNeedsReconfigure(changes.hermesBrowserSettings.oldValue, changes.hermesBrowserSettings.newValue)) {
+    wakeController.restore().catch((error) => console.warn('[Hermes Browser] Wake could not follow the connection change:', error));
   }
   let changed = false;
   if (Object.hasOwn(changes, 'hermesBrowserSettings')) {
@@ -983,10 +1199,17 @@ const EXTENSION_PAGE_ONLY_MESSAGE_TYPES = new Set([
   CONTEXT_MENU_CONFIG_GET,
   CONTEXT_MENU_CONFIG_MUTATE,
   CONTEXT_MENU_REQUEST_CLAIM,
-  'HERMES_OPEN_FULL_VIEW',
   'HERMES_GET_YOUTUBE_TRANSCRIPT',
   LOOPBACK_FETCH_MESSAGE,
+  SYNC_GATEWAY_RULES_MESSAGE,
+  ...Object.values(HERMES_WEB_OPENING_MESSAGES),
 ]);
+// A panel asks before it tests or pairs, and waits, so its first request never runs ahead of the rule.
+async function syncGatewayRulesForPanel(message) {
+  pendingPairingGatewayUrls.applySyncMessage(message);
+  await syncConnectionHeaders();
+  return { ok: true };
+}
 function isExtensionPageOnlyMessageType(type) {
   return EXTENSION_PAGE_ONLY_MESSAGE_TYPES.has(type) || themeMarketplaceController.handles(type);
 }
@@ -1013,18 +1236,27 @@ browserApi.runtime.onMessage.addListener((message, sender, sendResponse) => {
       ? contextMenuController.handleMessage(message)
       : themeMarketplaceController.handles(message?.type)
         ? themeMarketplaceController.handleMessage(message)
+    : hermesWebOpening.handles(message?.type)
+      ? hermesWebOpening.handleMessage(message, sender)
+    // From the content script on the gateway's hand-off page: it only learns how to cover the page.
+    : message?.type === HERMES_WEB_LAUNCH_LOOK_MESSAGE
+      ? hermesWebOpening.handleLaunchLook(sender)
+    : message?.type === INLINE_ASSIST_FONT_REQUEST
+      ? handleInlineAssistFontRequest(message, sender)
+    : inlineAssistModels.handles(message?.type)
+      ? inlineAssistModels.handle(message, sender)
     : message?.type === 'HERMES_INLINE_DRAFT_REQUEST'
       ? queueInlineDraftRequest(message, sender)
       : message?.type === 'HERMES_INLINE_SESSION_STATUS'
       ? inlineSessionStatus()
       : message?.type === 'HERMES_INLINE_OPEN_SESSION'
         ? queueOpenSessionRequest(message, sender)
-        : message?.type === 'HERMES_OPEN_FULL_VIEW'
-          ? openHermesFullView(message.url)
-          : message?.type === 'HERMES_GET_YOUTUBE_TRANSCRIPT'
-            ? getYoutubeTranscript(message)
-            : message?.type === LOOPBACK_FETCH_MESSAGE
-              ? handleLoopbackFetchMessage(message)
+        : message?.type === 'HERMES_GET_YOUTUBE_TRANSCRIPT'
+          ? getYoutubeTranscript(message)
+          : message?.type === LOOPBACK_FETCH_MESSAGE
+            ? handleLoopbackFetchMessage(message)
+            : message?.type === SYNC_GATEWAY_RULES_MESSAGE
+              ? syncGatewayRulesForPanel(message)
               : null;
   if (!action) return false;
   action

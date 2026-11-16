@@ -68,7 +68,7 @@ test('a model pick in room-member mode switches that room member only', () => {
 test('room bindings are persisted in settings and the runtime re-applies them per attempt', () => {
   assert.match(common, /groupRoomModelBindings:\s*\{\}/, 'the bindings store has a default');
   assert.match(source, /writeRoomModelBinding\(/);
-  assert.match(fn('persistRoomModelBindings'), /hermesBrowserSettings: settings/, 'the binding write is persisted');
+  assert.match(fn('persistRoomModelBindings'), /setPackedBrowserSettings\(settings\)/, 'the binding write is persisted');
   // B3.3 Outcome R: re-apply before every submission attempt via the hook.
   assert.match(source, /needsReapply\(/, 'the panel decides whether a binding must be re-applied');
   assert.match(source, /beforeMemberTurn:/, 'the room runtime receives the beforeMemberTurn hook');
@@ -77,9 +77,10 @@ test('room bindings are persisted in settings and the runtime re-applies them pe
   assert.match(hook, /setMemberModel\(/, 'the hook re-sends the session-scoped switch');
   assert.match(hook, /result\?\.state !== 'ok'/, 'the hook only continues on a verified switch');
   assert.match(hook, /throw error/, 'an unverified binding fails the member turn instead of answering on the wrong model');
-  const runtime = source.slice(source.indexOf('createBotGroupRuntime({'), source.indexOf('activeGroupRuntime = groupRuntime;'));
+  const runtime = source.slice(source.indexOf('const runtimeHooks = {'), source.indexOf('activeGroupRuntime = groupRuntime;'));
   assert.match(runtime, /beforeMemberTurn:/, 'the hook is wired into the room runtime');
   assert.match(runtime, /applyRoomMemberModelBeforeTurn\(/, 'the runtime hook calls the re-apply guard');
+  assert.match(runtime, /createBotGroupRuntime\(\{ client: connection\.client, \.\.\.runtimeHooks \}\)/, 'the client-driven runtime gets every hook');
 });
 
 test('room member identity is applied in the popover rows and locales carry the strings', () => {
