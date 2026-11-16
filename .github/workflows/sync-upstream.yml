@@ -5,80 +5,233 @@ on:
     - cron: "0 6 * * 1"
   workflow_dispatch:
 
+# The GITHUB_TOKEN only checks out main. Every write uses the SYNC_PAT secret:
+# a GITHUB_TOKEN push never triggers release.yml, GITHUB_TOKEN PR creation is
+# denied server-side in this repo, and GITHUB_TOKEN can never push a branch
+# that adds or edits a file under .github/workflows/ ("refusing to allow a
+# GitHub App to create or update workflow ... without `workflows` permission")
+# - which every upstream sync does, because upstream owns workflows too.
+# SYNC_PAT therefore needs Contents: read+write, Pull requests: read+write and
+# Workflows: read+write (fine-grained), or `repo` + `workflow` (classic).
 permissions:
-  contents: write
-  pull-requests: write
-  issues: write  # fallback: file an issue when GITHUB_TOKEN is denied PR creation
+  contents: read
+
+# A scheduled run and a manual dispatch must never race on main.
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
 
 jobs:
   sync-upstream:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out main
+        uses: actions/checkout@v4
         with:
+          # Always operate on main, even when this workflow file is dispatched
+          # from a branch. That is what makes the honest-status patch testable.
+          ref: main
           fetch-depth: 0
 
-      - name: Merge upstream/main into main
+      - name: Check SYNC_PAT, then merge upstream/main into main
         id: merge
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git remote add upstream https://github.com/abundantbeing/hermes-browser-extension.git
-          git fetch upstream main
-          if git merge --no-edit upstream/main; then
-            echo "clean=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "clean=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Push clean merge
-        if: steps.merge.outputs.clean == 'true'
         env:
+          UPSTREAM_REPO: abundantbeing/hermes-browser-extension
           SYNC_PAT: ${{ secrets.SYNC_PAT }}
         run: |
-          git remote set-url origin "https://x-access-token:${SYNC_PAT}@github.com/${GITHUB_REPOSITORY}.git"
-          git push origin HEAD:main
+          set -euo pipefail
+          PAT_URL="https://x-access-token:${SYNC_PAT}@github.com/${GITHUB_REPOSITORY}.git"
 
-      - name: Open PR on conflict
-        if: steps.merge.outputs.clean == 'false'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          git merge --abort
-          git reset --hard origin/main
-          BR="upstream-sync/conflict-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          git checkout -b "$BR"
+          # actions/checkout persists the GITHUB_TOKEN as
+          # http.https://github.com/.extraheader. A URL-embedded PAT on the same
+          # host would then send two Authorization headers and fail 401/403, so
+          # every PAT command clears that header for its own invocation.
+          pat_git() {
+            git -c http.https://github.com/.extraheader= "$@"
+          }
 
+          # Prove SYNC_PAT authenticates to this repo on every run, including
+          # runs that end in conflicts. Red here means the secret is wrong, not
+          # the merge.
+          if ! main_sha="$(pat_git ls-remote "$PAT_URL" refs/heads/main | awk '{print $1}')"; then
+            echo "::error::SYNC_PAT cannot authenticate to ${GITHUB_REPOSITORY} over HTTPS (ls-remote failed). main was not updated."
+            exit 1
+          fi
+          if [ -z "$main_sha" ]; then
+            echo "::error::SYNC_PAT authenticated but refs/heads/main was not returned by ls-remote. main was not updated."
+            exit 1
+          fi
+          echo "PAT read check ok; remote main is ${main_sha}."
+
+          # ls-remote alone cannot prove a credential: GitHub serves public
+          # repos anonymously, so a bogus token still returns refs (verified).
+          # The API reports the token's push permission, or exits non-zero on
+          # an invalid/expired token.
+          if ! pat_push="$(GH_TOKEN="$SYNC_PAT" gh api "repos/${GITHUB_REPOSITORY}" --jq '.permissions.push')"; then
+            echo "::error::SYNC_PAT cannot authenticate to the GitHub API for ${GITHUB_REPOSITORY} (invalid or expired token). main was not updated."
+            exit 1
+          fi
+          if [ "$pat_push" != "true" ]; then
+            echo "::error::SYNC_PAT has no push permission on ${GITHUB_REPOSITORY}, so it cannot push to main. main was not updated."
+            exit 1
+          fi
+          echo "PAT push permission confirmed."
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch upstream main
+          echo "upstream_sha=$(git rev-parse --short upstream/main)" >> "$GITHUB_OUTPUT"
+
+          before="$(git rev-parse HEAD)"
+          echo "before_sha=${before}" >> "$GITHUB_OUTPUT"
           if git merge --no-edit upstream/main; then
-            git push origin HEAD:main
+            after="$(git rev-parse HEAD)"
+            if [ "$before" = "$after" ]; then
+              echo "result=up-to-date" >> "$GITHUB_OUTPUT"
+              echo "main already contains upstream/main."
+            else
+              echo "result=merged" >> "$GITHUB_OUTPUT"
+              echo "Clean merge; main can fast-forward."
+            fi
             exit 0
           fi
 
-          # git add -A is safe here: the merge is in a conflicted state, so
-          # staged files are only conflict markers to preserve for the PR.
-          git add -A
-          if git diff --cached --quiet; then
-            echo "Merge reported conflicts, but no staged changes were found to preserve." >&2
+          # A failed merge is only the expected conflict if git recorded
+          # unmerged paths. Anything else (dirty tree, unrelated histories)
+          # must fail red.
+          if [ -z "$(git ls-files --unmerged)" ]; then
+            echo "::error::git merge failed for a reason other than conflicts; main was not updated."
+            exit 1
+          fi
+          echo "result=conflict" >> "$GITHUB_OUTPUT"
+          git merge --abort
+
+      - name: Report already up to date
+        if: steps.merge.outputs.result == 'up-to-date'
+        env:
+          UPSTREAM_SHA: ${{ steps.merge.outputs.upstream_sha }}
+        run: |
+          set -euo pipefail
+          head_sha="$(git rev-parse --short HEAD)"
+          {
+            echo "### Upstream sync: already up to date"
+            echo ""
+            echo "- main: ${head_sha}"
+            echo "- upstream/main: ${UPSTREAM_SHA}"
+            echo "- No merge, no push."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Push clean merge to main
+        if: steps.merge.outputs.result == 'merged'
+        env:
+          SYNC_PAT: ${{ secrets.SYNC_PAT }}
+          UPSTREAM_SHA: ${{ steps.merge.outputs.upstream_sha }}
+          BEFORE_SHA: ${{ steps.merge.outputs.before_sha }}
+        run: |
+          set -euo pipefail
+          PAT_URL="https://x-access-token:${SYNC_PAT}@github.com/${GITHUB_REPOSITORY}.git"
+          # Push with the PAT, not GITHUB_TOKEN: a GITHUB_TOKEN push never
+          # triggers other workflows, so release.yml would not run. Clearing
+          # checkout's persisted extraheader keeps exactly one Authorization.
+          git -c http.https://github.com/.extraheader= push "$PAT_URL" HEAD:main
+          head_sha="$(git rev-parse --short HEAD)"
+          count="$(git rev-list --count "${BEFORE_SHA}..upstream/main")"
+          {
+            echo "### Upstream sync: merged"
+            echo ""
+            echo "- main: ${head_sha} (merge of upstream/main ${UPSTREAM_SHA})"
+            echo "- Commits brought in by this merge: ${count}"
+            echo "- release.yml runs from this push."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish conflict branch and open PR
+        if: steps.merge.outputs.result == 'conflict'
+        id: conflict
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_PAT }}
+          SYNC_PAT: ${{ secrets.SYNC_PAT }}
+          UPSTREAM_SHA: ${{ steps.merge.outputs.upstream_sha }}
+        run: |
+          set -euo pipefail
+          BR="upstream-sync/conflict-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "branch=$BR" >> "$GITHUB_OUTPUT"
+          compare_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/main...${BR}"
+
+          # BR derives only from GITHUB_RUN_ID / GITHUB_RUN_ATTEMPT (numeric
+          # runner-set values); no event payload reaches a command.
+          git checkout -b "$BR"
+          if git merge --no-edit upstream/main; then
+            echo "::error::The second merge succeeded after the first reported conflicts; refusing to guess."
+            exit 1
+          fi
+          if [ -z "$(git ls-files --unmerged)" ]; then
+            echo "::error::Merge failed without conflict entries; nothing to publish."
             exit 1
           fi
 
-          # Security: $BR derives only from GITHUB_RUN_ID / GITHUB_RUN_ATTEMPT
-          # (runner-set numeric env vars); no untrusted event-context
-          # expressions are interpolated into any command below.
-          git commit -m "WIP: upstream sync with conflicts" --no-verify
-          git push --force-with-lease --set-upstream origin "$BR"
-          if gh pr create --base main --head "$BR" \
-            --title "Upstream sync needs manual resolution" \
-            --body "Scheduled weekly upstream merge hit conflicts. Resolve manually, then merge this PR."; then
-            exit 0
+          # git add -A is safe here: the only staged changes are the conflicted
+          # files themselves, kept verbatim so a resolver sees every hunk.
+          git add -A
+          git commit -m "WIP: upstream sync with conflicts (upstream ${UPSTREAM_SHA})" --no-verify
+
+          # Push with the PAT, not origin/GITHUB_TOKEN: a merge that brings in a
+          # workflow file is rejected for a GITHUB_TOKEN ("refusing to allow a
+          # GitHub App to create or update workflow ..."), and upstream owns
+          # workflows. BR is unique per run/attempt, so no force is needed.
+          PAT_URL="https://x-access-token:${SYNC_PAT}@github.com/${GITHUB_REPOSITORY}.git"
+          git -c http.https://github.com/.extraheader= push "$PAT_URL" "$BR"
+
+          pr_body="$(printf '%s\n' \
+            "The scheduled merge of upstream/main ${UPSTREAM_SHA} into main hit conflicts." \
+            "" \
+            "**Do not merge this branch as it is.** It is a snapshot of the conflicted state with the conflict markers committed, so a human can resolve every hunk. Resolve it locally instead:" \
+            "" \
+            "    git fetch origin && git switch -c resolve/upstream-${UPSTREAM_SHA} origin/main" \
+            "    git remote add upstream https://github.com/abundantbeing/hermes-browser-extension.git" \
+            "    git fetch upstream main && git merge upstream/main" \
+            "    npm ci && npm run verify" \
+            "" \
+            "Opened as a draft by the Sync upstream workflow, which cannot merge; a human does.")"
+
+          if pr_url="$(gh pr create --repo "$GITHUB_REPOSITORY" --draft --base main --head "$BR" \
+              --title "Upstream sync needs manual resolution (run ${GITHUB_RUN_ID})" \
+              --body "$pr_body" 2>pr-create.err)"; then
+            {
+              echo "### Upstream sync: CONFLICTS - manual resolution needed"
+              echo ""
+              echo "- Conflict PR (draft): ${pr_url}"
+              echo "- Branch: ${BR}"
+              echo "- The merge did NOT complete; main is unchanged."
+              echo "- This run is red on purpose."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::Upstream sync hit conflicts and did not complete. Resolve the conflict PR: ${pr_url}"
+            exit 1
           fi
 
-          # GITHUB_TOKEN can be denied PR creation ("Resource not accessible
-          # by integration") even with pull-requests: write and the repo
-          # "allow Actions to create PRs" setting ON. Fall back to filing an
-          # issue: issues:write is not subject to that gate.
-          # Avoid duplicate issues: link to the conflict branch instead.
-          gh issue create \
-            --title "Upstream sync needs manual resolution (conflict branch pushed)" \
-            --body "Scheduled weekly upstream merge hit conflicts. Conflict branch \`$BR\` was pushed with the conflicted merge state. Open a PR from that branch manually: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/main...$BR" \
-            || echo "::warning::Could not file the follow-up issue either — check repo permissions."
+          cat pr-create.err
+          {
+            echo "### Upstream sync: CONFLICTS - conflict PR creation FAILED"
+            echo ""
+            echo "- Branch: ${BR} (pushed)"
+            echo "- Open the PR manually: ${compare_url}"
+            echo "- gh pr create failed; see the log. main is unchanged."
+            echo "- This run is red on purpose."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::Upstream sync hit conflicts, main is unchanged, and the conflict PR could not be created. Branch ${BR} is pushed - open the PR manually: ${compare_url}"
+          exit 1
+
+      - name: Annotate the failure and note it in the run summary
+        if: failure()
+        run: |
+          set -euo pipefail
+          # Every red run carries an annotation, including failures that never
+          # reach one of the conflict paths above.
+          echo "::error::Upstream sync failed; main was not updated. See the failed step log for the command that exited non-zero."
+          {
+            echo "### Upstream sync: FAILED"
+            echo ""
+            echo "- main was NOT updated by this run."
+            echo "- Read the failed step log for the command that exited non-zero."
+          } >> "$GITHUB_STEP_SUMMARY"
