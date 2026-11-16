@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { writeContentExtractorRuntime } from './build-content-runtime.mjs';
 import { MANIFEST_TARGETS, manifestAssumptionsFor } from './manifest-profiles.mjs';
+import { checkReferencedFonts } from './check-referenced-fonts.mjs';
 import { checkSelfContained } from './check-self-contained.mjs';
 import { syncHermesContextWindows } from './sync-hermes-context-windows.mjs';
 
@@ -26,6 +27,7 @@ const firefoxProfile = manifestAssumptionsFor(MANIFEST_TARGETS.FIREFOX);
 
 await writeContentExtractorRuntime({ rootDir: root });
 await syncHermesContextWindows({ root });
+checkReferencedFonts({ root });
 checkSelfContained(src);
 
 function copyDir(from, to) {
@@ -90,6 +92,12 @@ if (Array.isArray(sourceManifest.optional_permissions)) {
   sourceManifest.optional_permissions = sourceManifest.optional_permissions
     .filter((permission) => !firefoxProfile.removedOptionalPermissions.includes(permission));
   if (!sourceManifest.optional_permissions.length) delete sourceManifest.optional_permissions;
+}
+
+// Firefox needs all-sites access for the model's tab screenshot. Optional only: the panel asks for it from a click
+// (Settings, or the strip where a screenshot was refused), and it is never an install-time permission.
+if (firefoxProfile.optionalHostPermissions?.length) {
+  sourceManifest.optional_host_permissions = [...firefoxProfile.optionalHostPermissions];
 }
 
 // Add Firefox-specific settings

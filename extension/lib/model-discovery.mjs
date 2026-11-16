@@ -35,22 +35,203 @@ export function globalModelCatalogCacheKey({ gatewayMode = 'local-api', gatewayU
  * Rows dedupe by rawModelId (preferred) then id; the freshest entry wins so
  * metadata (context tokens, provider labels) stays current.
  */
-export function unionCachedModelCatalogs(cache = {}) {
+function providersReferencedByCatalogModels(models = []) {
+  const providers = new Set();
+  for (const model of Array.isArray(models) ? models : []) {
+    if (!model || typeof model !== 'object') continue;
+    const provider = String(model.provider || '').trim().toLowerCase();
+    if (provider) providers.add(provider);
+  }
+  return providers;
+}
+
+function providersReferencedByCatalogEntry(entry) {
+  const providers = providersReferencedByCatalogModels(entry?.models);
+  for (const slug of Array.isArray(entry?.replacedProviders) ? entry.replacedProviders : []) {
+    const provider = String(slug || '').trim().toLowerCase();
+    if (provider) providers.add(provider);
+  }
+  return providers;
+}
+
+export function catalogProvidersTouchedByDiscovery({ models = [], providerSlugs = null } = {}) {
+  const touched = new Set();
+  if (providerSlugs instanceof Set) {
+    for (const provider of providerSlugs) touched.add(provider);
+  }
+  for (const model of Array.isArray(models) ? models : []) {
+    if (!model || typeof model !== 'object') continue;
+    const provider = String(model.provider || '').trim().toLowerCase();
+    if (provider) touched.add(provider);
+  }
+  return touched;
+}
+
+export function unionCachedModelCatalogs(cache = {}, { gatewayPrefix = '', excludeProviders = null } = {}) {
   if (!cache || typeof cache !== 'object') return [];
+  const prefix = String(gatewayPrefix || '');
+  const excluded = new Set(
+    Array.from(excludeProviders || [], (value) => String(value || '').trim().toLowerCase()).filter(Boolean),
+  );
   const byKey = new Map();
-  const entries = Object.values(cache)
-    .filter((entry) => entry && typeof entry === 'object')
-    .sort((a, b) => (Number(a?.savedAt) || 0) - (Number(b?.savedAt) || 0));
+  const entries = Object.entries(cache)
+    .filter(([cacheKey, entry]) => (!prefix || String(cacheKey || '').startsWith(prefix)) && entry && typeof entry === 'object')
+    .sort(([, a], [, b]) => (Number(a?.savedAt) || 0) - (Number(b?.savedAt) || 0))
+    .map(([, entry]) => entry);
+  const providerFreshness = new Map();
   for (const entry of entries) {
+    const savedAt = Number(entry?.savedAt) || 0;
+    for (const provider of providersReferencedByCatalogEntry(entry)) {
+      providerFreshness.set(provider, Math.max(providerFreshness.get(provider) || 0, savedAt));
+    }
+  }
+  for (const entry of entries) {
+    const savedAt = Number(entry?.savedAt) || 0;
     const rows = Array.isArray(entry?.models) ? entry.models : [];
     for (const model of rows) {
       if (!model || typeof model !== 'object') continue;
-      const id = String(model.rawModelId || model.id || '').trim();
-      if (!id) continue;
-      byKey.set(id, model);
+      const provider = String(model.provider || '').trim().toLowerCase();
+      if (provider && excluded.has(provider)) continue;
+      if (provider && savedAt < (providerFreshness.get(provider) || 0)) continue;
+      const rawCandidate = String(model.rawModelId || model.id || '').trim();
+      if (!rawCandidate) continue;
+      const lowerRaw = rawCandidate.toLowerCase();
+      const bareRaw = provider && lowerRaw.startsWith(`${provider}::`)
+        ? lowerRaw.slice(provider.length + 2)
+        : lowerRaw;
+      const key = provider ? `${provider}::${bareRaw}` : bareRaw;
+      const existing = byKey.get(key);
+      if (existing) {
+        const existingProvider = String(existing.provider || '').trim();
+        if (existingProvider && !provider) continue;
+      }
+      byKey.set(key, model);
     }
   }
   return [...byKey.values()];
+}
+
+export function providerSlugsFromModelOptionsPayload(payload = {}) {
+  const providers = Array.isArray(payload?.providers) ? payload.providers : [];
+  return new Set(
+    providers
+      .map((provider) => String(provider?.slug || provider?.id || provider?.provider || '').trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+export function mergeSharedModelCatalog({ sharedModels = [], freshModels = [], freshProviders = null } = {}) {
+  const fresh = Array.isArray(freshModels) ? freshModels.filter((model) => model && typeof model === 'object') : [];
+  const shared = Array.isArray(sharedModels) ? sharedModels.filter((model) => model && typeof model === 'object') : [];
+  const replacedProviders = new Set();
+  if (freshProviders instanceof Set) {
+    for (const provider of freshProviders) replacedProviders.add(provider);
+  }
+  for (const model of fresh) {
+    const provider = String(model.provider || '').trim().toLowerCase();
+    if (provider) replacedProviders.add(provider);
+  }
+  if (!replacedProviders.size) return fresh.length ? fresh : shared;
+  const keptShared = shared.filter((model) => {
+    const provider = String(model.provider || '').trim().toLowerCase();
+    return !provider || !replacedProviders.has(provider);
+  });
+  return unionCachedModelCatalogs({
+    kept: { savedAt: 0, models: keptShared },
+    fresh: { savedAt: 1, models: fresh },
+  });
+}
+
+export function filterModelsForAuthoritativeProviderInventory(
+  models = [],
+  providerSlugs = null,
+  authoritativeModels = null,
+) {
+  if (!(providerSlugs instanceof Set) || !providerSlugs.size) {
+    return Array.isArray(models) ? models : [];
+  }
+  const inventory = Array.isArray(authoritativeModels) ? authoritativeModels : models;
+  const liveProviders = new Set();
+  for (const model of inventory) {
+    if (!model || typeof model !== 'object') continue;
+    const provider = String(model.provider || '').trim().toLowerCase();
+    if (provider && providerSlugs.has(provider)) liveProviders.add(provider);
+  }
+  const emptyAuthoritativeProviders = new Set(
+    [...providerSlugs].filter((provider) => !liveProviders.has(provider)),
+  );
+  if (!emptyAuthoritativeProviders.size) return models;
+  return models.filter((model) => {
+    const provider = String(model?.provider || '').trim().toLowerCase();
+    return !provider || !emptyAuthoritativeProviders.has(provider);
+  });
+}
+
+export function shouldPersistAuthoritativeModelCatalog(registrySource = '') {
+  const source = String(registrySource || '');
+  return ['registry', 'dashboard'].some(
+    (prefix) => source === prefix || source.startsWith(`${prefix}+`),
+  );
+}
+
+export function shouldPreferCachedCatalogOverSparseLiveDiscovery({
+  registryModels = [],
+  registrySource = '',
+  cachedCatalogModels = [],
+} = {}) {
+  const cached = Array.isArray(cachedCatalogModels) ? cachedCatalogModels : [];
+  const live = Array.isArray(registryModels) ? registryModels : [];
+  if (!cached.length || cached.length <= live.length || live.length > 1) return false;
+  if (!live.length) return true;
+  const source = String(registrySource || '');
+  if (source === 'gateway') return true;
+  if (live[0]?.gatewayAlias === true) return true;
+  const authoritativeLiveCatalog = ['registry', 'dashboard'].some(
+    (prefix) => source === prefix || source.startsWith(`${prefix}+`),
+  );
+  return !authoritativeLiveCatalog;
+}
+
+export function reconcileScopedAndSharedCachedCatalog(scopedEntry, sharedEntry) {
+  const scoped = normalizeCachedModelCatalog(scopedEntry?.models);
+  const shared = normalizeCachedModelCatalog(sharedEntry?.models);
+  if (!scoped.length) return shared;
+  if (!shared.length) return scoped;
+  const sharedFresh = Number(sharedEntry?.savedAt) || 0;
+  const scopedFresh = Number(scopedEntry?.savedAt) || 0;
+  const sharedReplacementProviders = new Set(
+    (Array.isArray(sharedEntry?.replacedProviders) ? sharedEntry.replacedProviders : [])
+      .map((provider) => String(provider || '').trim().toLowerCase())
+      .filter(Boolean),
+  );
+  if (sharedFresh > scopedFresh) {
+    return normalizeCachedModelCatalog(mergeSharedModelCatalog({
+      sharedModels: scoped,
+      freshModels: shared,
+      freshProviders: sharedReplacementProviders.size
+        ? sharedReplacementProviders
+        : catalogProvidersTouchedByDiscovery({ models: shared }),
+    }));
+  }
+  if (sharedReplacementProviders.size) {
+    const sharedProviderModels = shared.filter((model) => {
+      const provider = String(model?.provider || '').trim().toLowerCase();
+      return provider && sharedReplacementProviders.has(provider);
+    });
+    return normalizeCachedModelCatalog(mergeSharedModelCatalog({
+      sharedModels: scoped,
+      freshModels: sharedProviderModels,
+      freshProviders: sharedReplacementProviders,
+    }));
+  }
+  return scoped;
+}
+
+function isSelectedModelPlaceholder(model = {}) {
+  if (!model || typeof model !== 'object') return false;
+  if (model.source === 'selected') return true;
+  if (String(model.provider || '').trim()) return false;
+  return model.runtimeSelectable === false && String(model.owner || '').trim() === 'selected';
 }
 
 export function normalizeCachedModelCatalog(payload = []) {
@@ -59,7 +240,8 @@ export function normalizeCachedModelCatalog(payload = []) {
     .filter((model) => model
       && typeof model === 'object'
       && String(model.id || '').trim()
-      && model.gatewayAlias !== true)
+      && model.gatewayAlias !== true
+      && !isSelectedModelPlaceholder(model))
     .map((model) => ({
       ...model,
       source: 'cache',
@@ -337,10 +519,73 @@ export async function discoverModelsFromRegistry({
         models: [],
       };
     }
-    return { ok: true, models: modelsFromModelOptionsPayload(payload), error: '' };
+    return {
+      ok: true,
+      models: modelsFromModelOptionsPayload(payload),
+      providerSlugs: providerSlugsFromModelOptionsPayload(payload),
+      optionsPayload: payload,
+      error: '',
+    };
   } catch (error) {
     return { ok: false, error: error?.message || 'error', models: [] };
   }
+}
+
+export function resolveDiscoveredProviderSlugs({
+  optionsPayload = null,
+  providerSlugs = null,
+  models = [],
+} = {}) {
+  const fromPayload = providerSlugsFromModelOptionsPayload(optionsPayload || {});
+  if (fromPayload.size) return fromPayload;
+  if (providerSlugs instanceof Set && providerSlugs.size) return providerSlugs;
+  return catalogProvidersTouchedByDiscovery({ models });
+}
+
+async function readResponseBodyWithDeadline(response, method, deadlineMs) {
+  const remaining = deadlineMs - Date.now();
+  if (remaining <= 0) {
+    const error = new Error('timeout');
+    error.name = 'AbortError';
+    throw error;
+  }
+  const reader = response[method];
+  if (typeof reader !== 'function') {
+    throw new Error(`unsupported-response-body-${method}`);
+  }
+  let timer;
+  try {
+    return await Promise.race([
+      reader.call(response),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          const error = new Error('timeout');
+          error.name = 'AbortError';
+          reject(error);
+        }, remaining);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function responseWithBodyDeadline(response, deadlineMs) {
+  return new Proxy(response, {
+    get(target, prop, receiver) {
+      if (prop === 'json') {
+        return () => readResponseBodyWithDeadline(target, 'json', deadlineMs);
+      }
+      if (prop === 'text') {
+        return () => readResponseBodyWithDeadline(target, 'text', deadlineMs);
+      }
+      if (prop === 'arrayBuffer') {
+        return () => readResponseBodyWithDeadline(target, 'arrayBuffer', deadlineMs);
+      }
+      const value = Reflect.get(target, prop, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
 }
 
 async function fetchWithTimeout(fetchFn, url, options = {}, timeoutMs = 5000) {
@@ -348,12 +593,20 @@ async function fetchWithTimeout(fetchFn, url, options = {}, timeoutMs = 5000) {
   if (typeof AbortController === 'undefined' || !timeoutMs) {
     return fetchFn(url, { ...options, redirect: 'error' });
   }
+  const deadlineMs = Date.now() + timeoutMs;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetchFn(url, { ...options, signal: controller.signal, redirect: 'error' });
-  } finally {
+  let timer = setTimeout(() => controller.abort(), timeoutMs);
+  const clearTimer = () => {
     clearTimeout(timer);
+    timer = null;
+  };
+  try {
+    const response = await fetchFn(url, { ...options, signal: controller.signal, redirect: 'error' });
+    clearTimer();
+    return responseWithBodyDeadline(response, deadlineMs);
+  } catch (error) {
+    clearTimer();
+    throw error;
   }
 }
 
@@ -450,16 +703,31 @@ export async function discoverCanonicalProviderCatalog({
   let liveNousLoaded = false;
   let staticCatalogLoaded = false;
 
-  if (nousProviders.length) {
+  const catalogRequestOptions = {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+    cache: 'no-store',
+    credentials: 'omit',
+  };
+  const readCatalogPayload = async (url) => {
     try {
-      const response = await fetchWithTimeout(fetchFn, NOUS_LIVE_MODEL_CATALOG_URL, {
-        method: 'GET',
-        headers: { Accept: 'application/json' },
-        cache: 'no-store',
-        credentials: 'omit',
-      }, timeoutMs);
+      const response = await fetchWithTimeout(fetchFn, url, catalogRequestOptions, timeoutMs);
       if (!response.ok) throw new Error(`status-${response.status}`);
-      const payload = await response.json();
+      return { payload: await response.json() };
+    } catch (error) {
+      return { error };
+    }
+  };
+
+  const [liveOutcome, staticOutcome] = await Promise.all([
+    nousProviders.length ? readCatalogPayload(NOUS_LIVE_MODEL_CATALOG_URL) : null,
+    readCatalogPayload(catalogUrl),
+  ]);
+
+  if (liveOutcome) {
+    try {
+      if (liveOutcome.error) throw liveOutcome.error;
+      const payload = liveOutcome.payload;
       if (!Array.isArray(payload?.data)) throw new Error('invalid-live-nous-catalog');
       const providers = Object.fromEntries(nousProviders.map((provider) => [provider, { models: payload.data }]));
       models = canonicalProviderModels({ providers }, models, enrichProviders);
@@ -470,14 +738,8 @@ export async function discoverCanonicalProviderCatalog({
   }
 
   try {
-    const response = await fetchWithTimeout(fetchFn, catalogUrl, {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-      cache: 'no-store',
-      credentials: 'omit',
-    }, timeoutMs);
-    if (!response.ok) throw new Error(`status-${response.status}`);
-    const payload = catalogWithNousAliases(await response.json(), nousProviders);
+    if (staticOutcome.error) throw staticOutcome.error;
+    const payload = catalogWithNousAliases(staticOutcome.payload, nousProviders);
     models = canonicalProviderModels(payload, models, enrichProviders);
     staticCatalogLoaded = true;
   } catch (error) {
@@ -624,21 +886,25 @@ export async function fetchDashboardFileStreamObjectUrl({
   return objectUrl;
 }
 
+// `dashboardToken` stands in when the page injects none: the gateway's Webapp injects no token,
+// and the caller holds the credential it signed this browser in with (lib/webapp-credential.mjs).
 export async function fetchDashboardSessionToken({
   baseUrl = '',
   fetchFn = globalThis.fetch?.bind(globalThis),
   timeoutMs = 2500,
+  dashboardToken = '',
 } = {}) {
   const dashboardUrl = String(baseUrl || '').trim();
   if (!dashboardUrl || typeof fetchFn !== 'function') return '';
+  const fallback = String(dashboardToken || '').trim();
   const rootResponse = await fetchWithTimeout(fetchFn, dashboardUrl, {
     method: 'GET',
     headers: { Accept: 'text/html' },
     credentials: 'include',
     cache: 'no-store',
   }, timeoutMs);
-  if (!rootResponse.ok) return '';
-  return extractDashboardSessionToken(await rootResponse.text());
+  if (!rootResponse.ok) return fallback;
+  return extractDashboardSessionToken(await rootResponse.text()) || fallback;
 }
 
 export async function fetchDashboardMediaDataUrl({
@@ -725,10 +991,11 @@ export async function dashboardAudioJson({
   body = null,
   fetchFn = globalThis.fetch?.bind(globalThis),
   timeoutMs = 8000,
+  dashboardToken = '',
 } = {}) {
   const dashboardUrl = String(baseUrl || '').trim().replace(/\/+$/, '');
   if (!dashboardUrl) throw new Error('The Hermes dashboard is not reachable from this panel.');
-  const token = await fetchDashboardSessionToken({ baseUrl: dashboardUrl, fetchFn });
+  const token = await fetchDashboardSessionToken({ baseUrl: dashboardUrl, fetchFn, dashboardToken });
   if (!token) throw new Error('The Hermes dashboard did not provide a session token.');
   const response = await fetchWithTimeout(fetchFn, dashboardEndpointUrl(dashboardUrl, pathname, profile), {
     method,
@@ -752,9 +1019,9 @@ export async function dashboardAudioJson({
 }
 
 /** Which voice chat mode the profile selected and whether GPT-Live can start. Null when unknown. */
-export async function fetchVoiceLiveStatus({ baseUrl = '', profile = '', fetchFn } = {}) {
+export async function fetchVoiceLiveStatus({ baseUrl = '', profile = '', fetchFn, dashboardToken = '' } = {}) {
   try {
-    return normalizeVoiceLiveStatus(await dashboardAudioJson({ baseUrl, path: VOICE_LIVE_STATUS_PATH, profile, fetchFn, timeoutMs: 4000 }));
+    return normalizeVoiceLiveStatus(await dashboardAudioJson({ baseUrl, path: VOICE_LIVE_STATUS_PATH, profile, fetchFn, timeoutMs: 4000, dashboardToken }));
   } catch {
     // An older Hermes without the route, or no dashboard: no live voice.
     return null;
@@ -785,6 +1052,7 @@ export async function transcribeAudioViaDashboard({
   mimeType = 'audio/webm',
   rootTimeoutMs = 2500,
   transcriptionTimeoutMs = 120000,
+  dashboardToken = '',
 } = {}) {
   const dashboardUrl = String(baseUrl || '').trim();
   if (!dashboardUrl) return { ok: false, transcript: '', provider: '', error: 'no-dashboard-url', status: 0 };
@@ -807,7 +1075,7 @@ export async function transcribeAudioViaDashboard({
         status: rootResponse.status,
       };
     }
-    const token = extractDashboardSessionToken(await rootResponse.text());
+    const token = extractDashboardSessionToken(await rootResponse.text()) || String(dashboardToken || '').trim();
     if (!token) {
       return { ok: false, transcript: '', provider: '', error: 'no-dashboard-session-token', status: 0 };
     }
@@ -865,6 +1133,7 @@ export async function discoverModelsFromDashboard({
   profile = '',
   rootTimeoutMs = 2500,
   optionsTimeoutMs = refresh ? 18000 : 6000,
+  dashboardToken = '',
 } = {}) {
   const dashboardUrl = String(baseUrl || '').trim();
   if (!dashboardUrl) return { ok: false, error: 'no-dashboard-url', models: [] };
@@ -876,7 +1145,7 @@ export async function discoverModelsFromDashboard({
     }, rootTimeoutMs);
     if (!rootResponse.ok) return { ok: false, error: `dashboard-root-${rootResponse.status}`, models: [] };
     const html = await rootResponse.text();
-    const token = extractDashboardSessionToken(html);
+    const token = extractDashboardSessionToken(html) || String(dashboardToken || '').trim();
     if (!token) return { ok: false, error: 'no-dashboard-session-token', models: [] };
     const optionsResponse = await fetchWithTimeout(fetchFn, dashboardModelOptionsUrl(dashboardUrl, refresh, profile), {
       method: 'GET',
@@ -900,7 +1169,14 @@ export async function discoverModelsFromDashboard({
         models: [],
       };
     }
-    return { ok: true, models: modelsFromModelOptionsPayload(payload), error: '', source: 'dashboard' };
+    return {
+      ok: true,
+      models: modelsFromModelOptionsPayload(payload),
+      providerSlugs: providerSlugsFromModelOptionsPayload(payload),
+      optionsPayload: payload,
+      error: '',
+      source: 'dashboard',
+    };
   } catch (error) {
     return { ok: false, error: error?.name === 'AbortError' ? 'dashboard-timeout' : (error?.message || 'error'), models: [] };
   }
@@ -1157,4 +1433,20 @@ export async function discoverModelsFromExternalSources({
     }
   }
   return { ok: results.some((result) => result.ok), models: mergeModelsByRawId(results.map((result) => result.models)), results };
+}
+
+export async function raceModelDiscovery(promise, timeoutMs, timers = {}) {
+  const scheduleTimeout = timers.setTimeout ?? setTimeout;
+  const cancelTimeout = timers.clearTimeout ?? clearTimeout;
+  let timeoutId;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((resolve) => {
+        timeoutId = scheduleTimeout(() => resolve({ ok: false, error: 'timeout' }), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId !== undefined) cancelTimeout(timeoutId);
+  }
 }

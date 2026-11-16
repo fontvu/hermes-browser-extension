@@ -107,7 +107,7 @@ async function waitingApprovalWorker() {
   const executor = createBrowserControlExecutor({
     adapter: {
       contract: { enabled: true, actions: ['browser_press'] },
-      async inspect() { return { currentUrl: 'https://example.test/form' }; },
+      async inspect() { return { currentUrl: 'https://example.test/form', focused: { role: 'textbox', name: 'Message', inputType: 'text', identity: '0123456789abcdef0123456789abcdef' } }; },
       async execute() { sideEffects += 1; return { status: 'pressed' }; },
     },
     approvals,
@@ -257,7 +257,8 @@ test('Phase 6 worker executes enabled real actions with exact worker-owned scope
       command_id: 'phase6-nav-1',
       tab_id: 77,
       ok: true,
-      result: { status: 'navigated', url: 'https://example.test/next' },
+      // Every page action names the tab it ran in.
+      result: { status: 'navigated', url: 'https://example.test/next', tab_id: 77 },
     },
   });
   const status = worker.status();
@@ -396,7 +397,9 @@ test('Phase 6 worker revalidates lease and document immediately before queued si
   await settle();
   await settle();
   const leaseTail = connection.sent.find((frame) => frame.params.command_id === 'lease-tail');
-  assert.equal(leaseTail.params.error.code, 'lease_required');
+  // Releasing the tab ends what is queued on it (cancelled); a tail that was not cancelled would fail the lease check.
+  assert.match(leaseTail.params.error.code, /^(lease_required|cancelled)$/);
+  assert.equal(executed.includes('lease-tail'), false, 'the queued side effect never ran');
 });
 
 test('Phase 6 approval grants require a trusted extension sender and bind exact command action and document', async () => {
@@ -407,7 +410,7 @@ test('Phase 6 approval grants require a trusted extension sender and bind exact 
   const executor = createBrowserControlExecutor({
     adapter: {
       contract: { enabled: true, actions: ['browser_press'] },
-      async inspect() { return { currentUrl: 'https://example.test/form' }; },
+      async inspect() { return { currentUrl: 'https://example.test/form', focused: { role: 'textbox', name: 'Message', inputType: 'text', identity: '0123456789abcdef0123456789abcdef' } }; },
       async execute() { sideEffects += 1; return { status: 'pressed' }; },
     },
     approvals,
@@ -452,7 +455,7 @@ test('Phase 6 approval grants require a trusted extension sender and bind exact 
     command_id: 'press-1',
     tab_id: 80,
     ok: true,
-    result: { status: 'pressed' },
+    result: { status: 'pressed', tab_id: 80 },
   });
 });
 
@@ -1042,6 +1045,28 @@ test('worker drops a rejected pairing token so reconnect can mint a fresh ticket
   assert.equal(failed.lastConnectFailure.reason, 'connect_failed');
   assert.equal(String(store.state.hermesBrowserSettings.tokenSource || ''), '');
   assert.equal(String(store.state.hermesBrowserSettings.apiKey || ''), '');
+});
+
+test('worker clears a rejected pairing token from the active saved connection too', async () => {
+  const paired = settings({ tokenSource: 'pairing' });
+  const entry = { id: 'default', name: 'Home', connection: { ...paired } };
+  const store = memoryStorage({
+    hermesBrowserSettings: { ...paired, activeSavedConnectionId: 'default', savedConnections: [entry] },
+  });
+  const worker = createControllerServiceWorker({
+    storageArea: store.area,
+    connector: { async connect() { throw new Error('Controller registration failed (HTTP 401).'); } },
+    product: PRODUCT,
+    randomUUID: uuids(),
+    extensionOrigin: 'chrome-extension://fixture',
+    executeBrowserCommand: async () => ({ ok: true, result: {} }),
+    now: () => 0,
+  });
+  await worker.handleMessage({ type: CONTROLLER_WORKER_MESSAGES.status }, extensionSender());
+  const stored = store.state.hermesBrowserSettings;
+  assert.equal(stored.apiKey, '');
+  assert.equal(stored.savedConnections[0].connection.apiKey, '');
+  assert.equal(stored.savedConnections[0].connection.tokenSource, '');
 });
 
 test('Phase 6 worker drops the tab debugger session when a lease is released, paused, or detached', async () => {
