@@ -316,6 +316,34 @@ test('Phase 6 advertised screenshot and tab actions stay inside worker-owned lea
   ]);
 });
 
+test('a close names the tab it closes, and its approval cannot be spent on a different tab', async () => {
+  const { createBrowserControlExecutor } = await executorModule();
+  const calls = [];
+  const approvals = createBrowserControlApprovalStore();
+  const titles = new Map([[7, 'Command tab'], [8, 'Quarterly report']]);
+  const adapter = fullAdapter(async (action, args) => {
+    calls.push({ action, tabId: args.tab_id ?? null });
+    return { status: 'tab-closed' };
+  });
+  adapter.contract.actions.push('browser_tab_close');
+  adapter.inspect = async ({ tabId }) => ({ currentUrl: 'https://example.test/start', hasUnsavedContent: false, title: titles.get(tabId) || '' });
+  const executor = createBrowserControlExecutor({ adapter, approvals, refs: createBrowserControlRefStore(), now: () => 5_000 });
+
+  // The command rides on tab 7 and closes tab 8: the card says which tab goes.
+  const closing = executor.execute(frame('browser_tab_close', { tab_id: 8 }, { command_id: 'close-8' }), {
+    scope, leasedTabIds: [7, 8], ownedTabIds: [7, 8],
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const [pending] = approvals.pending();
+  assert.equal(pending.reason, 'Close the tab "Quarterly report"?');
+  assert.equal(pending.binding, 'tab:8');
+  assert.equal(approvals.grant({ ...pending, binding: 'tab:9' }).ok, false);
+  assert.deepEqual(calls, [], 'nothing closes before the grant');
+  approvals.grant(pending);
+  assert.equal((await closing).ok, true);
+  assert.deepEqual(calls, [{ action: 'browser_tab_close', tabId: 8 }]);
+});
+
 test('a tab switch names the tab it switches to, and its approval cannot be spent on a different tab', async () => {
   const { createBrowserControlExecutor } = await executorModule();
   const calls = [];
@@ -481,4 +509,70 @@ test('Phase 6 keeps the stale_ref, navigation_failed and tab_hidden codes adapte
   assert.equal((await executor.execute(frame('browser_click', { ref: '@e1' }), { scope })).error.code, 'command_error');
   failure = new Error('plain failure');
   assert.equal((await executor.execute(frame('browser_scroll', { direction: 'down' }), { scope })).error.code, 'command_error');
+});
+
+test('a screenshot the adapter withheld keeps its code: not_active_tab and restricted_page reach the model', async () => {
+  const { createBrowserControlExecutor } = await executorModule();
+  let failure = null;
+  const executor = createBrowserControlExecutor({
+    adapter: fullAdapter(async () => { throw failure; }),
+    approvals: createBrowserControlApprovalStore(),
+    refs: createBrowserControlRefStore(),
+    now: () => 5_000,
+  });
+  for (const code of ['not_active_tab', 'restricted_page']) {
+    failure = Object.assign(new Error(`withheld: ${code}`), { code });
+    const result = await executor.execute(frame('browser_screenshot'), { scope, leasedTabIds: [7] });
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, code);
+  }
+});
+
+test('an action the browser cannot do says why and what it can do instead, so it is never a silent refusal', async () => {
+  const { createBrowserControlExecutor } = await executorModule();
+  const { controllerAdapterContractFor } = await import('../extension/lib/browser-controller-adapter.mjs');
+  const contract = controllerAdapterContractFor({
+    product: { id: 'firefox', engine: 'gecko' },
+    capabilities: { apis: { scripting: true, tabs: true } },
+    controlEnabled: true,
+  });
+  let calls = 0;
+  const executor = createBrowserControlExecutor({
+    adapter: { contract, execute: async () => { calls += 1; return {}; } },
+    approvals: createBrowserControlApprovalStore(),
+    refs: createBrowserControlRefStore(),
+  });
+  const click = await executor.execute(frame('browser_click', { ref: '@e1' }), { scope });
+  assert.equal(click.error.code, 'unsupported_action');
+  assert.match(click.error.message, /browser_click is not available in this browser/);
+  assert.match(click.error.message, /trusted input/i);
+  assert.match(click.error.message, /browser_snapshot/);
+  assert.match(click.error.message, /browser_navigate/);
+  assert.match(click.error.message, /ask the person to do this step/i);
+  const group = await executor.execute(frame('browser_tab_group', { tab_ids: [7] }), { scope });
+  assert.match(group.error.message, /browser_tab_group is not available in this browser/);
+  assert.match(group.error.message, /does not offer it/i);
+  const unknown = await executor.execute(frame('browser_evaluate', { expression: '1' }), { scope });
+  assert.equal(unknown.error.code, 'unsupported_action');
+  assert.doesNotMatch(unknown.error.message, /trusted input/i, 'an unknown action is not blamed on trusted input');
+  assert.equal(calls, 0);
+});
+
+test('a batch step the browser cannot do is named with its reason before anything runs', async () => {
+  const { createBrowserControlExecutor } = await executorModule();
+  const { controllerAdapterContractFor } = await import('../extension/lib/browser-controller-adapter.mjs');
+  const contract = controllerAdapterContractFor({
+    product: { id: 'firefox', engine: 'gecko' },
+    capabilities: { apis: { scripting: true, tabs: true } },
+    controlEnabled: true,
+  });
+  const executor = createBrowserControlExecutor({
+    adapter: { contract: { ...contract, actions: [...contract.actions, 'browser_batch'] }, execute: async () => ({}) },
+    approvals: createBrowserControlApprovalStore(),
+    refs: createBrowserControlRefStore(),
+  });
+  const batch = await executor.execute(frame('browser_batch', { actions: [{ action: 'browser_scroll', direction: 'down' }, { action: 'browser_click', ref: '@e1' }] }), { scope });
+  assert.equal(batch.error.code, 'unsupported_action');
+  assert.match(batch.error.message, /Step 2: browser_click is not available in this browser/);
+  assert.match(batch.error.message, /trusted input/i);
 });

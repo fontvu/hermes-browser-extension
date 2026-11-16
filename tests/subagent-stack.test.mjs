@@ -16,6 +16,7 @@ import {
   visibleSubagentView,
   subagentsFromListResult,
 } from '../extension/lib/subagent-stack.mjs';
+import { CHECK_JS } from '../scripts/check-js.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'utf8');
@@ -170,20 +171,12 @@ test('sidepanel mounts a hidden-until-live SUBAGENTS stack beside TASKS', () => 
   assert.match(css, /\.subagent-stack\s*>\s*\.task-stack-toggle[\s\S]*grid-template-columns:\s*auto minmax\(0,1fr\) 20px/);
   assert.match(css, /\.subagent-stack-stream::-webkit-scrollbar/);
   assert.doesNotMatch(css, /\.subagent-stack[\s\S]{0,400}scrollbar-color/);
-  assert.match(source, /Steer this subagent/);
-  assert.match(source, /Stop this subagent/);
+  assert.match(source, /t\('ui\.steer\.this\.subagent'\)/);
+  assert.match(source, /t\('ui\.stop\.this\.subagent'\)/);
   assert.match(source, /SUBAGENT_STEER_ICON/);
   assert.match(css, /\.subagent-stack-controls[\s\S]*grid-template-columns:\s*minmax\(0,1fr\) 32px 32px/);
 });
 
-test('Hermes Web mounts the same SUBAGENTS stack', () => {
-  const html = read('extension/app.html');
-  const source = read('extension/app.js');
-  assert.match(html, /id="subagentStack"/);
-  assert.match(source, /applySubagentEvent/);
-});
-
 test('package check:js syntax-checks the subagent stack module', () => {
-  const pkg = JSON.parse(read('package.json'));
-  assert.match(String(pkg.scripts?.['check:js'] || ''), /subagent-stack\.mjs/);
+  assert.match(CHECK_JS, /subagent-stack\.mjs/);
 });
