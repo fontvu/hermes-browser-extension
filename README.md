@@ -38,7 +38,7 @@ Browser-native side panel for [Hermes Agent](https://hermes-agent.nousresearch.c
 
 ## What it is
 
-Hermes Browser Extension is not a browser chatbot. It is a Chromium side panel or Firefox sidebar for the real Hermes Agent runtime. Hermes Control is complete on Chromium and restricted on Firefox, where it can read pages, open addresses and manage tabs but cannot click or type ([what works on Firefox](./guides/firefox.md)). Choose a local gateway, attach to a signed-in Hermes Cloud agent tab, or connect to a self-hosted remote API/dashboard. Local and remote API connections can use the models, tools, skills, sessions, memory, and MCP servers already configured in Hermes; Cloud and dashboard-ticket connections are intentionally Chat-only.
+Hermes Browser Extension is not a browser chatbot. It is a Chromium side panel or Firefox sidebar for the real Hermes Agent runtime. Hermes Control is complete on Chromium and restricted on Firefox, where it can read pages, open addresses and manage tabs but cannot click or type ([what works on Firefox](./guides/firefox.md)). Choose a local gateway, attach to a signed-in Hermes Cloud agent tab, or connect to a self-hosted remote API/dashboard. Local and remote API connections can use the models, tools, skills, sessions, memory, and MCP servers already configured in Hermes; Cloud and dashboard-ticket connections keep automatic page context off until you approve **Share page context with this connection** for that exact verified connection (explicit file and image attachments still send). Hermes Control on those transports needs a gateway that supports `browser.controller.register` over the dashboard socket; it cannot use the plugin's HTTP Control routes.
 
 - **Bot Mode** brings your Hermes agent roster into the panel: switch agents, edit profiles, and run group chats where several agents reply in one room. **Current group-chat limitation:** page-context delivery is not yet reliable; do not assume group bots can see the active page. Hermes Control is not shown in group chats. Individual bot chats retain their existing page-context and control behavior. Chat-only and remote group turns do not capture page context.
 - **File attachments** show one card per file per message. Open previews the file, Open on computer reveals the original file's containing folder through local Hermes, and Save downloads a copy.
@@ -204,8 +204,8 @@ Settings offers the same three connection choices as Hermes Desktop:
 | Connection mode | Use it for | Transport and boundary |
 | --- | --- | --- |
 | **Local gateway** | Hermes running on this machine (including WSL2 and Docker with a published port), or another machine reached through an SSH tunnel | Local API server, default `http://127.0.0.1:8642`, with `API_SERVER_KEY`. |
-| **Hermes Cloud** | A signed-in Hermes Cloud agent open in a normal browser tab | Trusted Dashboard Attach mints a short-lived, single-use WebSocket ticket from the active HTTPS agent tab. Chat-only; no page text, selected text, open-tab context, or attachments are sent. |
-| **Remote gateway** | A self-hosted Hermes on another machine: Tailscale, a LAN or VPN, or an HTTPS reverse proxy | With a key: remote API server. Without a key: signed-in HTTPS dashboard ticket/WebSocket. Hermes Control needs an `https://` address here; plain `http://` to another machine is chat only. |
+| **Hermes Cloud** | A signed-in Hermes Cloud agent open in a normal browser tab | Trusted Dashboard Attach mints a short-lived, single-use WebSocket ticket from the active HTTPS agent tab. Automatic page context stays off until you approve **Share page context with this connection** for that exact account; explicit file and image attachments still send; Hermes Control needs gateway support for `browser.controller.register` over the dashboard socket. |
+| **Remote gateway** | A self-hosted Hermes on another machine: Tailscale, a LAN or VPN, or an HTTPS reverse proxy | With a key: remote API server — use `https://` (`tailscale serve` or an HTTPS reverse proxy) plus the companion plugin for Hermes Control on attached tabs; plain `http://` to another machine refuses Control; background task tabs stay local-only. Without a key: signed-in HTTPS dashboard ticket/WebSocket; Hermes Control there needs gateway support for `browser.controller.register` over that socket (no plugin HTTP Control). |
 
 [guides/connection-guide.md](./guides/connection-guide.md) has the exact setup for each place Hermes can run:
 - this computer, WSL2 or Docker;
@@ -236,7 +236,7 @@ Existing installations migrate automatically:
 
 Custom headers go with every request the extension makes to that address, streamed replies included, and to nothing else. A browser cannot put headers on the dashboard's live WebSocket connection.
 
-A private network needs nothing special. Start Tailscale or WireGuard first, then add a Remote gateway at the address it gives you, with your API key. An SSH tunnel is a port on this computer, so add it as a **Local gateway** at `http://127.0.0.1:<tunnel port>` for Hermes Control and API transport only, not because Hermes runs locally. An extension cannot open an SSH session itself. **Local gateway** also discovers Hermes dashboards on this computer: stop the local Hermes gateway before you connect through a tunnel to a remote machine, or bots from both can mix. Page context over a tunnel **leaves this computer** for the remote Hermes; the extension still treats loopback URLs as local and **does not** show the remote **Share page context** gate (see the [SSH tunnel section](./guides/connection-guide.md#on-a-vps-or-another-computer-over-an-ssh-tunnel)).
+A private network needs nothing special. For a VPS or remote host with full Hermes Control, run `tailscale serve --bg 8642` (or put an HTTPS reverse proxy with WebSocket support in front of `127.0.0.1:8642`), install the [companion plugin](./companion-plugin/README.md) on that Hermes, add a **Remote gateway** at that `https://` address with your API key, and approve **Share page context** and **Hermes Control** in Settings (background task tabs stay local-only). Plain `http://` over Tailscale or WireGuard works for chat and consent-gated page context, but Hermes Control refuses remote `http://`. An SSH tunnel is a port on this computer, so add it as a **Local gateway** at `http://127.0.0.1:<tunnel port>` for Hermes Control and API transport only, not because Hermes runs locally. An extension cannot open an SSH session itself. **Local gateway** also discovers Hermes dashboards on this computer: stop the local Hermes gateway before you connect through a tunnel to a remote machine, or bots from both can mix. Page context over a tunnel **leaves this computer** for the remote Hermes; the extension still treats loopback URLs as local and **does not** show the remote **Share page context** gate (see the [SSH tunnel section](./guides/connection-guide.md#on-a-vps-or-another-computer-over-an-ssh-tunnel)).
 
 Each entry keeps its own gateway address, API key and dashboard settings in browser-local storage. Your existing setup becomes the first entry. Only one saved connection is active at a time. Switching:
 - saves the current settings and closes the old connection;
@@ -252,17 +252,40 @@ Hermes Browser Extension is intentionally conservative:
 
 - Local gateway by default; remote API server support requires an explicit URL, token, and CORS allowlist.
 - Hermes Cloud and self-hosted dashboard attach require an explicit HTTPS origin, the exact active signed-in tab, and a short-lived single-use WebSocket ticket kept only in memory.
-- Cloud/dashboard-ticket connections are Chat-only and cannot send browser page text, selected text, open-tab context, or attachments.
+- Cloud and dashboard-ticket connections fail closed and keep automatic browser page text, selected text, and open-tab context off until you approve **Share page context with this connection** for that exact verified origin, account, profile, and transport; explicit user-chosen attachments still send, and Hermes Control there requires gateway support for `browser.controller.register` over the dashboard socket (the plugin's HTTP Control routes are not used).
 - Strong bearer/API key required for API access.
-- Page content is wrapped as untrusted context before it reaches Hermes.
+- Page content is wrapped as untrusted context before it reaches Hermes, and the common ways to hide text from you (CSS, transparent or zero-size text, unreachable placement, comments) are filtered out. That narrows what a page can slip in but does not catch every trick, so the model still sees page text as untrusted. A trap page with hidden instructions is part of the tests.
 - Credential-bearing URLs are omitted from active, selected, open-tab, pinned-scope, prompt, receipt, and payload-hash surfaces.
 - Page context capture is read-only. Page control exists only through opt-in Hermes Control (complete on Chromium, restricted on Firefox), which acts on tabs you attach and pauses risky actions for approval. Hermes Assist may insert a reviewed draft into a supported focused composer only after an explicit user action; it never clicks Send/Post/Submit, navigates, checks out, or performs browser-control workflows.
 - Chromium builds request `debugger` for opt-in Hermes Control; Firefox builds omit it. No `nativeMessaging`, `cookies`, `history`, or `bookmarks` permissions. `downloads` is limited to explicit user-requested generated-image/artifact saves.
 - Restricted pages include browser internals, extension pages, and obvious banking/crypto/password/payment/health/government-tax categories.
 
+Before you turn on Hermes Control, read [**Using the Hermes Browser Extension safely**](guides/security.md): what an agent in your browser can and cannot do, and a setup that keeps a mistake small.
+
 See [`SECURITY.md`](SECURITY.md), [`PERMISSIONS.md`](PERMISSIONS.md), [`DATA-FLOW.md`](DATA-FLOW.md), and [`PRIVACY.md`](PRIVACY.md) for details.
 
 ## Troubleshooting
+
+### Self-hosted LAN or router dashboards look blank
+
+Some self-hosted dashboards (router admin UIs, Clash or mihomo panels, other Vue or workbox PWAs on private IP addresses) can stop painting when a browser extension injects heavy page scripts at `document_idle`. Hermes now skips its page-context bundle on private and LAN hosts by default. Chat, Hermes Control, and Hermes Web launch still work; only Assist, extraction, and inline page helpers stay off until you opt in.
+
+In **Settings → Permissions → Private and LAN pages**, turn on **Run page scripts on private and LAN sites** when you want page context on those addresses. To block page scripts on a specific origin (public or private), add it under **Exclude these origins from page scripts** (one origin per line, for example `https://192.168.8.1:9443`). The side panel explains when page context is skipped on the active tab.
+
+Private or LAN hosts (the same classifier the extension and guard use):
+
+| Kind | Examples |
+| --- | --- |
+| IPv4 loopback | `127.0.0.0/8` (including `127.0.0.2`) |
+| RFC1918 | `10.0.0.0/8`, `172.16.0.0–172.31.255.0`, `192.168.0.0/16` |
+| Link-local / CGNAT | `169.254.0.0/16`, Tailscale `100.64.0.0/10` (`100.64.x.x–100.127.x.x`) |
+| IPv6 loopback / ULA / link-local | `::1`, `fc00::/7`, `fe80::/10` |
+| Local names | `localhost`, `*.localhost`, `*.local`, `*.lan`, `*.internal`, `*.home.arpa`, `*.ts.net` |
+| Single-label hostnames | names with no dots (for example a machine name on the LAN) |
+
+Port-specific excludes (for example `https://example.com:9443`) are enforced at runtime in the install guard, not via registration match patterns, so other ports on the same host stay eligible for page scripts unless you exclude them too.
+
+### Tools available to the agent
 
 Tools available to the agent come from your Hermes setup. See the [Hermes docs](https://hermes-agent.nousresearch.com/docs).
 

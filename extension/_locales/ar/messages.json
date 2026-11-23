@@ -2595,6 +2595,14 @@
     "message": "تحتوي السمة على أخطاء تحقق.",
     "description": "Runtime interface message custom_theme.validation_errors"
   },
+  "runtime_dashboard_trust_prompt_local": {
+    "message": "هل تثق في {origin} لميزة Dashboard Attach؟\n\nستستخدم Hermes Browser Extension الجلسة المسجّل الدخول إليها في علامة تبويب لوحة التحكم النشطة لطلب تذكرة WebSocket قصيرة العمر وأحادية الاستخدام. تعمل لوحة التحكم هذه على هذا الكمبيوتر، لذا يُشارك سياق الصفحة الذي تختاره في اللوحة معها دون موافقة منفصلة لكل اتصال. تبقى التذكرة في الذاكرة فقط ولا تُخزَّن أبدًا.",
+    "description": "Runtime interface message dashboard.trust_prompt_local"
+  },
+  "runtime_dashboard_trust_prompt_remote": {
+    "message": "هل تثق في {origin} لميزة Dashboard Attach؟\n\nستستخدم Hermes Browser Extension الجلسة المسجّل الدخول إليها في علامة تبويب لوحة التحكم النشطة لطلب تذكرة WebSocket قصيرة العمر وأحادية الاستخدام. يبقى سياق الصفحة متوقفًا حتى توافق على “مشاركة سياق الصفحة مع هذا الاتصال” لهذا الحساب بالتحديد. تبقى التذكرة في الذاكرة فقط ولا تُخزَّن أبدًا.",
+    "description": "Runtime interface message dashboard.trust_prompt_remote"
+  },
   "runtime_diagnostic_api_authorization_health_detail": {
     "message": "استجاب فحص الصحة، لكن المسارات المحمية للإضافة والنموذج تتطلب Authorization: Bearer ***. الصق مفتاح API أو رمز المتصفح المحدد النطاق في الإعدادات.",
     "description": "Runtime interface message diagnostic.api_authorization_health_detail"
@@ -4127,6 +4135,10 @@
     "message": "الصوت والتنبيه",
     "description": "Runtime interface message settings.categories.voice.title"
   },
+  "runtime_settings_cloud_gateway_help": {
+    "message": "يستخدم Hermes Cloud ميزة Trusted Dashboard Attach. افتح لوحة تحكم الوكيل المسجّل الدخول إليها في علامة التبويب النشطة، ثم اختر “اتصال الاختبار”. يبقى سياق الصفحة متوقفًا حتى توافق على “مشاركة سياق الصفحة مع هذا الاتصال” لحساب Cloud هذا بالتحديد.",
+    "description": "Runtime interface message settings.cloud_gateway_help"
+  },
   "runtime_settings_context_depth_full": {
     "message": "كامل",
     "description": "Runtime interface message settings.context_depth.full"
@@ -4259,6 +4271,42 @@
     "message": "النموذج النشط",
     "description": "Runtime interface message settings.models.title"
   },
+  "runtime_settings_page_context_excluded_detail": {
+    "message": "أصل واحد في كل سطر، مثل https://192.168.8.1:9443 أو https://news.example.com. ينطبق على المواقع العامة والخاصة.",
+    "description": "Runtime interface message settings.page_context_excluded.detail"
+  },
+  "runtime_settings_page_context_excluded_placeholder": {
+    "message": "https://192.168.8.1:9443",
+    "description": "Runtime interface message settings.page_context_excluded.placeholder"
+  },
+  "runtime_settings_page_context_excluded_save_unchanged_title": {
+    "message": "أصول الاستبعاد لم تتغير",
+    "description": "Runtime interface message settings.page_context_excluded.save_unchanged_title"
+  },
+  "runtime_settings_page_context_excluded_title": {
+    "message": "استبعاد هذه الأصول من برامج الصفحة",
+    "description": "Runtime interface message settings.page_context_excluded.title"
+  },
+  "runtime_settings_page_context_private_enable_detail": {
+    "message": "فعّل هذا عندما تريد Assist والاستخراج والمساعدة المضمنة على لوحات الموجه أو مضيفي Tailscale أو عناوين غير عامة أخرى.",
+    "description": "Runtime interface message settings.page_context_private.enable_detail"
+  },
+  "runtime_settings_page_context_private_enable_label": {
+    "message": "تشغيل برامج الصفحة على المواقع الخاصة وLAN",
+    "description": "Runtime interface message settings.page_context_private.enable_label"
+  },
+  "runtime_settings_page_context_private_save_unchanged_title": {
+    "message": "إعداد نص الصفحة الخاص لم يتغير",
+    "description": "Runtime interface message settings.page_context_private.save_unchanged_title"
+  },
+  "runtime_settings_page_context_private_summary": {
+    "message": "يتخطى Hermes افتراضيًا برامج الصفحة على عناوين المنزل والمكتب والموجه حتى تستمر لوحات التحكم ذاتية الاستضافة في العمل. صفحات إطلاق Hermes Web على الحلقة المحلية تستخدم نصوص تسليم خفيفة خاصة بها.",
+    "description": "Runtime interface message settings.page_context_private.summary"
+  },
+  "runtime_settings_page_context_private_title": {
+    "message": "صفحات خاصة وشبكة LAN",
+    "description": "Runtime interface message settings.page_context_private.title"
+  },
   "runtime_settings_permissions_copy": {
     "message": "ما يمكن لـ Hermes تشغيله في متصفحك، وأي الاتصالات يمكنها رؤية سياق الصفحة.",
     "description": "Runtime interface message settings.permissions.copy"
@@ -4270,6 +4318,10 @@
   "runtime_settings_public_alpha_load_unpacked": {
     "message": "· ألفا العامة / تحميل تفكيكها",
     "description": "Runtime interface message settings.public_alpha_load_unpacked"
+  },
+  "runtime_settings_remote_dashboard_setup_hint": {
+    "message": "Trusted Dashboard Attach عبر WebSocket. أبقِ لوحة التحكم المسجّل الدخول إليها علامة التبويب النشطة، ثم استخدم “اتصال الاختبار” للموافقة على أصل HTTPS الخاص بها. يبقى سياق الصفحة متوقفًا حتى توافق على مشاركته مع هذا الاتصال بالتحديد. لا حاجة إلى مفتاح.",
+    "description": "Runtime interface message settings.remote_dashboard_setup_hint"
   },
   "runtime_settings_save_failed": {
     "message": "لم يتم الحفظ: {detail}",
@@ -4331,6 +4383,10 @@
     "message": "{summary} لا يستجيب. ابدأ Hermes Desktop/Gateway، ثم أعد الاتصال.",
     "description": "Runtime interface message status.connection_not_responding"
   },
+  "runtime_status_element_pick_unavailable": {
+    "message": "اختيار العنصر غير متاح",
+    "description": "Runtime interface message status.element_pick_unavailable"
+  },
   "runtime_status_gmail_no_rendered": {
     "message": "لم تتوفر أي نصوص رسائل معروضة.",
     "description": "Runtime interface message status.gmail_no_rendered"
@@ -4347,9 +4403,33 @@
     "message": "الرجوع إلى /v1/models ({error}).",
     "description": "Runtime interface message status.model_registry_fallback"
   },
+  "runtime_status_page_comments_unavailable": {
+    "message": "تعليقات الصفحة غير متاحة",
+    "description": "Runtime interface message status.page_comments_unavailable"
+  },
+  "runtime_status_page_context_capture_blocked": {
+    "message": "لا يمكن التقاط هذه الصفحة.",
+    "description": "Runtime interface message status.page_context_capture_blocked"
+  },
+  "runtime_status_page_context_capture_off": {
+    "message": "سياق الصفحة متوقف لهذا الموقع.",
+    "description": "Runtime interface message status.page_context_capture_off"
+  },
   "runtime_status_page_context_restricted": {
     "message": "{url} - السياق مقيد",
     "description": "Runtime interface message status.page_context_restricted"
+  },
+  "runtime_status_page_context_skipped": {
+    "message": "{url} — تم تخطي سياق الصفحة لأن Hermes لم يحقن البرامج على هذه الصفحة.",
+    "description": "Runtime interface message status.page_context_skipped"
+  },
+  "runtime_status_page_context_skipped_excluded": {
+    "message": "{url} — أبقى Hermes برامج الصفحة متوقفة لهذا الموقع لأنه في قائمة الاستبعاد في الإعدادات → الأذونات.",
+    "description": "Runtime interface message status.page_context_skipped_excluded"
+  },
+  "runtime_status_page_context_skipped_private": {
+    "message": "{url} — لم يحقن Hermes برامج الصفحة على هذا العنوان الخاص أو LAN. فعّل برامج الصفحة الخاصة في الإعدادات → الأذونات، أو أزل الأصل من قائمة الاستبعاد.",
+    "description": "Runtime interface message status.page_context_skipped_private"
   },
   "runtime_status_profile_selected_restart": {
     "message": "تم تحديد {profile}. أعد تشغيل بوابة Hermes إذا لم يتغير الملف التعريفي قيد التشغيل فورًا.",
@@ -6264,7 +6344,7 @@
     "description": "Runtime interface message ui.hermes.cloud"
   },
   "runtime_ui_hermes_cloud_preview": {
-    "message": "Hermes Cloud Preview",
+    "message": "Hermes Cloud",
     "description": "Runtime interface message ui.hermes.cloud.preview"
   },
   "runtime_ui_hermes_cloud_unavailable": {
@@ -7271,6 +7351,14 @@
     "message": "صفحة",
     "description": "Runtime interface message ui.page"
   },
+  "runtime_ui_page_context_off_chip": {
+    "message": "📎 سياق الصفحة متوقف لهذا الموقع",
+    "description": "Runtime interface message ui.page_context_off_chip"
+  },
+  "runtime_ui_page_context_skipped": {
+    "message": "تم تخطي سياق الصفحة",
+    "description": "Runtime interface message ui.page_context_skipped"
+  },
   "runtime_ui_page_comments": {
     "message": "Page comments",
     "description": "Runtime interface message ui.page.comments"
@@ -7368,7 +7456,7 @@
     "description": "Runtime interface message ui.preferences"
   },
   "runtime_ui_prefers_hermes_native_wake_engine_locally_and_uses_chromium_on_42c1439e": {
-    "message": "يفضل محرك التنبيه الأصلي Hermes محليًا ويستخدم كلام المتصفح المتوفر على الجهاز لـ Cloud Preview.",
+    "message": "يفضل محرك التنبيه الأصلي Hermes محليًا ويستخدم كلام المتصفح المتوفر على الجهاز لـ Hermes Cloud.",
     "description": "Runtime interface message ui.prefers.hermes.native.wake.engine.locally.and.uses.chromium.on.42c1439e"
   },
   "runtime_ui_preparing_on_device_dictation": {
@@ -7692,7 +7780,7 @@
     "description": "Runtime interface message ui.required"
   },
   "runtime_ui_required_for_cloud_preview_and_older_hermes_builds_it_refuses_c_f0bdad5b": {
-    "message": "مطلوب لإصدارات Cloud Preview والإصدارات الأقدم من Hermes. يرفض التعرف على الكلام السحابي.",
+    "message": "مطلوب لإصدارات Hermes Cloud والإصدارات الأقدم من Hermes. يرفض التعرف على الكلام السحابي.",
     "description": "Runtime interface message ui.required.for.cloud.preview.and.older.hermes.builds.it.refuses.c.f0bdad5b"
   },
   "runtime_ui_rerun": {

@@ -2595,6 +2595,14 @@
     "message": "テーマに検証エラーがあります。",
     "description": "Runtime interface message custom_theme.validation_errors"
   },
+  "runtime_dashboard_trust_prompt_local": {
+    "message": "Dashboard Attach で {origin} を信頼しますか？\n\nHermes Browser Extension は、アクティブなダッシュボードタブのサインイン済みセッションを使って、短時間有効な使い捨ての WebSocket チケットを要求します。このダッシュボードはこのコンピューター上で動作しているため、パネルで選択したページコンテキストは接続ごとの個別承認なしで共有されます。チケットはメモリ内にのみ保持され、保存されることはありません。",
+    "description": "Runtime interface message dashboard.trust_prompt_local"
+  },
+  "runtime_dashboard_trust_prompt_remote": {
+    "message": "Dashboard Attach で {origin} を信頼しますか？\n\nHermes Browser Extension は、アクティブなダッシュボードタブのサインイン済みセッションを使って、短時間有効な使い捨ての WebSocket チケットを要求します。このアカウントで「この接続とページコンテキストを共有」を承認するまで、ページコンテキストはオフのままです。チケットはメモリ内にのみ保持され、保存されることはありません。",
+    "description": "Runtime interface message dashboard.trust_prompt_remote"
+  },
   "runtime_diagnostic_api_authorization_health_detail": {
     "message": "ヘルスチェックは応答しましたが、保護された拡張機能/モデルルートには Authorization: Bearer *** が必要です。API キーまたはスコープ付きブラウザトークンを設定に貼り付けてください。",
     "description": "Runtime interface message diagnostic.api_authorization_health_detail"
@@ -4127,6 +4135,10 @@
     "message": "音声とウェイク",
     "description": "Runtime interface message settings.categories.voice.title"
   },
+  "runtime_settings_cloud_gateway_help": {
+    "message": "Hermes Cloud は Trusted Dashboard Attach を使用します。サインイン済みのエージェントダッシュボードをアクティブなタブで開き、「テスト接続」を選択してください。この Cloud アカウントで「この接続とページコンテキストを共有」を承認するまで、ページコンテキストはオフのままです。",
+    "description": "Runtime interface message settings.cloud_gateway_help"
+  },
   "runtime_settings_context_depth_full": {
     "message": "完全",
     "description": "Runtime interface message settings.context_depth.full"
@@ -4259,6 +4271,42 @@
     "message": "使用中のモデル",
     "description": "Runtime interface message settings.models.title"
   },
+  "runtime_settings_page_context_excluded_detail": {
+    "message": "1 行に 1 オリジン。例: https://192.168.8.1:9443 または https://news.example.com. 公開・プライベートの両方に適用されます。",
+    "description": "Runtime interface message settings.page_context_excluded.detail"
+  },
+  "runtime_settings_page_context_excluded_placeholder": {
+    "message": "https://192.168.8.1:9443",
+    "description": "Runtime interface message settings.page_context_excluded.placeholder"
+  },
+  "runtime_settings_page_context_excluded_save_unchanged_title": {
+    "message": "除外オリジンは変更されていません",
+    "description": "Runtime interface message settings.page_context_excluded.save_unchanged_title"
+  },
+  "runtime_settings_page_context_excluded_title": {
+    "message": "これらのオリジンをページスクリプトから除外",
+    "description": "Runtime interface message settings.page_context_excluded.title"
+  },
+  "runtime_settings_page_context_private_enable_detail": {
+    "message": "ルーターダッシュボード、Tailscale ホスト、その他の非公開アドレスで Assist・抽出・インラインヘルプが必要なときにオンにします。",
+    "description": "Runtime interface message settings.page_context_private.enable_detail"
+  },
+  "runtime_settings_page_context_private_enable_label": {
+    "message": "プライベートおよび LAN サイトでページスクリプトを実行",
+    "description": "Runtime interface message settings.page_context_private.enable_label"
+  },
+  "runtime_settings_page_context_private_save_unchanged_title": {
+    "message": "プライベートページのスクリプト設定は変更されていません",
+    "description": "Runtime interface message settings.page_context_private.save_unchanged_title"
+  },
+  "runtime_settings_page_context_private_summary": {
+    "message": "Hermes は既定で自宅・オフィス・ルーターアドレスではページスクリプトをスキップし、自己ホストのダッシュボードが描画され続けます。ループバックの Hermes Web 起動ページは独自の軽量ハンドオフスクリプトを使います。",
+    "description": "Runtime interface message settings.page_context_private.summary"
+  },
+  "runtime_settings_page_context_private_title": {
+    "message": "プライベートおよび LAN ページ",
+    "description": "Runtime interface message settings.page_context_private.title"
+  },
   "runtime_settings_permissions_copy": {
     "message": "Hermes がブラウザーで操作できる内容と、ページコンテキストを参照できる接続。",
     "description": "Runtime interface message settings.permissions.copy"
@@ -4270,6 +4318,10 @@
   "runtime_settings_public_alpha_load_unpacked": {
     "message": "· パブリックアルファ / 解凍されたロード",
     "description": "Runtime interface message settings.public_alpha_load_unpacked"
+  },
+  "runtime_settings_remote_dashboard_setup_hint": {
+    "message": "WebSocket 経由の Trusted Dashboard Attach。サインイン済みのダッシュボードをアクティブなタブにしたまま、「テスト接続」でその HTTPS オリジンを承認してください。この接続との共有を承認するまで、ページコンテキストはオフのままです。キーは不要です。",
+    "description": "Runtime interface message settings.remote_dashboard_setup_hint"
   },
   "runtime_settings_save_failed": {
     "message": "保存できませんでした: {detail}",
@@ -4331,6 +4383,10 @@
     "message": "{summary} は応答していません。Hermes Desktop/Gateway を開始してから、再接続してください。",
     "description": "Runtime interface message status.connection_not_responding"
   },
+  "runtime_status_element_pick_unavailable": {
+    "message": "要素の選択は利用できません",
+    "description": "Runtime interface message status.element_pick_unavailable"
+  },
   "runtime_status_gmail_no_rendered": {
     "message": "レンダリングされたメッセージ本文は利用できませんでした。",
     "description": "Runtime interface message status.gmail_no_rendered"
@@ -4347,9 +4403,33 @@
     "message": "/v1/models にフォールバックしています（{error}）。",
     "description": "Runtime interface message status.model_registry_fallback"
   },
+  "runtime_status_page_comments_unavailable": {
+    "message": "ページコメントは利用できません",
+    "description": "Runtime interface message status.page_comments_unavailable"
+  },
+  "runtime_status_page_context_capture_blocked": {
+    "message": "このページはキャプチャできません。",
+    "description": "Runtime interface message status.page_context_capture_blocked"
+  },
+  "runtime_status_page_context_capture_off": {
+    "message": "このサイトではページコンテキストがオフです。",
+    "description": "Runtime interface message status.page_context_capture_off"
+  },
   "runtime_status_page_context_restricted": {
     "message": "{url} - コンテキストが制限されています",
     "description": "Runtime interface message status.page_context_restricted"
+  },
+  "runtime_status_page_context_skipped": {
+    "message": "{url} — このページに Hermes がスクリプトを注入しなかったため、ページコンテキストをスキップしました。",
+    "description": "Runtime interface message status.page_context_skipped"
+  },
+  "runtime_status_page_context_skipped_excluded": {
+    "message": "{url} — Hermesは設定 → 権限の除外リストに含まれるため、このサイトではページスクリプトはオフのままです。",
+    "description": "Runtime interface message status.page_context_skipped_excluded"
+  },
+  "runtime_status_page_context_skipped_private": {
+    "message": "{url} — このプライベートまたは LAN アドレスでは Hermes はページスクリプトを注入しませんでした。設定 → 権限でプライベートページスクリプトをオンにするか、除外リストからオリジンを削除してください。",
+    "description": "Runtime interface message status.page_context_skipped_private"
   },
   "runtime_status_profile_selected_restart": {
     "message": "{profile} を選択しました。実行中のプロファイルがすぐに切り替わらない場合は、Hermes ゲートウェイを再起動してください。",
@@ -6264,7 +6344,7 @@
     "description": "Runtime interface message ui.hermes.cloud"
   },
   "runtime_ui_hermes_cloud_preview": {
-    "message": "Hermes Cloud Preview",
+    "message": "Hermes Cloud",
     "description": "Runtime interface message ui.hermes.cloud.preview"
   },
   "runtime_ui_hermes_cloud_unavailable": {
@@ -7271,6 +7351,14 @@
     "message": "ページ",
     "description": "Runtime interface message ui.page"
   },
+  "runtime_ui_page_context_off_chip": {
+    "message": "📎 このサイトではページコンテキストオフ",
+    "description": "Runtime interface message ui.page_context_off_chip"
+  },
+  "runtime_ui_page_context_skipped": {
+    "message": "ページコンテキストをスキップ",
+    "description": "Runtime interface message ui.page_context_skipped"
+  },
   "runtime_ui_page_comments": {
     "message": "Page comments",
     "description": "Runtime interface message ui.page.comments"
@@ -7368,7 +7456,7 @@
     "description": "Runtime interface message ui.preferences"
   },
   "runtime_ui_prefers_hermes_native_wake_engine_locally_and_uses_chromium_on_42c1439e": {
-    "message": "Hermes のネイティブ wake エンジンをローカルで優先し、 Cloud Preview に利用可能なオンデバイス ブラウザ音声を使用します。",
+    "message": "Hermes のネイティブ wake エンジンをローカルで優先し、 Hermes Cloud に利用可能なオンデバイス ブラウザ音声を使用します。",
     "description": "Runtime interface message ui.prefers.hermes.native.wake.engine.locally.and.uses.chromium.on.42c1439e"
   },
   "runtime_ui_preparing_on_device_dictation": {
@@ -7692,7 +7780,7 @@
     "description": "Runtime interface message ui.required"
   },
   "runtime_ui_required_for_cloud_preview_and_older_hermes_builds_it_refuses_c_f0bdad5b": {
-    "message": "Cloud Preview および古い Hermes ビルドに必要です。クラウド音声認識を拒否します。",
+    "message": "Hermes Cloud および古い Hermes ビルドに必要です。クラウド音声認識を拒否します。",
     "description": "Runtime interface message ui.required.for.cloud.preview.and.older.hermes.builds.it.refuses.c.f0bdad5b"
   },
   "runtime_ui_rerun": {

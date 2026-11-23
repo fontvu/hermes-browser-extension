@@ -2595,6 +2595,14 @@
     "message": "Le thème contient des erreurs de validation.",
     "description": "Runtime interface message custom_theme.validation_errors"
   },
+  "runtime_dashboard_trust_prompt_local": {
+    "message": "Faire confiance à {origin} pour Dashboard Attach ?\n\nHermes Browser Extension utilisera la session connectée de votre onglet de tableau de bord actif pour demander un ticket WebSocket à usage unique et de courte durée. Ce tableau de bord s’exécute sur cet ordinateur : le contexte de la page que vous choisissez dans le panneau est donc partagé avec lui sans approbation distincte par connexion. Le ticket reste uniquement en mémoire et n’est jamais enregistré.",
+    "description": "Runtime interface message dashboard.trust_prompt_local"
+  },
+  "runtime_dashboard_trust_prompt_remote": {
+    "message": "Faire confiance à {origin} pour Dashboard Attach ?\n\nHermes Browser Extension utilisera la session connectée de votre onglet de tableau de bord actif pour demander un ticket WebSocket à usage unique et de courte durée. Le contexte de la page reste désactivé jusqu’à ce que vous approuviez « Partager le contexte de la page avec cette connexion » pour ce compte précis. Le ticket reste uniquement en mémoire et n’est jamais enregistré.",
+    "description": "Runtime interface message dashboard.trust_prompt_remote"
+  },
   "runtime_diagnostic_api_authorization_health_detail": {
     "message": "La vérification d’état a répondu, mais les routes protégées de l’extension et du modèle nécessitent Authorization: Bearer ***. Collez la clé API ou le jeton de navigateur à portée limitée dans les Paramètres.",
     "description": "Runtime interface message diagnostic.api_authorization_health_detail"
@@ -4127,6 +4135,10 @@
     "message": "Voix & réveil",
     "description": "Runtime interface message settings.categories.voice.title"
   },
+  "runtime_settings_cloud_gateway_help": {
+    "message": "Hermes Cloud utilise Trusted Dashboard Attach. Ouvrez le tableau de bord de l’agent connecté dans l’onglet actif, puis choisissez « Tester la connexion ». Le contexte de la page reste désactivé jusqu’à ce que vous approuviez « Partager le contexte de la page avec cette connexion » pour ce compte Cloud précis.",
+    "description": "Runtime interface message settings.cloud_gateway_help"
+  },
   "runtime_settings_context_depth_full": {
     "message": "Complet",
     "description": "Runtime interface message settings.context_depth.full"
@@ -4259,6 +4271,42 @@
     "message": "Modèle actif",
     "description": "Runtime interface message settings.models.title"
   },
+  "runtime_settings_page_context_excluded_detail": {
+    "message": "Une origine par ligne, p. ex. https://192.168.8.1:9443 ou https://news.example.com. S’applique aux sites publics et privés.",
+    "description": "Runtime interface message settings.page_context_excluded.detail"
+  },
+  "runtime_settings_page_context_excluded_placeholder": {
+    "message": "https://192.168.8.1:9443",
+    "description": "Runtime interface message settings.page_context_excluded.placeholder"
+  },
+  "runtime_settings_page_context_excluded_save_unchanged_title": {
+    "message": "Origines exclues inchangées",
+    "description": "Runtime interface message settings.page_context_excluded.save_unchanged_title"
+  },
+  "runtime_settings_page_context_excluded_title": {
+    "message": "Exclure ces origines des scripts de page",
+    "description": "Runtime interface message settings.page_context_excluded.title"
+  },
+  "runtime_settings_page_context_private_enable_detail": {
+    "message": "Activez cette option pour Assist, l’extraction et l’aide inline sur les tableaux de bord routeur, les hôtes Tailscale ou d’autres adresses non publiques.",
+    "description": "Runtime interface message settings.page_context_private.enable_detail"
+  },
+  "runtime_settings_page_context_private_enable_label": {
+    "message": "Exécuter les scripts de page sur les sites privés et LAN",
+    "description": "Runtime interface message settings.page_context_private.enable_label"
+  },
+  "runtime_settings_page_context_private_save_unchanged_title": {
+    "message": "Paramètre de script de page privée inchangé",
+    "description": "Runtime interface message settings.page_context_private.save_unchanged_title"
+  },
+  "runtime_settings_page_context_private_summary": {
+    "message": "Hermes ignore par défaut ses scripts de page sur les adresses maison, bureau et routeur afin que les tableaux de bord auto-hébergés continuent de s’afficher. Les pages de lancement Hermes Web en loopback utilisent leurs propres scripts légers.",
+    "description": "Runtime interface message settings.page_context_private.summary"
+  },
+  "runtime_settings_page_context_private_title": {
+    "message": "Pages privées et LAN",
+    "description": "Runtime interface message settings.page_context_private.title"
+  },
   "runtime_settings_permissions_copy": {
     "message": "Ce que Hermes peut piloter dans votre navigateur, et quelles connexions peuvent voir le contexte de page.",
     "description": "Runtime interface message settings.permissions.copy"
@@ -4270,6 +4318,10 @@
   "runtime_settings_public_alpha_load_unpacked": {
     "message": "· alpha publique / charger l’extension non empaquetée",
     "description": "Runtime interface message settings.public_alpha_load_unpacked"
+  },
+  "runtime_settings_remote_dashboard_setup_hint": {
+    "message": "Trusted Dashboard Attach via WebSocket. Gardez le tableau de bord connecté comme onglet actif, puis utilisez « Tester la connexion » pour approuver son origine HTTPS. Le contexte de la page reste désactivé jusqu’à ce que vous approuviez son partage avec cette connexion précise. Aucune clé nécessaire.",
+    "description": "Runtime interface message settings.remote_dashboard_setup_hint"
   },
   "runtime_settings_save_failed": {
     "message": "Non enregistré : {detail}",
@@ -4331,6 +4383,10 @@
     "message": "{summary} ne répond pas. Démarrez Hermes Desktop/Gateway, puis reconnectez-vous.",
     "description": "Runtime interface message status.connection_not_responding"
   },
+  "runtime_status_element_pick_unavailable": {
+    "message": "Sélection d’élément indisponible",
+    "description": "Runtime interface message status.element_pick_unavailable"
+  },
   "runtime_status_gmail_no_rendered": {
     "message": "Aucun corps de message rendu n’était disponible.",
     "description": "Runtime interface message status.gmail_no_rendered"
@@ -4347,9 +4403,33 @@
     "message": "Repli vers /v1/models ({error}).",
     "description": "Runtime interface message status.model_registry_fallback"
   },
+  "runtime_status_page_comments_unavailable": {
+    "message": "Commentaires de page indisponibles",
+    "description": "Runtime interface message status.page_comments_unavailable"
+  },
+  "runtime_status_page_context_capture_blocked": {
+    "message": "Cette page ne peut pas être capturée.",
+    "description": "Runtime interface message status.page_context_capture_blocked"
+  },
+  "runtime_status_page_context_capture_off": {
+    "message": "Le contexte de page est désactivé pour ce site.",
+    "description": "Runtime interface message status.page_context_capture_off"
+  },
   "runtime_status_page_context_restricted": {
     "message": "{url} - contexte restreint",
     "description": "Runtime interface message status.page_context_restricted"
+  },
+  "runtime_status_page_context_skipped": {
+    "message": "{url} — Le contexte de page a été ignoré car Hermes n’a pas injecté de scripts sur cette page.",
+    "description": "Runtime interface message status.page_context_skipped"
+  },
+  "runtime_status_page_context_skipped_excluded": {
+    "message": "{url} — Hermes a laissé les scripts de page désactivés pour ce site car il figure sur votre liste d’exclusion dans Paramètres → Autorisations.",
+    "description": "Runtime interface message status.page_context_skipped_excluded"
+  },
+  "runtime_status_page_context_skipped_private": {
+    "message": "{url} — Hermes n’a pas injecté de scripts de page sur cette adresse privée ou LAN. Activez les scripts privés dans Paramètres → Autorisations, ou retirez l’origine de la liste d’exclusion.",
+    "description": "Runtime interface message status.page_context_skipped_private"
   },
   "runtime_status_profile_selected_restart": {
     "message": "{profile} sélectionné. Redémarrez la passerelle Hermes si le profil en cours d’exécution ne change pas immédiatement.",
@@ -6264,7 +6344,7 @@
     "description": "Runtime interface message ui.hermes.cloud"
   },
   "runtime_ui_hermes_cloud_preview": {
-    "message": "Hermes Cloud Preview",
+    "message": "Hermes Cloud",
     "description": "Runtime interface message ui.hermes.cloud.preview"
   },
   "runtime_ui_hermes_cloud_unavailable": {
@@ -7271,6 +7351,14 @@
     "message": "Page",
     "description": "Runtime interface message ui.page"
   },
+  "runtime_ui_page_context_off_chip": {
+    "message": "📎 Contexte de page désactivé pour ce site",
+    "description": "Runtime interface message ui.page_context_off_chip"
+  },
+  "runtime_ui_page_context_skipped": {
+    "message": "Contexte de page ignoré",
+    "description": "Runtime interface message ui.page_context_skipped"
+  },
   "runtime_ui_page_comments": {
     "message": "Page comments",
     "description": "Runtime interface message ui.page.comments"
@@ -7368,7 +7456,7 @@
     "description": "Runtime interface message ui.preferences"
   },
   "runtime_ui_prefers_hermes_native_wake_engine_locally_and_uses_chromium_on_42c1439e": {
-    "message": "Préfère le moteur de réveil natif de Hermes localement et utilise la parole du navigateur disponible sur l'appareil pour Cloud Preview .",
+    "message": "Préfère le moteur de réveil natif de Hermes localement et utilise la parole du navigateur disponible sur l'appareil pour Hermes Cloud.",
     "description": "Runtime interface message ui.prefers.hermes.native.wake.engine.locally.and.uses.chromium.on.42c1439e"
   },
   "runtime_ui_preparing_on_device_dictation": {
@@ -7692,7 +7780,7 @@
     "description": "Runtime interface message ui.required"
   },
   "runtime_ui_required_for_cloud_preview_and_older_hermes_builds_it_refuses_c_f0bdad5b": {
-    "message": "Requis pour Cloud Preview et les anciennes versions de Hermes. Il refuse la reconnaissance vocale dans le cloud.",
+    "message": "Requis pour Hermes Cloud et les anciennes versions de Hermes. Il refuse la reconnaissance vocale dans le cloud.",
     "description": "Runtime interface message ui.required.for.cloud.preview.and.older.hermes.builds.it.refuses.c.f0bdad5b"
   },
   "runtime_ui_rerun": {

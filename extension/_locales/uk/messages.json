@@ -2595,6 +2595,14 @@
     "message": "У темі є помилки перевірки.",
     "description": "Runtime interface message custom_theme.validation_errors"
   },
+  "runtime_dashboard_trust_prompt_local": {
+    "message": "Довіряти {origin} для Dashboard Attach?\n\nHermes Browser Extension використає сеанс із виконаним входом в активній вкладці панелі, щоб запросити короткочасний одноразовий квиток WebSocket. Ця панель працює на цьому комп’ютері, тому вибраний у боковій панелі контекст сторінки передається їй без окремого схвалення для кожного підключення. Квиток зберігається лише в пам’яті й ніколи не записується.",
+    "description": "Runtime interface message dashboard.trust_prompt_local"
+  },
+  "runtime_dashboard_trust_prompt_remote": {
+    "message": "Довіряти {origin} для Dashboard Attach?\n\nHermes Browser Extension використає сеанс із виконаним входом в активній вкладці панелі, щоб запросити короткочасний одноразовий квиток WebSocket. Контекст сторінки залишається вимкненим, доки ви не схвалите «Ділитися контекстом сторінки з цим підключенням» саме для цього облікового запису. Квиток зберігається лише в пам’яті й ніколи не записується.",
+    "description": "Runtime interface message dashboard.trust_prompt_remote"
+  },
   "runtime_diagnostic_api_authorization_health_detail": {
     "message": "Перевірка стану відповіла, але захищені маршрути розширення та моделей потребують Authorization: Bearer *** Вставте ключ API або браузерний токен з обмеженою областю дії в Налаштування.",
     "description": "Runtime interface message diagnostic.api_authorization_health_detail"
@@ -4127,6 +4135,10 @@
     "message": "Голос і активація",
     "description": "Runtime interface message settings.categories.voice.title"
   },
+  "runtime_settings_cloud_gateway_help": {
+    "message": "Hermes Cloud використовує Trusted Dashboard Attach. Відкрийте панель агента, у якій виконано вхід, в активній вкладці, а потім виберіть «Тестове підключення». Контекст сторінки залишається вимкненим, доки ви не схвалите «Ділитися контекстом сторінки з цим підключенням» саме для цього облікового запису Cloud.",
+    "description": "Runtime interface message settings.cloud_gateway_help"
+  },
   "runtime_settings_context_depth_full": {
     "message": "Повністю",
     "description": "Runtime interface message settings.context_depth.full"
@@ -4259,6 +4271,42 @@
     "message": "Активна модель",
     "description": "Runtime interface message settings.models.title"
   },
+  "runtime_settings_page_context_excluded_detail": {
+    "message": "Одне джерело в рядку, напр. https://192.168.8.1:9443 або https://news.example.com. Застосовується на публічних і приватних сайтах.",
+    "description": "Runtime interface message settings.page_context_excluded.detail"
+  },
+  "runtime_settings_page_context_excluded_placeholder": {
+    "message": "https://192.168.8.1:9443",
+    "description": "Runtime interface message settings.page_context_excluded.placeholder"
+  },
+  "runtime_settings_page_context_excluded_save_unchanged_title": {
+    "message": "Виключені джерела не змінилися",
+    "description": "Runtime interface message settings.page_context_excluded.save_unchanged_title"
+  },
+  "runtime_settings_page_context_excluded_title": {
+    "message": "Виключити ці джерела зі скриптів сторінок",
+    "description": "Runtime interface message settings.page_context_excluded.title"
+  },
+  "runtime_settings_page_context_private_enable_detail": {
+    "message": "Увімкніть, коли потрібні Assist, витяг і вбудована допомога на панелях маршрутизатора, хостах Tailscale чи інших непублічних адресах.",
+    "description": "Runtime interface message settings.page_context_private.enable_detail"
+  },
+  "runtime_settings_page_context_private_enable_label": {
+    "message": "Запускати скрипти сторінок на приватних сайтах і LAN",
+    "description": "Runtime interface message settings.page_context_private.enable_label"
+  },
+  "runtime_settings_page_context_private_save_unchanged_title": {
+    "message": "Налаштування скриптів приватних сторінок не змінилося",
+    "description": "Runtime interface message settings.page_context_private.save_unchanged_title"
+  },
+  "runtime_settings_page_context_private_summary": {
+    "message": "Hermes за замовчуванням пропускає скрипти сторінок на домашніх, офісних і маршрутизаторних адресах, щоб самохостингові панелі й надалі відображалися. Сторінки запуску Hermes Web на loopback використовують власні легкі скрипти передачі.",
+    "description": "Runtime interface message settings.page_context_private.summary"
+  },
+  "runtime_settings_page_context_private_title": {
+    "message": "Приватні сторінки та LAN",
+    "description": "Runtime interface message settings.page_context_private.title"
+  },
   "runtime_settings_permissions_copy": {
     "message": "Чим Hermes може керувати в браузері та які підключення можуть бачити контекст сторінки.",
     "description": "Runtime interface message settings.permissions.copy"
@@ -4270,6 +4318,10 @@
   "runtime_settings_public_alpha_load_unpacked": {
     "message": "· публічна альфа-версія / завантажити розпаковане",
     "description": "Runtime interface message settings.public_alpha_load_unpacked"
+  },
+  "runtime_settings_remote_dashboard_setup_hint": {
+    "message": "Trusted Dashboard Attach через WebSocket. Залиште панель, у якій виконано вхід, активною вкладкою, а потім натисніть «Тестове підключення», щоб схвалити її джерело HTTPS. Контекст сторінки залишається вимкненим, доки ви не схвалите передавання саме цьому підключенню. Ключ не потрібен.",
+    "description": "Runtime interface message settings.remote_dashboard_setup_hint"
   },
   "runtime_settings_save_failed": {
     "message": "Не збережено: {detail}",
@@ -4331,6 +4383,10 @@
     "message": "{summary} не відповідає. Запустіть Hermes Desktop/Gateway, а потім підключіться знову.",
     "description": "Runtime interface message status.connection_not_responding"
   },
+  "runtime_status_element_pick_unavailable": {
+    "message": "Вибір елемента недоступний",
+    "description": "Runtime interface message status.element_pick_unavailable"
+  },
   "runtime_status_gmail_no_rendered": {
     "message": "Немає доступних відрендерених тіл повідомлень.",
     "description": "Runtime interface message status.gmail_no_rendered"
@@ -4347,9 +4403,33 @@
     "message": "Повернення до /v1/models ({error}).",
     "description": "Runtime interface message status.model_registry_fallback"
   },
+  "runtime_status_page_comments_unavailable": {
+    "message": "Коментарі сторінки недоступні",
+    "description": "Runtime interface message status.page_comments_unavailable"
+  },
+  "runtime_status_page_context_capture_blocked": {
+    "message": "Цю сторінку не можна захопити.",
+    "description": "Runtime interface message status.page_context_capture_blocked"
+  },
+  "runtime_status_page_context_capture_off": {
+    "message": "Контекст сторінки вимкнено для цього сайту.",
+    "description": "Runtime interface message status.page_context_capture_off"
+  },
   "runtime_status_page_context_restricted": {
     "message": "{url} - контекст обмежено",
     "description": "Runtime interface message status.page_context_restricted"
+  },
+  "runtime_status_page_context_skipped": {
+    "message": "{url} — Контекст сторінки пропущено, бо Hermes не інжектував скрипти на цій сторінці.",
+    "description": "Runtime interface message status.page_context_skipped"
+  },
+  "runtime_status_page_context_skipped_excluded": {
+    "message": "{url} — Hermes лишив скрипти сторінок вимкненими для цього сайту, бо він у списку виключень у Налаштування → Дозволи.",
+    "description": "Runtime interface message status.page_context_skipped_excluded"
+  },
+  "runtime_status_page_context_skipped_private": {
+    "message": "{url} — Hermes не інжектував скрипти сторінок на цій приватній або LAN-адресі. Увімкніть приватні скрипти в Налаштування → Дозволи або приберіть джерело зі списку виключень.",
+    "description": "Runtime interface message status.page_context_skipped_private"
   },
   "runtime_status_profile_selected_restart": {
     "message": "Вибрано {profile}. Перезапустіть шлюз Hermes, якщо активний профіль не зміниться відразу.",
@@ -6264,7 +6344,7 @@
     "description": "Runtime interface message ui.hermes.cloud"
   },
   "runtime_ui_hermes_cloud_preview": {
-    "message": "Hermes Cloud Попередній перегляд",
+    "message": "Hermes Cloud",
     "description": "Runtime interface message ui.hermes.cloud.preview"
   },
   "runtime_ui_hermes_cloud_unavailable": {
@@ -7271,6 +7351,14 @@
     "message": "Сторінка",
     "description": "Runtime interface message ui.page"
   },
+  "runtime_ui_page_context_off_chip": {
+    "message": "📎 Контекст сторінки вимкнено для цього сайту",
+    "description": "Runtime interface message ui.page_context_off_chip"
+  },
+  "runtime_ui_page_context_skipped": {
+    "message": "Контекст сторінки пропущено",
+    "description": "Runtime interface message ui.page_context_skipped"
+  },
   "runtime_ui_page_comments": {
     "message": "Page comments",
     "description": "Runtime interface message ui.page.comments"
@@ -7368,7 +7456,7 @@
     "description": "Runtime interface message ui.preferences"
   },
   "runtime_ui_prefers_hermes_native_wake_engine_locally_and_uses_chromium_on_42c1439e": {
-    "message": "Віддає перевагу локальному механізму пробудження Hermes і використовує доступне мовлення браузера на пристрої для Cloud Preview.",
+    "message": "Віддає перевагу локальному механізму пробудження Hermes і використовує доступне мовлення браузера на пристрої для Hermes Cloud.",
     "description": "Runtime interface message ui.prefers.hermes.native.wake.engine.locally.and.uses.chromium.on.42c1439e"
   },
   "runtime_ui_preparing_on_device_dictation": {
@@ -7692,7 +7780,7 @@
     "description": "Runtime interface message ui.required"
   },
   "runtime_ui_required_for_cloud_preview_and_older_hermes_builds_it_refuses_c_f0bdad5b": {
-    "message": "Необхідно для збірок Cloud Preview і старіших Hermes. Він відмовляється розпізнавати мовлення в хмарі.",
+    "message": "Необхідно для збірок Hermes Cloud і старіших Hermes. Він відмовляється розпізнавати мовлення в хмарі.",
     "description": "Runtime interface message ui.required.for.cloud.preview.and.older.hermes.builds.it.refuses.c.f0bdad5b"
   },
   "runtime_ui_rerun": {

@@ -2595,6 +2595,14 @@
     "message": "主题存在验证错误。",
     "description": "Runtime interface message custom_theme.validation_errors"
   },
+  "runtime_dashboard_trust_prompt_local": {
+    "message": "是否信任 {origin} 用于 Dashboard Attach？\n\nHermes Browser Extension 将使用活动仪表板标签页中的已登录会话，请求一个短期有效、仅可使用一次的 WebSocket 票据。此仪表板运行在这台计算机上，因此您在面板中选择的页面上下文会与其共享，无需单独的逐连接批准。票据仅保存在内存中，从不存储。",
+    "description": "Runtime interface message dashboard.trust_prompt_local"
+  },
+  "runtime_dashboard_trust_prompt_remote": {
+    "message": "是否信任 {origin} 用于 Dashboard Attach？\n\nHermes Browser Extension 将使用活动仪表板标签页中的已登录会话，请求一个短期有效、仅可使用一次的 WebSocket 票据。在您为这个确切账户批准“与此连接共享页面上下文”之前，页面上下文保持关闭。票据仅保存在内存中，从不存储。",
+    "description": "Runtime interface message dashboard.trust_prompt_remote"
+  },
   "runtime_diagnostic_api_authorization_health_detail": {
     "message": "Health 已响应，但受保护的扩展/模型路由需要 Authorization: Bearer ***。请在设置中粘贴 API key 或限定范围的浏览器令牌。",
     "description": "Runtime interface message diagnostic.api_authorization_health_detail"
@@ -4127,6 +4135,10 @@
     "message": "语音与唤醒",
     "description": "Runtime interface message settings.categories.voice.title"
   },
+  "runtime_settings_cloud_gateway_help": {
+    "message": "Hermes Cloud 使用 Trusted Dashboard Attach。在活动标签页中打开已登录的智能体仪表板，然后选择“测试连接”。在您为这个确切的 Cloud 账户批准“与此连接共享页面上下文”之前，页面上下文保持关闭。",
+    "description": "Runtime interface message settings.cloud_gateway_help"
+  },
   "runtime_settings_context_depth_full": {
     "message": "完整",
     "description": "Runtime interface message settings.context_depth.full"
@@ -4259,6 +4271,42 @@
     "message": "当前模型",
     "description": "Runtime interface message settings.models.title"
   },
+  "runtime_settings_page_context_excluded_detail": {
+    "message": "每行一个来源，例如 https://192.168.8.1:9443 或 https://news.example.com. 适用于公开和私有站点。",
+    "description": "Runtime interface message settings.page_context_excluded.detail"
+  },
+  "runtime_settings_page_context_excluded_placeholder": {
+    "message": "https://192.168.8.1:9443",
+    "description": "Runtime interface message settings.page_context_excluded.placeholder"
+  },
+  "runtime_settings_page_context_excluded_save_unchanged_title": {
+    "message": "排除的来源未更改",
+    "description": "Runtime interface message settings.page_context_excluded.save_unchanged_title"
+  },
+  "runtime_settings_page_context_excluded_title": {
+    "message": "从页面脚本中排除这些来源",
+    "description": "Runtime interface message settings.page_context_excluded.title"
+  },
+  "runtime_settings_page_context_private_enable_detail": {
+    "message": "在路由器仪表板、Tailscale 主机或其他非公开地址上需要 Assist、提取和内联帮助时开启。",
+    "description": "Runtime interface message settings.page_context_private.enable_detail"
+  },
+  "runtime_settings_page_context_private_enable_label": {
+    "message": "在私有和 LAN 站点上运行页面脚本",
+    "description": "Runtime interface message settings.page_context_private.enable_label"
+  },
+  "runtime_settings_page_context_private_save_unchanged_title": {
+    "message": "私有页面脚本设置未更改",
+    "description": "Runtime interface message settings.page_context_private.save_unchanged_title"
+  },
+  "runtime_settings_page_context_private_summary": {
+    "message": "Hermes 默认在家用、办公和路由器地址上跳过页面脚本，以便自托管仪表板继续渲染。回环 Hermes Web 启动页使用各自的轻量交接脚本。",
+    "description": "Runtime interface message settings.page_context_private.summary"
+  },
+  "runtime_settings_page_context_private_title": {
+    "message": "私有与 LAN 页面",
+    "description": "Runtime interface message settings.page_context_private.title"
+  },
   "runtime_settings_permissions_copy": {
     "message": "Hermes 可在你的浏览器中操作什么，以及哪些连接可以查看页面上下文。",
     "description": "Runtime interface message settings.permissions.copy"
@@ -4270,6 +4318,10 @@
   "runtime_settings_public_alpha_load_unpacked": {
     "message": "· 公开测试版 / 加载未打包扩展",
     "description": "Runtime interface message settings.public_alpha_load_unpacked"
+  },
+  "runtime_settings_remote_dashboard_setup_hint": {
+    "message": "通过 WebSocket 的 Trusted Dashboard Attach。将已登录的仪表板保持为活动标签页，然后使用“测试连接”批准其 HTTPS 来源。在您批准与这个确切连接共享之前，页面上下文保持关闭。无需密钥。",
+    "description": "Runtime interface message settings.remote_dashboard_setup_hint"
   },
   "runtime_settings_save_failed": {
     "message": "未保存：{detail}",
@@ -4331,6 +4383,10 @@
     "message": "{summary} 无响应。请启动 Hermes Desktop/Gateway，然后重新连接。",
     "description": "Runtime interface message status.connection_not_responding"
   },
+  "runtime_status_element_pick_unavailable": {
+    "message": "无法选择元素",
+    "description": "Runtime interface message status.element_pick_unavailable"
+  },
   "runtime_status_gmail_no_rendered": {
     "message": "没有可用的已渲染邮件正文。",
     "description": "Runtime interface message status.gmail_no_rendered"
@@ -4347,9 +4403,33 @@
     "message": "正在回退到 /v1/models（{error}）。",
     "description": "Runtime interface message status.model_registry_fallback"
   },
+  "runtime_status_page_comments_unavailable": {
+    "message": "页面评论不可用",
+    "description": "Runtime interface message status.page_comments_unavailable"
+  },
+  "runtime_status_page_context_capture_blocked": {
+    "message": "无法捕获此页面。",
+    "description": "Runtime interface message status.page_context_capture_blocked"
+  },
+  "runtime_status_page_context_capture_off": {
+    "message": "此网站的页面上下文已关闭。",
+    "description": "Runtime interface message status.page_context_capture_off"
+  },
   "runtime_status_page_context_restricted": {
     "message": "{url} - 上下文受限",
     "description": "Runtime interface message status.page_context_restricted"
+  },
+  "runtime_status_page_context_skipped": {
+    "message": "{url} — 已跳过页面上下文，因为 Hermes 未在此页面注入脚本。",
+    "description": "Runtime interface message status.page_context_skipped"
+  },
+  "runtime_status_page_context_skipped_excluded": {
+    "message": "{url} — 该站点在设置 → 权限的排除列表中，Hermes 保持页面脚本关闭。",
+    "description": "Runtime interface message status.page_context_skipped_excluded"
+  },
+  "runtime_status_page_context_skipped_private": {
+    "message": "{url} — Hermes 未在此私有或 LAN 地址注入页面脚本。请在设置 → 权限中开启私有页面脚本，或从排除列表中移除该来源。",
+    "description": "Runtime interface message status.page_context_skipped_private"
   },
   "runtime_status_profile_selected_restart": {
     "message": "已选择 {profile}。如果运行中的配置文件未立即更改，请重启 Hermes gateway。",
@@ -6264,7 +6344,7 @@
     "description": "Runtime interface message ui.hermes.cloud"
   },
   "runtime_ui_hermes_cloud_preview": {
-    "message": "Hermes 云预览",
+    "message": "Hermes Cloud",
     "description": "Runtime interface message ui.hermes.cloud.preview"
   },
   "runtime_ui_hermes_cloud_unavailable": {
@@ -7271,6 +7351,14 @@
     "message": "页面",
     "description": "Runtime interface message ui.page"
   },
+  "runtime_ui_page_context_off_chip": {
+    "message": "📎 此站点页面上下文已关闭",
+    "description": "Runtime interface message ui.page_context_off_chip"
+  },
+  "runtime_ui_page_context_skipped": {
+    "message": "已跳过页面上下文",
+    "description": "Runtime interface message ui.page_context_skipped"
+  },
   "runtime_ui_page_comments": {
     "message": "Page comments",
     "description": "Runtime interface message ui.page.comments"
@@ -7368,7 +7456,7 @@
     "description": "Runtime interface message ui.preferences"
   },
   "runtime_ui_prefers_hermes_native_wake_engine_locally_and_uses_chromium_on_42c1439e": {
-    "message": "更喜欢 Hermes 的本地本地唤醒引擎，并为 Cloud Preview 使用可用的设备上浏览器语音。",
+    "message": "更喜欢 Hermes 的本地本地唤醒引擎，并为 Hermes Cloud 使用可用的设备上浏览器语音。",
     "description": "Runtime interface message ui.prefers.hermes.native.wake.engine.locally.and.uses.chromium.on.42c1439e"
   },
   "runtime_ui_preparing_on_device_dictation": {
@@ -7692,7 +7780,7 @@
     "description": "Runtime interface message ui.required"
   },
   "runtime_ui_required_for_cloud_preview_and_older_hermes_builds_it_refuses_c_f0bdad5b": {
-    "message": "Cloud Preview 和较旧的 Hermes 版本需要此项。它不会使用云端语音识别。",
+    "message": "Hermes Cloud 和较旧的 Hermes 版本需要此项。它不会使用云端语音识别。",
     "description": "Runtime interface message ui.required.for.cloud.preview.and.older.hermes.builds.it.refuses.c.f0bdad5b"
   },
   "runtime_ui_rerun": {

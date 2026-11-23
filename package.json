@@ -31,10 +31,14 @@
     "check:capabilities": "node scripts/sync-capability-docs.mjs --check",
     "check:i18n": "node scripts/generate-browser-locales.mjs --check && node scripts/check-i18n.mjs",
     "check:manifest": "npm run check:i18n && node scripts/check-manifest.mjs",
-    "verify": "npm run test && npm run check:js && npm run check:voice && npm run check:manifest",
+    "check:display-typography": "node scripts/check-display-typography.mjs",
+    "check:escape-hatches": "node scripts/check-escape-hatches.mjs",
+    "check:settings-form-field-inset": "node scripts/check-settings-form-field-inset.mjs",
+    "verify": "npm run test && npm run lint && npm run check:escape-hatches && npm run check:js && npm run check:voice && npm run check:manifest && npm run check:display-typography && npm run check:settings-form-field-inset",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "build:content-runtime": "node scripts/build-content-runtime.mjs",
+    "build:page-context-guard": "node scripts/build-page-context-guard.mjs",
     "build": "node scripts/build.mjs",
     "build:firefox": "node scripts/build-firefox.mjs",
     "lint:firefox": "web-ext lint --self-hosted --source-dir dist/firefox",
@@ -51,6 +55,7 @@
     "bench:startup": "node scripts/bench-startup.mjs",
     "test:hover-guard": "npm run build && node -e \"process.env.HOVER_GUARD_ONLY='1'; import('./tests/e2e-effort-slider.mjs')\"",
     "test:e2e:loaded": "npm run build && node tests/e2e-loaded-extension.mjs",
+    "test:e2e:trap": "npm run build:content-runtime && node tests/e2e-prompt-injection-trap.mjs",
     "test:e2e:voice": "npm run build && node tests/e2e-voice-wingbeat.mjs",
     "test:e2e:read-aloud": "npm run build && node tests/e2e-read-aloud.mjs",
     "test:e2e:saved-connections": "npm run build && node tests/e2e-saved-connections.mjs",
@@ -64,16 +69,19 @@
     "test:e2e:browser-control:youtube": "npm run build && node tests/e2e-phase6-youtube-like.mjs",
     "test:e2e:prompt-cards": "npm run build && node tests/e2e-agent-prompt-cards.mjs",
     "test:e2e:image-reveal": "npm run build && node tests/e2e-generated-image-reveal.mjs",
-    "test:e2e:page-annotation": "npm run build:content-runtime && node tests/e2e-page-annotation.mjs"
+    "test:e2e:page-annotation": "npm run build:content-runtime && node tests/e2e-page-annotation.mjs",
+    "test:e2e:settings-inset": "npm run build && node tests/e2e-settings-form-field-inset.mjs"
   },
   "engines": {
     "node": ">=20"
   },
   "devDependencies": {
     "@eslint/js": "^9",
+    "css-tree": "^3.2.1",
     "eslint": "^9",
     "eslint-plugin-security": "^4.0.1",
     "jsdom": "^30.0.1",
+    "parse5": "^8.0.1",
     "linkedom": "0.18.12",
     "web-ext": "^10.6.0"
   },

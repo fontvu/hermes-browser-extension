@@ -105,6 +105,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   includePageText: true,
   includeSelectedText: true,
   gmailCaptureEnabled: false,
+  pageContextOnPrivateNetworks: false,
+  pageContextExcludedOrigins: [],
   browserControlEnabled: false,
   browserControlScope: 'this-tab',
   browserControlPaused: false,
@@ -340,14 +342,37 @@ const SENSITIVE_URL_PATTERNS = [
 
 // A host the API key may travel to in the clear: this computer, a private or link-local address, a
 // tailnet (100.64.0.0/10, *.ts.net), a .local/.lan/.internal/.home.arpa name or a bare machine name.
-function privateNetworkHost(host = '') {
+export function privateNetworkHost(host = '') {
   const name = String(host || '').toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
   if (!name) return false;
   if (name === 'localhost' || name.endsWith('.localhost') || name === '::1') return true;
-  if (/^(fc|fd)[0-9a-f]{2}:|^fe80:/.test(name)) return true;
+  if (/^(fc|fd)[0-9a-f]{2}:/.test(name)) return true;
+  if (name.includes(':')) {
+    const mapped = name.match(/^::ffff:([0-9a-f:.]+)$/i);
+    if (mapped) {
+      const tail = mapped[1];
+      const dotted = tail.match(/^(\d{1,3}(?:\.\d{1,3}){3})$/);
+      if (dotted) return privateNetworkHost(dotted[1]);
+      const parts = tail.split(':').filter(Boolean);
+      if (parts.length && parts.length <= 2) {
+        const hi = Number.parseInt(parts[0], 16);
+        const lo = Number.parseInt(parts[1] || '0', 16);
+        if (Number.isFinite(hi) && Number.isFinite(lo)) {
+          const packed = (hi << 16) + lo;
+          const ipv4 = `${(packed >>> 24) & 255}.${(packed >>> 16) & 255}.${(packed >>> 8) & 255}.${packed & 255}`;
+          if (privateNetworkHost(ipv4)) return true;
+        }
+      }
+    }
+    const head = name.split(':').find((part) => part.length > 0) || '';
+    const value = head ? Number.parseInt(head, 16) : NaN;
+    if (Number.isFinite(value) && value >= 0xfe80 && value <= 0xfebf) return true;
+    if (!head && /^fe[89ab]/i.test(name)) return true;
+  }
   const ipv4 = name.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (ipv4) {
-    const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
+    const [a, b, c, d] = [Number(ipv4[1]), Number(ipv4[2]), Number(ipv4[3]), Number(ipv4[4])];
+    if (a === 0 && b === 0 && c === 0 && d === 0) return true;
     return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
       || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254);
   }
@@ -473,7 +498,7 @@ export function gatewayConnectionSummary({ gatewayMode = DEFAULT_SETTINGS.gatewa
   const corsOrigin = origin || 'chrome-extension://<extension-id>';
   let setupHint;
   if (mode.value === 'remote-dashboard') {
-    setupHint = 'Trusted Dashboard Attach over WebSocket. Keep the signed-in dashboard as your active tab, then use Test connection to approve its HTTPS origin. This mode stays Chat-only. No key needed.';
+    setupHint = 'Trusted Dashboard Attach over WebSocket. Keep the signed-in dashboard as your active tab, then use Test connection to approve its HTTPS origin. Page context stays off until you approve sharing it with this exact connection. No key needed.';
   } else if (mode.value === 'remote-api') {
     setupHint = `Remote API server. Set API_SERVER_ENABLED=true, API_SERVER_HOST=0.0.0.0, API_SERVER_KEY, and API_SERVER_CORS_ORIGINS=${corsOrigin} on the host. Same-LAN http://host:8642 is supported for trusted networks; use https:// for public/proxied hosts. Remote dashboard mode stays https/WebSocket and is selected when the key is blank.`;
   } else {
@@ -1201,6 +1226,13 @@ export function contextChipSummary({ pageContext = null, activeTab = null, parts
     return {
       label: '📎 Restricted · N/A',
       title: pageContext.reason || activeTab?.url || 'Restricted page',
+    };
+  }
+
+  if (pageContext.skipped === true) {
+    return {
+      label: '📎 Page context off for this site',
+      title: pageContext.reason || activeTab?.url || 'Page context skipped',
     };
   }
 
